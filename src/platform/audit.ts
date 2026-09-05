@@ -53,8 +53,9 @@ export class Audit {
     return full;
   }
 
+  /** Deep copies: a caller can never reach the stored record, not even its details (EVD-004). */
   all(): readonly AuditRecord[] {
-    return this.records.map((r) => ({ ...r }));
+    return this.records.map((r) => structuredClone(r));
   }
 
   byKind(kind: AuditKind): AuditRecord[] {

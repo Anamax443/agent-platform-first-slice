@@ -1,0 +1,27 @@
+{
+  "canonical-invoice": {
+    "status": "SUCCEEDED",
+    "payload": {
+      "artifactId": "$artifactId",
+      "sha256": "$sha256",
+      "documentType": { "value": "INVOICE", "source": "llm", "trustLevel": "validated", "validation": { "status": "passed", "provider": "document-validator" } },
+      "stampAllowed": true,
+      "retentionDays": 3650
+    },
+    "provenance": { "producerComponent": "document-validator", "derivedFrom": ["$artifactId"] }
+  },
+  "canonical-contract": { "status": "SUCCEEDED", "payload": { "documentType": { "value": "CONTRACT", "trustLevel": "validated", "validation": { "status": "passed" } }, "stampAllowed": true, "retentionDays": 3650 } },
+  "canonical-human-corrected": { "status": "SUCCEEDED", "payload": { "documentType": { "value": "INVOICE", "source": "human", "trustLevel": "human-corrected", "validation": { "status": "passed", "provider": "document-validator" } }, "stampAllowed": true } },
+  "canonical-rules-source": { "status": "SUCCEEDED", "payload": { "documentType": { "value": "INVOICE", "source": "rules", "trustLevel": "validated" } } },
+  "canonical-minimal-fieldvalue": { "status": "SUCCEEDED", "payload": { "documentType": { "value": "CONTRACT", "trustLevel": "validated" } } },
+  "damaged-hash-mismatch": { "status": "FAILED", "error": { "code": "ARTIFACT_HASH_MISMATCH", "class": "SECURITY", "retryable": false } },
+  "injection-type-value": { "status": "FAILED", "error": { "code": "SCHEMA_VALIDATION_FAILED", "class": "VALIDATION", "retryable": false } },
+  "boundary-other-not-stampable": { "status": "FAILED", "error": { "code": "STAMP_NOT_ALLOWED", "class": "BUSINESS", "retryable": false } },
+  "error-artifact-missing": { "status": "FAILED", "error": { "code": "ARTIFACT_NOT_FOUND", "class": "BUSINESS", "retryable": false } },
+  "error-tenant-mismatch": { "status": "FAILED", "error": { "code": "TENANT_SCOPE_MISMATCH", "class": "SECURITY", "retryable": false } },
+  "error-registry-business": { "status": "FAILED", "error": { "code": "REGISTRY_REJECTED", "class": "BUSINESS", "retryable": false } },
+  "error-registry-unavailable": { "status": "FAILED", "error": { "code": "DEPENDENCY_UNAVAILABLE", "class": "DEPENDENCY", "retryable": true } },
+  "error-registry-timeout": { "status": "FAILED", "error": { "code": "DEPENDENCY_TIMEOUT", "class": "DEPENDENCY", "retryable": true } },
+  "error-registry-range": { "status": "FAILED", "error": { "code": "REGISTRY_RESPONSE_INVALID", "class": "VALIDATION", "retryable": false } },
+  "error-registry-semantic": { "status": "FAILED", "error": { "code": "REGISTRY_TYPE_CONFLICT", "class": "QUALITY", "retryable": false } }
+}

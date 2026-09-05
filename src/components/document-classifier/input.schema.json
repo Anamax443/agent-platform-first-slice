@@ -4,7 +4,12 @@
   "additionalProperties": false,
   "required": ["artifactId"],
   "properties": {
-    "artifactId": { "type": "string", "minLength": 1, "maxLength": 128 },
-    "strategy": { "type": "string", "enum": ["llm", "keyword", "human-corrected"] }
+    "artifactId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$" },
+    "strategy": { "type": "string", "enum": ["llm", "keyword", "human-corrected"] },
+    "documentType": {
+      "type": "string",
+      "enum": ["INVOICE", "CONTRACT", "OTHER"],
+      "description": "Only with strategy human-corrected: the value a reviewer decided. Never trusted from any other source."
+    }
   }
 }

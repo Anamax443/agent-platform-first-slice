@@ -1,0 +1,26 @@
+{
+  "$id": "document.validate.input.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifactId", "sha256", "documentType"],
+  "properties": {
+    "artifactId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$" },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$", "description": "Hash the caller saw; must equal the stored original (SEC-ART-001)." },
+    "documentType": {
+      "type": "object",
+      "required": ["value"],
+      "properties": {
+        "value": { "type": "string", "enum": ["INVOICE", "CONTRACT", "OTHER"] },
+        "source": { "type": "string", "enum": ["llm", "ocr", "rules", "registry", "human"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "trustLevel": { "type": "string", "enum": ["untrusted-derived", "validated", "human-corrected"] }
+      }
+    },
+    "strategy": { "type": "string", "enum": ["default", "human-corrected"] },
+    "correctedDocumentType": {
+      "type": "string",
+      "enum": ["INVOICE", "CONTRACT", "OTHER"],
+      "description": "Only with strategy human-corrected: reviewer's reclassification, validated against the registry like any other value."
+    }
+  }
+}

@@ -9,6 +9,7 @@ export type ExpiryPolicy = "EXPIRE_TO_FAILED" | "EXPIRE_TO_CANCELLED" | "ESCALAT
 export interface ReviewTask {
   reviewTaskId: string;
   workflowId: string;
+  correlationId?: string;
   stepId: string;
   tenantId: string;
   reasonCode: string;
@@ -28,6 +29,7 @@ export interface ReviewTask {
 
 export interface CreateTask {
   workflowId: string;
+  correlationId?: string;
   stepId: string;
   tenantId: string;
   reasonCode: string;
@@ -78,11 +80,18 @@ export class ReviewService {
       maxEscalationDepth: input.maxEscalationDepth ?? 2,
       status: "OPEN",
     };
+    if (input.correlationId) task.correlationId = input.correlationId;
     if (input.escalateTo) task.escalateTo = input.escalateTo;
     if (input.currentValue !== undefined) task.currentValue = input.currentValue;
     if (input.alternatives) task.alternatives = [...input.alternatives];
     this.tasks.set(task.reviewTaskId, task);
-    this.audit.append({ kind: "review-created", workflowId: task.workflowId, tenantId: task.tenantId, details: { reviewTaskId: task.reviewTaskId, reasonCode: task.reasonCode, requiredRole: task.requiredRole, expiresAt: task.expiresAt } });
+    this.audit.append({
+      kind: "review-created",
+      workflowId: task.workflowId,
+      correlationId: task.correlationId,
+      tenantId: task.tenantId,
+      details: { reviewTaskId: task.reviewTaskId, reasonCode: task.reasonCode, requiredRole: task.requiredRole, expiresAt: task.expiresAt },
+    });
     return { ...task };
   }
 
@@ -99,18 +108,25 @@ export class ReviewService {
     const task = this.tasks.get(id);
     if (!task) return { ok: false, code: "APPROVAL_MISMATCH" };
     if (task.tenantId !== by.tenantId) {
-      this.audit.append({ kind: "security", tenantId: by.tenantId, actorId: by.actorId, details: { code: "TENANT_SCOPE_MISMATCH", reviewTaskId: id, taskTenant: task.tenantId } });
+      this.audit.append({ kind: "security", tenantId: by.tenantId, actorId: by.actorId, correlationId: task.correlationId, details: { code: "TENANT_SCOPE_MISMATCH", reviewTaskId: id, taskTenant: task.tenantId } });
       return { ok: false, code: "TENANT_SCOPE_MISMATCH" };
     }
     if (task.status !== "OPEN") return { ok: false, code: "REVIEW_EXPIRED" };
     if (task.requiredRole !== by.role || !task.allowedDecisions.includes(by.decision)) {
-      this.audit.append({ kind: "security", tenantId: by.tenantId, actorId: by.actorId, details: { code: "APPROVAL_MISMATCH", reviewTaskId: id, role: by.role, decision: by.decision } });
+      this.audit.append({ kind: "security", tenantId: by.tenantId, actorId: by.actorId, correlationId: task.correlationId, details: { code: "APPROVAL_MISMATCH", reviewTaskId: id, role: by.role, decision: by.decision } });
       return { ok: false, code: "APPROVAL_MISMATCH" };
     }
     task.status = "DECIDED";
     task.decision = { actorId: by.actorId, role: by.role, decision: by.decision, at: iso(this.clock.now()) };
     if (by.correction) task.decision.correction = { ...by.correction };
-    this.audit.append({ kind: "review-decision", workflowId: task.workflowId, tenantId: task.tenantId, actorId: by.actorId, details: { reviewTaskId: id, role: by.role, decision: by.decision, originalValue: task.currentValue ?? null, correction: by.correction ?? null } });
+    this.audit.append({
+      kind: "review-decision",
+      workflowId: task.workflowId,
+      correlationId: task.correlationId,
+      tenantId: task.tenantId,
+      actorId: by.actorId,
+      details: { reviewTaskId: id, role: by.role, decision: by.decision, originalValue: task.currentValue ?? null, correction: by.correction ?? null },
+    });
     return { ok: true, task: structuredClone(task) };
   }
 
@@ -149,7 +165,13 @@ export class ReviewService {
           break;
         }
       }
-      this.audit.append({ kind: "review-expired", workflowId: task.workflowId, tenantId: task.tenantId, details: { reviewTaskId: task.reviewTaskId, policy: task.expiryPolicy, transition: out[out.length - 1]?.transition } });
+      this.audit.append({
+        kind: "review-expired",
+        workflowId: task.workflowId,
+        correlationId: task.correlationId,
+        tenantId: task.tenantId,
+        details: { reviewTaskId: task.reviewTaskId, policy: task.expiryPolicy, transition: out[out.length - 1]?.transition, escalationDepth: task.escalationDepth },
+      });
     }
     return out;
   }
@@ -166,6 +188,7 @@ export class ReviewService {
       expiryPolicy: t.expiryPolicy,
       maxEscalationDepth: t.maxEscalationDepth,
     };
+    if (t.correlationId) c.correlationId = t.correlationId;
     if (t.escalateTo) c.escalateTo = t.escalateTo;
     if (t.currentValue !== undefined) c.currentValue = t.currentValue;
     if (t.alternatives) c.alternatives = [...t.alternatives];

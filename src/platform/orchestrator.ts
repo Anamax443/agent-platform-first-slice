@@ -6,7 +6,10 @@ import { newId } from "./ids.js";
 import type { Instance, Journal, SideEffects, StepRecord } from "./journal.js";
 import type { ReviewService, Decision } from "./review.js";
 import type { Router } from "./router.js";
+import type { Reconciler } from "./executor-host.js";
 import type { ErrorClass, MessageEnvelope, ResultEnvelope } from "./types.js";
+
+export type { Reconciler, ReconcileResult } from "./executor-host.js";
 
 export type OnFailed = "retryQuality" | "review" | "fail";
 
@@ -23,6 +26,7 @@ export interface StepDef {
   reconciliationBudget?: number;
   onFailed?: Partial<Record<ErrorClass, OnFailed>>;
   reviewRole?: string;
+  reviewEscalateTo?: string;
   reviewExpiresInMs?: number;
 }
 
@@ -31,15 +35,11 @@ export interface WorkflowDef {
   workflowVersion: string;
   conformanceTier: "exact" | "semantic" | "property" | "ai-eval";
   deadlineMs: number;
+  /** Role for the operator review created when reconciliation of an UNKNOWN_OUTCOME runs out of budget (WF-UNK-002). */
+  operatorRole: string;
+  supervisorRole: string;
   steps: StepDef[];
 }
-
-export type ReconcileResult =
-  | { status: "SUCCEEDED"; payload: Record<string, unknown> }
-  | { status: "FAILED" }
-  | { status: "UNKNOWN" };
-
-export type Reconciler = (ref: string, step: StepRecord, instance: Instance) => Promise<ReconcileResult>;
 
 export type RunOutcome = "SUCCEEDED" | "FAILED" | "WAITING";
 
@@ -92,7 +92,9 @@ export class Orchestrator {
   async run(workflowId: string): Promise<Instance> {
     let inst = this.load(workflowId);
     if (inst.workflowVersion !== this.opts.workflow.workflowVersion) {
-      throw new Error(`instance ${workflowId} is pinned to workflow v${inst.workflowVersion}, this orchestrator runs v${this.opts.workflow.workflowVersion} (WF-VER-001)`);
+      throw new Error(
+        `instance ${workflowId} is pinned to workflow v${inst.workflowVersion}, this orchestrator runs v${this.opts.workflow.workflowVersion} (WF-VER-001)`,
+      );
     }
     while (inst.status === "RUNNING" && inst.currentStep < this.opts.workflow.steps.length) {
       const outcome = await this.runStep(inst, inst.currentStep);
@@ -116,8 +118,13 @@ export class Orchestrator {
       const step = inst.steps.find((s) => s.status === "RUNNING");
       if (step && step.sideEffects !== "none") {
         step.status = "UNKNOWN_OUTCOME";
-        step.reconciliationRef = step.reconciliationRef ?? step.executionId;
-        this.opts.audit.append({ kind: "reconciliation", workflowId: inst.workflowId, correlationId: inst.correlationId, details: { stepId: step.stepId, reason: "recovered RUNNING write step as UNKNOWN_OUTCOME" } });
+        step.reconciliationRef = step.reconciliationRef ?? step.idempotencyKey;
+        this.opts.audit.append({
+          kind: "reconciliation",
+          workflowId: inst.workflowId,
+          correlationId: inst.correlationId,
+          details: { stepId: step.stepId, reason: "recovered RUNNING write step as UNKNOWN_OUTCOME" },
+        });
         this.save(inst);
       } else if (step) {
         step.status = "PENDING";
@@ -128,12 +135,43 @@ export class Orchestrator {
     return out;
   }
 
+  /**
+   * Apply review expiry policies to waiting instances (WF-REV-003). Escalation and a new review keep the instance waiting
+   * on the new task; FAILED / CANCELLED end the instance explicitly. Never "nothing happens".
+   */
+  applyReviewExpiries(): Array<{ workflowId: string; transition: string }> {
+    const out: Array<{ workflowId: string; transition: string }> = [];
+    const transitions = this.opts.review.expire();
+    for (const inst of this.opts.journal.list()) {
+      if (inst.status !== "WAITING" || !inst.waiting?.reviewTaskId) continue;
+      const t = transitions.find((x) => x.reviewTaskId === inst.waiting?.reviewTaskId);
+      if (!t) continue;
+      const step = inst.steps.find((s) => s.stepId === inst.waiting?.stepId && (s.status === "WAITING" || s.status === "UNKNOWN_OUTCOME"));
+      if ((t.transition === "ESCALATED" || t.transition === "NEW_REVIEW") && t.newTaskId) {
+        const task = this.opts.review.get(t.newTaskId);
+        inst.waiting = { ...inst.waiting, reviewTaskId: t.newTaskId, deadline: task?.expiresAt ?? inst.waiting.deadline };
+      } else {
+        const terminal = t.transition === "CANCELLED" ? "CANCELLED" : "FAILED";
+        if (step) step.status = terminal;
+        inst.status = terminal;
+        inst.published = { status: terminal };
+        delete inst.waiting;
+        this.opts.audit.append({ kind: "state", workflowId: inst.workflowId, correlationId: inst.correlationId, tenantId: inst.tenantId, details: { status: terminal, reason: t.transition, reviewTaskId: t.reviewTaskId } });
+      }
+      this.save(inst);
+      out.push({ workflowId: inst.workflowId, transition: t.transition });
+    }
+    return out;
+  }
+
   /** Apply a review decision and continue (F7: the decision itself was authorized in ReviewService). */
   async resumeAfterReview(workflowId: string, reviewTaskId: string): Promise<Instance> {
     const inst = this.load(workflowId);
     const task = this.opts.review.get(reviewTaskId);
     if (!task || task.status !== "DECIDED" || !task.decision) throw new Error(`review ${reviewTaskId} not decided`);
-    if (task.workflowId !== workflowId || inst.waiting?.reviewTaskId !== reviewTaskId) throw new Error("review task is not bound to this instance (APPROVAL_MISMATCH)");
+    if (task.workflowId !== workflowId || inst.waiting?.reviewTaskId !== reviewTaskId) {
+      throw new Error("review task is not bound to this instance (APPROVAL_MISMATCH)");
+    }
     const step = inst.steps.find((s) => s.stepId === inst.waiting?.stepId && (s.status === "WAITING" || s.status === "UNKNOWN_OUTCOME"));
     if (!step) throw new Error("no waiting step");
     const d: Decision = task.decision.decision;
@@ -143,6 +181,7 @@ export class Orchestrator {
       inst.published = { status: "FAILED" };
       delete inst.waiting;
       this.save(inst);
+      this.opts.audit.append({ kind: "state", workflowId: inst.workflowId, correlationId: inst.correlationId, tenantId: inst.tenantId, details: { status: "FAILED", step: step.stepId, reason: "REJECT" } });
       return inst;
     }
     if (task.reasonCode === "UNKNOWN_OUTCOME_UNRESOLVED") {
@@ -150,12 +189,17 @@ export class Orchestrator {
       step.status = "SUCCEEDED";
       step.finishedAt = iso(this.opts.clock.now());
       step.result = { ...(step.result as ResultEnvelope), status: "SUCCEEDED", payload: { ...(task.decision.correction ?? {}), confirmedBy: task.decision.actorId } };
+      delete step.result.reconciliationRef;
       inst.currentStep += 1;
     } else if (d === "CORRECT" || d === "RECLASSIFY") {
       inst.input = { ...inst.input, ...(task.decision.correction ?? {}) };
       step.status = "PENDING";
       step.strategy = "human-corrected";
       step.strategyIndex = -1;
+      step.attempt = 1;
+      step.logicalAttempt += 1;
+      delete step.result;
+      delete step.finishedAt;
     } else {
       // APPROVE on a business failure: accept the last payload as is
       step.status = "SUCCEEDED";
@@ -179,7 +223,6 @@ export class Orchestrator {
     const technicalRetries = def.technicalRetries ?? 2;
     const strategies = def.strategies ?? ["default"];
     const qualityBudget = def.qualityBudget ?? strategies.length;
-    let qualityAttempts = 0;
 
     if (step && step.status === "UNKNOWN_OUTCOME") {
       const r = await this.reconcile(inst, step, def);
@@ -190,17 +233,19 @@ export class Orchestrator {
 
     for (;;) {
       if (!step || step.status === "PENDING") {
-        const strategyIndex = step && step.strategyIndex >= 0 ? step.strategyIndex : 0;
-        const strategy = step?.strategy === "human-corrected" ? "human-corrected" : (strategies[strategyIndex] as string);
-        const attempt = step ? step.attempt : 1;
-        const key = `${inst.workflowId}:${def.id}:${strategy}:${attempt}`;
+        const strategyIndex = step ? step.strategyIndex : 0;
+        const strategy = step?.strategy === "human-corrected" ? "human-corrected" : (strategies[Math.max(strategyIndex, 0)] as string);
+        const logicalAttempt = step ? step.logicalAttempt : 1;
+        // One logical write intent = one key. Technical retries reuse it; a new strategy or a human correction gets a new one (§5.2).
+        const key = `${inst.workflowId}:${def.id}:${strategy}:${logicalAttempt}`;
         step = step ?? {
           stepId: def.id,
           capability: def.capability,
           capabilityVersion: def.capabilityVersion,
           sideEffects: def.sideEffects,
           executionId: "",
-          attempt,
+          attempt: 1,
+          logicalAttempt,
           strategyIndex,
           strategy,
           idempotencyKey: key,
@@ -255,13 +300,24 @@ export class Orchestrator {
         this.save(inst);
         continue;
       }
-      if (err?.retryable && cls === "QUALITY" && step.strategyIndex + 1 < strategies.length && qualityAttempts + 1 < qualityBudget) {
-        qualityAttempts += 1;
+      const usedLogical = inst.steps.filter((s) => s.stepId === def.id).length;
+      if (err?.retryable && cls === "QUALITY" && step.strategyIndex + 1 < strategies.length && usedLogical < qualityBudget) {
         step.status = "FAILED";
-        const next: StepRecord = { ...step, executionId: "", attempt: 1, strategyIndex: step.strategyIndex + 1, strategy: strategies[step.strategyIndex + 1] as string, status: "PENDING", startedAt: iso(this.opts.clock.now()) };
+        const next: StepRecord = {
+          ...step,
+          executionId: "",
+          attempt: 1,
+          logicalAttempt: step.logicalAttempt + 1,
+          strategyIndex: step.strategyIndex + 1,
+          strategy: strategies[step.strategyIndex + 1] as string,
+          status: "PENDING",
+          startedAt: iso(this.opts.clock.now()),
+        };
         delete next.finishedAt;
         delete next.result;
         delete next.message;
+        delete next.reconciliationRef;
+        delete next.reconciliationAttempts;
         step = next;
         this.save(inst);
         continue;
@@ -270,6 +326,7 @@ export class Orchestrator {
       if (policy === "review") {
         const task = this.opts.review.create({
           workflowId: inst.workflowId,
+          correlationId: inst.correlationId,
           stepId: def.id,
           tenantId: inst.tenantId,
           reasonCode: err?.code ?? "STEP_FAILED",
@@ -277,7 +334,7 @@ export class Orchestrator {
           allowedDecisions: ["APPROVE", "CORRECT", "REJECT", "RECLASSIFY"],
           expiresInMs: def.reviewExpiresInMs ?? 3 * 24 * 3_600_000,
           expiryPolicy: "ESCALATE",
-          escalateTo: "document.supervisor",
+          escalateTo: def.reviewEscalateTo ?? this.opts.workflow.supervisorRole,
           currentValue: err?.details ?? null,
         });
         step.status = "WAITING";
@@ -306,7 +363,12 @@ export class Orchestrator {
     while (reconciler && step.reconciliationAttempts < budget) {
       step.reconciliationAttempts += 1;
       const r = await reconciler(step.reconciliationRef as string, step, inst);
-      this.opts.audit.append({ kind: "reconciliation", workflowId: inst.workflowId, correlationId: inst.correlationId, details: { stepId: step.stepId, attempt: step.reconciliationAttempts, result: r.status } });
+      this.opts.audit.append({
+        kind: "reconciliation",
+        workflowId: inst.workflowId,
+        correlationId: inst.correlationId,
+        details: { stepId: step.stepId, attempt: step.reconciliationAttempts, result: r.status },
+      });
       if (r.status === "SUCCEEDED") {
         step.status = "SUCCEEDED";
         step.finishedAt = iso(this.opts.clock.now());
@@ -326,14 +388,15 @@ export class Orchestrator {
     }
     const task = this.opts.review.create({
       workflowId: inst.workflowId,
+      correlationId: inst.correlationId,
       stepId: def.id,
       tenantId: inst.tenantId,
       reasonCode: "UNKNOWN_OUTCOME_UNRESOLVED",
-      requiredRole: "document.operator",
+      requiredRole: this.opts.workflow.operatorRole,
       allowedDecisions: ["APPROVE", "REJECT"],
       expiresInMs: 4 * 3_600_000,
       expiryPolicy: "ESCALATE",
-      escalateTo: "document.supervisor",
+      escalateTo: this.opts.workflow.supervisorRole,
       currentValue: step.reconciliationRef,
     });
     inst.status = "WAITING";

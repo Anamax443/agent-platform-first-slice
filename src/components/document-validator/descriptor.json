@@ -1,0 +1,42 @@
+{
+  "module": "document-validator",
+  "componentVersion": "0.1.0",
+  "runtime": "in-process",
+  "deploymentModel": "CLOUD_SINGLE_TENANT",
+  "tenantMode": "SINGLE",
+  "owner": "first-slice",
+  "dependsOn": ["registry.lookup"],
+  "verificationProfiles": ["PROVIDER", "MODULE_DEPENDENCY"],
+  "capabilities": [
+    {
+      "name": "document.validate",
+      "versions": ["1"],
+      "preferredVersion": "1",
+      "inputSchema": "document.validate.input.v1",
+      "outputSchema": "document.validate.output.v1",
+      "conformanceSuiteVersion": "1.0",
+      "conformanceTier": "semantic",
+      "executionMode": "sync",
+      "sideEffects": "none",
+      "trustClass": "deterministic",
+      "riskClass": "LOW",
+      "requiredScopes": ["document.validate"],
+      "usesLlm": false,
+      "idempotency": "natural",
+      "reversibility": "not-applicable",
+      "unknownOutcomeRecovery": "not-applicable",
+      "humanApproval": "none",
+      "errorCodes": [
+        "ARTIFACT_NOT_FOUND",
+        "TENANT_SCOPE_MISMATCH",
+        "ARTIFACT_HASH_MISMATCH",
+        "REGISTRY_REJECTED",
+        "REGISTRY_RESPONSE_INVALID",
+        "REGISTRY_TYPE_CONFLICT",
+        "STAMP_NOT_ALLOWED",
+        "DEPENDENCY_TIMEOUT",
+        "DEPENDENCY_UNAVAILABLE"
+      ]
+    }
+  ]
+}

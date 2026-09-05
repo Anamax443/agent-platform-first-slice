@@ -13,10 +13,12 @@ export interface Grant {
 }
 
 export interface Policy {
+  $comment?: string;
   policyRef: string;
   capability: string;
   capabilityVersion: string;
   owner: string;
+  validFrom?: string;
   grants: Grant[];
   approval?: { required: boolean; reviewerRole?: string; minAuthStrength?: string; approvalBoundTo?: string[] };
   effectFieldValidators?: Record<string, { validator: string; mustPass: boolean; params?: Record<string, unknown> }>;

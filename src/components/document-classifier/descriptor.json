@@ -25,7 +25,15 @@
       "reversibility": "not-applicable",
       "unknownOutcomeRecovery": "not-applicable",
       "humanApproval": "none",
-      "errorCodes": ["ARTIFACT_NOT_FOUND", "TENANT_SCOPE_MISMATCH", "MODEL_OUTPUT_NOT_ALLOWED", "MODEL_UNAVAILABLE"]
+      "errorCodes": [
+        "ARTIFACT_NOT_FOUND",
+        "TENANT_SCOPE_MISMATCH",
+        "MODEL_OUTPUT_NOT_ALLOWED",
+        "MODEL_UNAVAILABLE",
+        "STRATEGY_UNKNOWN",
+        "CORRECTION_INVALID",
+        "DEPENDENCY_TIMEOUT"
+      ]
     }
   ]
 }

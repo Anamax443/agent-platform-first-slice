@@ -9,15 +9,20 @@ export interface KeyRecord {
   validUntil?: string;
 }
 
+/** Longest deadlinePolicy of any capability behind this receiver (PT30M): a message signed by a retired key is still accepted that long after validUntil. */
+export const DEFAULT_GRACE_MS = 30 * 60_000;
+
 /** Receiver-side key registry with validity windows (FOUNDATION-core §4.3, SEC-CRED-002/003). */
 export class KeyRegistry {
   private readonly keys = new Map<string, KeyRecord>();
+
+  constructor(readonly graceMs: number = DEFAULT_GRACE_MS) {}
 
   add(record: KeyRecord): void {
     this.keys.set(record.keyId, { ...record });
   }
 
-  /** Close the validity window of a key (rotation step 3 happens later via remove()). */
+  /** Rotation step: close the validity window of a key. Messages signed inside the window stay valid for graceMs after it. */
   retire(keyId: string, validUntil: string): void {
     const r = this.keys.get(keyId);
     if (!r) throw new Error(`unknown key ${keyId}`);
@@ -26,6 +31,11 @@ export class KeyRegistry {
 
   remove(keyId: string): void {
     this.keys.delete(keyId);
+  }
+
+  get(keyId: string): KeyRecord | undefined {
+    const r = this.keys.get(keyId);
+    return r ? { ...r } : undefined;
   }
 
   /** The key that was valid at the given instant (compare ISO strings, all UTC with Z). */
@@ -46,7 +56,7 @@ export function generateKeyPair(): { publicKey: KeyObject; privateKey: KeyObject
   return generateKeyPairSync("ed25519");
 }
 
-/** Gateway-side signer. The private key never leaves the gateway (T19). */
+/** Gateway-side signer. The private key never leaves the gateway (T19, SEC-HOST-002). */
 export class Signer {
   constructor(
     readonly keyId: string,
@@ -62,7 +72,11 @@ export class Signer {
 
 export type BindingCheck = { ok: true } | { ok: false; reason: string };
 
-export function verifyBinding(env: DispatchEnvelope, registry: KeyRegistry): BindingCheck {
+/**
+ * Verify the binding of message and context. `now` is the receiver's clock: a key retired at validUntil is accepted for
+ * messages signed inside its window only until validUntil + graceMs (SEC-CRED-003), so a stolen old key cannot be used forever.
+ */
+export function verifyBinding(env: DispatchEnvelope, registry: KeyRegistry, now: string): BindingCheck {
   const b = env.binding;
   if (b.mechanism === "in-process") return { ok: true };
   if (b.mechanism !== "signed-envelope") return { ok: false, reason: `mechanism ${b.mechanism} not supported by this receiver` };
@@ -70,6 +84,11 @@ export function verifyBinding(env: DispatchEnvelope, registry: KeyRegistry): Bin
   if (!b.keyId || !b.signature || !b.signedAt || b.canonicalization !== "JCS") return { ok: false, reason: "incomplete binding" };
   const key = registry.keyValidAt(b.keyId, b.signedAt);
   if (!key) return { ok: false, reason: `no key ${b.keyId} valid at ${b.signedAt}` };
+  const record = registry.get(b.keyId);
+  if (record?.validUntil) {
+    const graceEnd = new Date(Date.parse(record.validUntil) + registry.graceMs).toISOString();
+    if (now > graceEnd) return { ok: false, reason: `key ${b.keyId} retired at ${record.validUntil}, grace period ended ${graceEnd}` };
+  }
   const data = Buffer.from(canonicalize({ message: env.message, context: env.context }), "utf8");
   const ok = verify(null, data, key, Buffer.from(b.signature, "base64url"));
   return ok ? { ok: true } : { ok: false, reason: "signature does not match message+context" };

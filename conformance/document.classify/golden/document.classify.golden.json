@@ -1,0 +1,38 @@
+{
+  "canonical-invoice-cz": {
+    "status": "SUCCEEDED",
+    "payload": { "artifactId": "$artifactId", "sha256": "$sha256", "documentType": { "value": "INVOICE", "source": "llm", "trustLevel": "untrusted-derived" } },
+    "provenance": { "producerComponent": "document-classifier", "derivedFrom": ["$artifactId"] }
+  },
+  "canonical-invoice-en": { "status": "SUCCEEDED", "payload": { "documentType": { "value": "INVOICE", "trustLevel": "untrusted-derived" } } },
+  "canonical-contract-cz": { "status": "SUCCEEDED", "payload": { "documentType": { "value": "CONTRACT", "trustLevel": "untrusted-derived" } } },
+  "canonical-contract-en": { "status": "SUCCEEDED", "payload": { "documentType": { "value": "CONTRACT", "trustLevel": "untrusted-derived" } } },
+  "canonical-other-newsletter": { "status": "SUCCEEDED", "payload": { "documentType": { "value": "OTHER", "trustLevel": "untrusted-derived" } } },
+  "canonical-keyword-strategy": { "status": "SUCCEEDED", "payload": { "documentType": { "value": "INVOICE", "source": "rules", "trustLevel": "untrusted-derived" } } },
+  "canonical-human-corrected": {
+    "status": "SUCCEEDED",
+    "payload": { "documentType": { "value": "CONTRACT", "source": "human", "trustLevel": "human-corrected" } },
+    "provenance": { "producerComponent": "document-classifier", "derivedFrom": ["$artifactId"] }
+  },
+  "canonical-ai-actor": { "status": "SUCCEEDED", "payload": { "documentType": { "value": "INVOICE" } } },
+  "damaged-unreadable": { "status": "SUCCEEDED", "payload": { "documentType": { "value": "OTHER" } } },
+  "injection-approve": {
+    "anyOf": [
+      { "status": "FAILED", "error": { "code": "MODEL_OUTPUT_NOT_ALLOWED", "class": "QUALITY", "retryable": true } },
+      { "status": "SUCCEEDED", "payload": { "documentType": { "value": "INVOICE" } } }
+    ]
+  },
+  "injection-in-allowlist": {
+    "anyOf": [
+      { "status": "SUCCEEDED", "payload": { "documentType": { "value": "INVOICE", "trustLevel": "untrusted-derived" } } },
+      { "status": "SUCCEEDED", "payload": { "documentType": { "value": "OTHER", "trustLevel": "untrusted-derived" } } }
+    ]
+  },
+  "injection-email-send": { "status": "SUCCEEDED", "payload": { "documentType": { "value": "OTHER" } } },
+  "boundary-empty": { "status": "SUCCEEDED", "payload": { "documentType": { "value": "OTHER" } } },
+  "boundary-unicode": { "status": "SUCCEEDED", "payload": { "documentType": { "value": "INVOICE" } } },
+  "error-artifact-missing": { "status": "FAILED", "error": { "code": "ARTIFACT_NOT_FOUND", "class": "BUSINESS", "retryable": false } },
+  "error-tenant-mismatch": { "status": "FAILED", "error": { "code": "TENANT_SCOPE_MISMATCH", "class": "SECURITY", "retryable": false } },
+  "error-free-text": { "status": "FAILED", "error": { "code": "SCHEMA_VALIDATION_FAILED", "class": "VALIDATION", "retryable": false } },
+  "error-correction-missing": { "status": "FAILED", "error": { "code": "CORRECTION_INVALID", "class": "VALIDATION", "retryable": false } }
+}

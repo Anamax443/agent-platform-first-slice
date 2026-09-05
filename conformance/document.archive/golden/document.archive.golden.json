@@ -1,0 +1,10 @@
+{
+  "canonical-archive": {
+    "status": "SUCCEEDED",
+    "payload": { "artifactId": "$artifactId", "sha256": "$sha256", "archiveRef": "arch-1" },
+    "provenance": { "producerComponent": "document-executor-host", "derivedFrom": ["$artifactId"] }
+  },
+  "damaged-hash-mismatch": { "status": "FAILED", "error": { "code": "ARTIFACT_HASH_MISMATCH", "class": "SECURITY", "retryable": false } },
+  "error-artifact-missing": { "status": "FAILED", "error": { "code": "ARTIFACT_NOT_FOUND", "class": "BUSINESS", "retryable": false } },
+  "error-ai-actor": { "status": "FAILED", "error": { "code": "CAPABILITY_NOT_ALLOWED", "class": "SECURITY", "retryable": false } }
+}

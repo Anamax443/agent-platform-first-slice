@@ -10,7 +10,10 @@ export interface StepRecord {
   capabilityVersion: string;
   sideEffects: SideEffects;
   executionId: string;
+  /** Technical attempt within one logical intent (same idempotency key). */
   attempt: number;
+  /** Logical attempt: new strategy or human correction = new idempotency key (FOUNDATION-core §5.2). */
+  logicalAttempt: number;
   strategyIndex: number;
   strategy: string;
   idempotencyKey: string;

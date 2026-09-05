@@ -1,0 +1,11 @@
+{
+  "$id": "document.archive.output.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifactId", "sha256", "archiveRef"],
+  "properties": {
+    "artifactId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "archiveRef": { "type": "string", "minLength": 1 }
+  }
+}

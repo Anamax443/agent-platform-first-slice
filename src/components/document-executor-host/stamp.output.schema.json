@@ -1,0 +1,14 @@
+{
+  "$id": "document.stamp.output.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["originalArtifactId", "originalSha256", "stampedArtifactId", "stampedSha256", "stampText", "dmsRef"],
+  "properties": {
+    "originalArtifactId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "originalSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "stampedArtifactId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "stampedSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "stampText": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "dmsRef": { "type": "string", "minLength": 1 }
+  }
+}

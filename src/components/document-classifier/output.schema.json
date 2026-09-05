@@ -1,0 +1,21 @@
+{
+  "$id": "document.classify.output.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifactId", "sha256", "documentType"],
+  "properties": {
+    "artifactId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "documentType": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "source", "trustLevel"],
+      "properties": {
+        "value": { "type": "string", "enum": ["INVOICE", "CONTRACT", "OTHER"] },
+        "source": { "type": "string", "enum": ["llm", "rules", "human"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "trustLevel": { "type": "string", "enum": ["untrusted-derived", "human-corrected"] }
+      }
+    }
+  }
+}

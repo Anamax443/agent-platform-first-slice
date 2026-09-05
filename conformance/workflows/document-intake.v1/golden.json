@@ -1,0 +1,58 @@
+{
+  "canonical-invoice": {
+    "instance": "SUCCEEDED",
+    "published": { "status": "SUCCEEDED" },
+    "steps": [
+      { "stepId": "classify", "status": "SUCCEEDED", "strategy": "llm", "sideEffects": "none" },
+      { "stepId": "validate", "status": "SUCCEEDED", "strategy": "default", "sideEffects": "none" },
+      { "stepId": "stamp", "status": "SUCCEEDED", "strategy": "default", "sideEffects": "internal-write" }
+    ],
+    "audit": ["dispatch", "dispatch", "dispatch", "write-intent", "write-done", "state"],
+    "reviews": [],
+    "writes": 1
+  },
+  "injection-approve": {
+    "instance": "SUCCEEDED",
+    "steps": [
+      { "stepId": "classify", "status": "FAILED", "strategy": "llm", "sideEffects": "none", "code": "MODEL_OUTPUT_NOT_ALLOWED" },
+      { "stepId": "classify", "status": "SUCCEEDED", "strategy": "keyword", "sideEffects": "none" },
+      { "stepId": "validate", "status": "SUCCEEDED", "strategy": "default", "sideEffects": "none" },
+      { "stepId": "stamp", "status": "SUCCEEDED", "strategy": "default", "sideEffects": "internal-write" }
+    ],
+    "audit": ["dispatch", "dispatch", "dispatch", "dispatch", "write-intent", "write-done", "state"],
+    "reviews": [],
+    "writes": 1
+  },
+  "injection-in-allowlist": {
+    "instance": "SUCCEEDED",
+    "steps": [
+      { "stepId": "classify", "status": "SUCCEEDED", "strategy": "llm", "sideEffects": "none" },
+      { "stepId": "validate", "status": "SUCCEEDED", "strategy": "default", "sideEffects": "none" },
+      { "stepId": "stamp", "status": "SUCCEEDED", "strategy": "default", "sideEffects": "internal-write" }
+    ],
+    "writes": 1
+  },
+  "unknown-once": {
+    "instance": "SUCCEEDED",
+    "published": { "status": "SUCCEEDED" },
+    "steps": [
+      { "stepId": "classify", "status": "SUCCEEDED", "strategy": "llm", "sideEffects": "none" },
+      { "stepId": "validate", "status": "SUCCEEDED", "strategy": "default", "sideEffects": "none" },
+      { "stepId": "stamp", "status": "SUCCEEDED", "strategy": "default", "sideEffects": "internal-write", "attempt": 1, "reconciliationAttempts": 1 }
+    ],
+    "audit": ["dispatch", "dispatch", "dispatch", "write-intent", "write-done", "reconciliation", "reconciliation", "state"],
+    "reviews": [],
+    "writes": 1
+  },
+  "other-not-stampable": {
+    "instance": "WAITING",
+    "published": { "status": "WAITING" },
+    "steps": [
+      { "stepId": "classify", "status": "SUCCEEDED", "strategy": "llm", "sideEffects": "none" },
+      { "stepId": "validate", "status": "WAITING", "strategy": "default", "sideEffects": "none", "code": "STAMP_NOT_ALLOWED" }
+    ],
+    "audit": ["dispatch", "dispatch", "review-created"],
+    "reviews": [{ "reasonCode": "STAMP_NOT_ALLOWED", "requiredRole": "document.reviewer", "status": "OPEN" }],
+    "writes": 0
+  }
+}

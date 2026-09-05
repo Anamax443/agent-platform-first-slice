@@ -32,4 +32,8 @@ Schémata v `contracts/` jsou kopie z foundation a jsou pinované v `contracts/C
 
 ## CI
 
-`.github/workflows/kontrola.yml`: `npm ci`, `npm run typecheck`, `npm test`, `npm run arch`, gitleaks, kontrola odkazů.
+`.github/workflows/kontrola.yml` (Node 24): `npm ci`, `npm run typecheck`, `npm test`, `npm run arch`, gitleaks, kontrola odkazů.
+
+## Testy
+
+`tests/` má jeden soubor na rodinu (`ctr`, `sec`, `mut`, `idm`, `wf`, `res`, `int`, `evd`, `arch`). Názvy testů nesou Test ID z `VERIFICATION-CONTRACT.md`. Conformance fixtures a golden výstupy jsou v `conformance/<capability>/`, golden master workflow v `conformance/workflows/document-intake.v1/`. Testy zapisující journal a audit soubory používají dočasný adresář systému; nic nezůstává v repu.

@@ -36,7 +36,12 @@ export class Router {
   /** Every message that reached the router, for tests such as SEC-INJ-001 ("no email.send was ever dispatched"). */
   readonly seen: DispatchEnvelope[] = [];
 
-  constructor(private readonly opts: { registry: KeyRegistry; clock: Clock; audit: Audit }) {}
+  /** Binding mechanisms this receiver accepts. "in-process" only when message and context provably never left the process (SEC-CTX-005). */
+  private readonly acceptedMechanisms: string[];
+
+  constructor(private readonly opts: { registry: KeyRegistry; clock: Clock; audit: Audit; acceptedMechanisms?: string[] }) {
+    this.acceptedMechanisms = opts.acceptedMechanisms ?? ["signed-envelope"];
+  }
 
   register(component: RegisteredComponent): void {
     const v = validateContract("module-descriptor", component.descriptor);
@@ -59,7 +64,10 @@ export class Router {
     const schema = validateContract("dispatch-envelope", env);
     if (!schema.ok) return this.deny(env, platformError("SCHEMA_VALIDATION_FAILED", "dispatch envelope invalid", { errors: schema.errors }));
 
-    const binding = verifyBinding(env, this.opts.registry);
+    if (!this.acceptedMechanisms.includes(env.binding.mechanism)) {
+      return this.deny(env, platformError("CONTEXT_BINDING_INVALID", `binding mechanism ${env.binding.mechanism} not accepted by this receiver`));
+    }
+    const binding = verifyBinding(env, this.opts.registry, now);
     if (!binding.ok) return this.deny(env, platformError("CONTEXT_BINDING_INVALID", binding.reason));
 
     if (context.expiresAt < now) return this.deny(env, platformError("CONTEXT_EXPIRED", `context expired at ${context.expiresAt}`));

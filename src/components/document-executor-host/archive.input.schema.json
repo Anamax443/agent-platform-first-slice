@@ -1,0 +1,10 @@
+{
+  "$id": "document.archive.input.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifactId", "sha256"],
+  "properties": {
+    "artifactId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$" },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  }
+}

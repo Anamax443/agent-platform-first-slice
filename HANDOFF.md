@@ -2,6 +2,28 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-06 (3) — M1 dokončeno, M2 a M3 hotové: 132 testů, 44 Test ID, MUST sada zelená
+
+**Stav:** `npm run typecheck`, `npm test` (9 souborů, 132 testů) a `npm run arch` procházejí lokálně. CI `kontrola` dosud padala na chybějících testech a chybějícím `scripts/arch-dep.mjs`; oboje je teď v repu, CI přepnuto na Node 24 (varování o deprecaci Node 20 na runnerech).
+
+**Hotové v této session:**
+- Komponenty: `document-classifier/handler.ts` (prompt s oddělovači, enum allowlist čtený z output schématu, QUALITY retry s novým klíčem, provenance s modelId/promptVersion), `document-validator/` (descriptor s `dependsOn`, integrita sha256, registr přes `withTimeout`, mapování chyb, obě varianty INT-FAIL-004), `document-executor-host/` (descriptor se dvěma capability LOW/LOGICAL, stamp handler + reconciler přes `clientRef = idempotencyKey`, archive handler jako druhý handler v hostu). Output schémata pro všechny čtyři capability.
+- Platforma: reconciliation hook v `ExecutorHost.reconcilerFor` (dedup záznam sleduje výsledek reconciliace), orchestrátor drží stejný `idempotencyKey` při technickém retry (`logicalAttempt` v journalu), `applyReviewExpiries` (WF-REV-003 mění stav instance), `acceptedMechanisms` v routeru (podvržený `in-process` binding neprojde), grace period klíče v `KeyRegistry` (SEC-CRED-003), `correlationId` na review tascích, `Audit.all()` vrací hluboké kopie.
+- Kontrakty řezu: `contracts/policy/document.{classify,validate,stamp,archive}.v1.policy.json` (ADR-016), `workflows/document-intake.v1.json`, `src/slice.ts` (kompoziční kořen), `scripts/arch-dep.mjs` (ARCH-DEP-001 + lint hodin, VC §8.1).
+- Conformance: `conformance/document.{classify,validate,stamp,archive}/` (fixtures, golden, README s MUST/DON'T CARE, `errors.md`, `compat.md`), `conformance/workflows/document-intake.v1/` (5 scénářů, golden master pro INT-E2E-001).
+- Testy podle rodin: `tests/{ctr,sec,mut,idm,wf,res,int,evd,arch}.test.ts`, harness v `tests/harness/` (suite loader, conformance runner, rogue handlery pro SEC-HOST).
+- `docs/MEASUREMENT.md`: M1–M3 zapsáno, 9 nálezů (4 zachytil test při prvním běhu, 4 vzešly z psaní testu proti normě, 1 doložená mez normy), 9 položek „obejito / chybělo" s návrhy pro foundation.
+
+**Nejdůležitější nálezy pro foundation (detail v MEASUREMENT):** N5 klíč při technickém retry, N6 `in-process` binding, N7/W2 kdo mění dedup záznam po reconciliaci, N9/W4 injection uvnitř allowlistu projde F2.
+
+**Rozpracované / chybí:**
+1. Čas vlastníka do MEASUREMENT (řádky M1–M3), bez něj limit 40 h nejde vyhodnotit.
+2. Ověřit zelené CI po pushi (gitleaks nad `dms-secret`/`archive-secret` v `src/slice.ts` by neměl reagovat, jsou to fake hodnoty; kdyby ano, allowlist v `.gitleaks.toml`).
+3. M4 podle XII.G: druhý tok `mail.received` → `email.send` (PRINCIPAL, vlastní deployable), SEC-CTX-002 mezi oběma toky. WIP limit: až po uzavření M3, což je teď.
+4. Nálezy N5–N9 a W1–W7 přenést do foundation jako část XVII „Protokol implementace" (změna zmrazených dokumentů jen s evidencí odsud, viz XVI).
+
+**Zbývá rozhodnout (Milan):** (a) zda W4 (injection uvnitř allowlistu) řešit v normě druhým signálem, nebo nechat na AI-EVAL; (b) zda M4 žije v tomto repu (druhý deployable vedle) nebo v novém.
+
 ## 2026-09-06 (2) — M1 rozpracováno: platformové minimum a adaptéry, bez testů
 
 **Stav:** typecheck prochází (`npx tsc --noEmit`), `npm test` zatím nemá co spouštět (žádný test soubor). Vlastník zastavil práci uprostřed M1; tento commit ukládá rozpracovaný stav tak, jak je, aby se dalo pokračovat z jiného počítače.

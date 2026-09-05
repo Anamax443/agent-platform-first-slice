@@ -1,0 +1,26 @@
+[
+  {
+    "id": "canonical-archive",
+    "kind": "canonical",
+    "artifact": { "tenantId": "tenant-42", "bytes": "FAKTURA č. 2026-0142 (stamped)" },
+    "payload": { "artifactId": "$artifactId", "sha256": "$sha256" }
+  },
+  {
+    "id": "damaged-hash-mismatch",
+    "kind": "damaged",
+    "artifact": { "tenantId": "tenant-42", "bytes": "INVOICE No. 30" },
+    "payload": { "artifactId": "$artifactId", "sha256": "$sha256:tampered" }
+  },
+  {
+    "id": "error-artifact-missing",
+    "kind": "error",
+    "payload": { "artifactId": "art-missing", "sha256": "0000000000000000000000000000000000000000000000000000000000000000" }
+  },
+  {
+    "id": "error-ai-actor",
+    "kind": "error",
+    "actor": "ai-doc-classifier",
+    "artifact": { "tenantId": "tenant-42", "bytes": "INVOICE No. 31" },
+    "payload": { "artifactId": "$artifactId", "sha256": "$sha256" }
+  }
+]
