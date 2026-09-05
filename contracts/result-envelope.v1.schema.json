@@ -1,0 +1,274 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.agent-platform-foundation.local/result-envelope.v1.schema.json",
+  "title": "Result envelope v1",
+  "description": "Result of one execution attempt. Every ending is explicit: SUCCEEDED, FAILED, WAITING, UNKNOWN_OUTCOME or CANCELLED. See FOUNDATION-core.md §4.4, §4.5, §5.1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "messageId",
+    "inReplyTo",
+    "correlationId",
+    "status",
+    "capability",
+    "capabilityVersion",
+    "schemaVersion",
+    "completedAt"
+  ],
+  "properties": {
+    "messageId": {
+      "$ref": "#/$defs/id"
+    },
+    "inReplyTo": {
+      "$ref": "#/$defs/id",
+      "description": "messageId of the command this result answers."
+    },
+    "correlationId": {
+      "$ref": "#/$defs/id"
+    },
+    "workflowId": {
+      "$ref": "#/$defs/id"
+    },
+    "stepId": {
+      "$ref": "#/$defs/token"
+    },
+    "executionId": {
+      "$ref": "#/$defs/id",
+      "description": "Identity of this attempt."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "SUCCEEDED",
+        "FAILED",
+        "WAITING",
+        "UNKNOWN_OUTCOME",
+        "CANCELLED"
+      ]
+    },
+    "capability": {
+      "$ref": "#/$defs/capabilityName"
+    },
+    "capabilityVersion": {
+      "$ref": "#/$defs/version"
+    },
+    "schemaVersion": {
+      "$ref": "#/$defs/version"
+    },
+    "completedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$",
+      "description": "UTC only, must end with Z (CTR-TIME-001)."
+    },
+    "payload": {
+      "type": "object"
+    },
+    "error": {
+      "$ref": "#/$defs/error"
+    },
+    "waitReason": {
+      "type": "string",
+      "enum": [
+        "EXTERNAL",
+        "REVIEW",
+        "SCHEDULE",
+        "DEPENDENCY"
+      ]
+    },
+    "deadline": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$",
+      "description": "UTC only, must end with Z (CTR-TIME-001)."
+    },
+    "reviewTaskId": {
+      "$ref": "#/$defs/id"
+    },
+    "reconciliationRef": {
+      "$ref": "#/$defs/id",
+      "description": "Required for UNKNOWN_OUTCOME. Points to the reconciliation record or external status query handle."
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "producerComponent": {
+          "$ref": "#/$defs/id"
+        },
+        "producerVersion": {
+          "type": "string"
+        },
+        "modelId": {
+          "type": "string"
+        },
+        "promptVersion": {
+          "type": "string"
+        },
+        "derivedFrom": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "SUCCEEDED"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "payload"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "FAILED"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "error"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "WAITING"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "waitReason",
+          "deadline"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "UNKNOWN_OUTCOME"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "reconciliationRef"
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "token": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+(\\.[0-9]+)?$"
+    },
+    "capabilityName": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)+$"
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "class",
+        "retryable",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]{2,63}$",
+          "description": "Stable machine identifier. Part of the capability contract."
+        },
+        "class": {
+          "type": "string",
+          "enum": [
+            "TECHNICAL",
+            "QUALITY",
+            "BUSINESS",
+            "SECURITY",
+            "POLICY",
+            "VALIDATION",
+            "DEPENDENCY",
+            "UNKNOWN"
+          ]
+        },
+        "retryable": {
+          "type": "boolean",
+          "description": "Executor-level: the SAME command may be attempted again by the executor (technical retry). For QUALITY it means: with a different strategy (new idempotency key)."
+        },
+        "reissuable": {
+          "type": "boolean",
+          "description": "Orchestrator-level: a NEW command with the same idempotency key may be issued after re-validating the intent (e.g. COMMAND_EXPIRED: retryable=false, reissuable=true; DUPLICATE_COMMAND: false/false; DEPENDENCY_UNAVAILABLE: true/false). Absent means false."
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "Human readable, localizable, no secrets, no raw untrusted content."
+        },
+        "details": {
+          "type": "object"
+        },
+        "retryAfter": {
+          "type": "string",
+          "description": "ISO 8601 duration or date-time."
+        },
+        "diagnosticRef": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "messageId": "res-002",
+      "inReplyTo": "cmd-001",
+      "correlationId": "01J8K2M3N4P5Q6R7S8T9V0W1AA",
+      "workflowId": "wf-123",
+      "stepId": "extract",
+      "status": "FAILED",
+      "capability": "invoice.extract",
+      "capabilityVersion": "1",
+      "schemaVersion": "1",
+      "completedAt": "2026-09-05T12:00:03Z",
+      "error": {
+        "code": "DOCUMENT_QUALITY_TOO_LOW",
+        "class": "QUALITY",
+        "retryable": true,
+        "message": "Document quality is insufficient for reliable extraction",
+        "details": {
+          "ocrConfidence": 0.41
+        }
+      }
+    }
+  ]
+}

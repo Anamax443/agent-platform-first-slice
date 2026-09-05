@@ -1,0 +1,41 @@
+name: kontrola
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  testy:
+    name: typecheck + testy + arch
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run arch
+
+  tajemstvi:
+    name: sken tajemstvi
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  markdown:
+    name: kontrola odkazu
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: rozbite odkazy v md
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: --no-progress --offline --exclude-path node_modules '**/*.md'
+          fail: true

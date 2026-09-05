@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.agent-platform-foundation.local/dispatch-envelope.v1.schema.json",
+  "title": "Dispatch envelope v1",
+  "description": "Transport-level wrapper binding one message to one TrustedExecutionContext. Produced by the gateway/router, verified by every receiver across a process or transport boundary. The signature is OUTSIDE the signed objects: it covers the JCS (RFC 8785) canonical JSON of { \"message\": message, \"context\": context }, so neither the payload nor the context can be swapped or altered on the wire. See FOUNDATION-core.md §4.3.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "message",
+    "context",
+    "binding"
+  ],
+  "properties": {
+    "message": {
+      "$ref": "message-envelope.v1.schema.json"
+    },
+    "context": {
+      "$ref": "trusted-context.v1.schema.json"
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mechanism"
+      ],
+      "properties": {
+        "mechanism": {
+          "type": "string",
+          "enum": [
+            "in-process",
+            "signed-envelope",
+            "broker-identity",
+            "token-bound",
+            "mtls"
+          ],
+          "description": "Default for any hop across a process or transport boundary is signed-envelope. in-process is allowed only when message and context never leave the process. broker-identity, token-bound and mtls are allowed only with documented equivalence (SEC-CTX-005)."
+        },
+        "algorithm": {
+          "type": "string",
+          "enum": [
+            "HMAC-SHA256",
+            "Ed25519"
+          ],
+          "description": "Default is Ed25519: the private key lives only in the gateway/router, receivers hold the public key, so no receiver or handler can sign on behalf of another (T19, SEC-HOST-002). HMAC-SHA256 is allowed only when gateway and the single receiver are one trust domain (one deployable)."
+        },
+        "keyId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Identifies the signing key. Receivers accept the current key and the previous key during the rotation grace period (SEC-CRED-002)."
+        },
+        "signature": {
+          "type": "string",
+          "minLength": 16,
+          "description": "Base64url signature over JCS canonical JSON of { message, context }."
+        },
+        "signedAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$",
+          "description": "UTC only, must end with Z (CTR-TIME-001)."
+        },
+        "canonicalization": {
+          "type": "string",
+          "enum": [
+            "JCS"
+          ],
+          "description": "RFC 8785 JSON Canonicalization Scheme."
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "binding": {
+            "properties": {
+              "mechanism": {
+                "const": "signed-envelope"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "then": {
+        "properties": {
+          "binding": {
+            "required": [
+              "algorithm",
+              "keyId",
+              "signature",
+              "signedAt",
+              "canonicalization"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "type": "object"
+    },
+    {
+      "if": {
+        "properties": {
+          "binding": {
+            "properties": {
+              "mechanism": {
+                "const": "in-process"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "then": {
+        "properties": {
+          "binding": {
+            "not": {
+              "required": [
+                "signature"
+              ],
+              "type": "object"
+            },
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "type": "object"
+    }
+  ],
+  "examples": [
+    {
+      "message": {
+        "messageId": "01J8K2M3N4P5Q6R7S8T9V0W1X2",
+        "correlationId": "01J8K2M3N4P5Q6R7S8T9V0W1AA",
+        "workflowId": "wf-123",
+        "stepId": "extract",
+        "type": "command",
+        "capability": "invoice.extract",
+        "capabilityVersion": "1",
+        "schemaVersion": "1",
+        "idempotencyKey": "wf-123:extract:standard-ocr:1",
+        "createdAt": "2026-09-05T12:00:00Z",
+        "notValidAfter": "2026-09-05T12:10:00Z",
+        "payload": {
+          "documentArtifactId": "art-987"
+        }
+      },
+      "context": {
+        "dispatchId": "dsp-101",
+        "tenantId": "tenant-42",
+        "actorId": "svc-mail-01",
+        "actorType": "service",
+        "originatingActorId": "user-17",
+        "authStrength": "client-credentials",
+        "scopes": [
+          "invoice.extract"
+        ],
+        "sourceComponent": "mail-agent",
+        "targetComponent": "invoice-agent-02",
+        "authenticatedAt": "2026-09-05T11:59:58Z",
+        "expiresAt": "2026-09-05T12:59:58Z"
+      },
+      "binding": {
+        "mechanism": "signed-envelope",
+        "algorithm": "HMAC-SHA256",
+        "keyId": "dispatch-2026-09",
+        "signature": "u7Zt3vN1kQ9eWq2xR8cP4mL6bH0aT5yF1sD3gJ7nK2o",
+        "signedAt": "2026-09-05T12:00:00Z",
+        "canonicalization": "JCS"
+      }
+    }
+  ]
+}

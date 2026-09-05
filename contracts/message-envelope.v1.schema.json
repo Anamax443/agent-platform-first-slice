@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.agent-platform-foundation.local/message-envelope.v1.schema.json",
+  "title": "Message envelope v1",
+  "description": "Caller-supplied command/event/query envelope. Carries NO trusted metadata (tenant, actor, scopes, target). See FOUNDATION-core.md §4.1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "messageId",
+    "correlationId",
+    "type",
+    "capability",
+    "capabilityVersion",
+    "schemaVersion",
+    "createdAt",
+    "payload"
+  ],
+  "properties": {
+    "messageId": {
+      "$ref": "#/$defs/id",
+      "description": "Delivery identity. Unique per message."
+    },
+    "correlationId": {
+      "$ref": "#/$defs/id",
+      "description": "End-to-end business flow identity."
+    },
+    "causationId": {
+      "$ref": "#/$defs/id",
+      "description": "messageId of the message that caused this one."
+    },
+    "workflowId": {
+      "$ref": "#/$defs/id",
+      "description": "Durable workflow instance."
+    },
+    "stepId": {
+      "$ref": "#/$defs/token",
+      "description": "Step id within the workflow definition."
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "command",
+        "event",
+        "query"
+      ]
+    },
+    "capability": {
+      "$ref": "#/$defs/capabilityName"
+    },
+    "capabilityVersion": {
+      "$ref": "#/$defs/version"
+    },
+    "schemaVersion": {
+      "$ref": "#/$defs/version",
+      "description": "Version of the payload shape."
+    },
+    "idempotencyKey": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "One logical write intent. Required for commands with side effects. Quality retry uses a NEW key (workflowId:stepId:strategyId:n)."
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$",
+      "description": "UTC only, must end with Z (CTR-TIME-001)."
+    },
+    "notValidAfter": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Required for write commands. Executor checks immediately before the side effect. UTC only, must end with Z (CTR-TIME-001).",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$"
+    },
+    "payload": {
+      "type": "object",
+      "description": "Domain-specific content validated by the capability input schema."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "command"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "idempotencyKey",
+          "notValidAfter"
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "token": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+(\\.[0-9]+)?$"
+    },
+    "capabilityName": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)+$",
+      "description": "domain.action, lowercase, English only."
+    }
+  },
+  "examples": [
+    {
+      "messageId": "01J8K2M3N4P5Q6R7S8T9V0W1X2",
+      "correlationId": "01J8K2M3N4P5Q6R7S8T9V0W1AA",
+      "workflowId": "wf-123",
+      "stepId": "extract",
+      "type": "command",
+      "capability": "invoice.extract",
+      "capabilityVersion": "1",
+      "schemaVersion": "1",
+      "idempotencyKey": "wf-123:extract:standard-ocr:1",
+      "createdAt": "2026-09-05T12:00:00Z",
+      "notValidAfter": "2026-09-05T12:10:00Z",
+      "payload": {
+        "documentArtifactId": "art-987"
+      }
+    }
+  ]
+}

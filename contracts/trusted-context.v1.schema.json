@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.agent-platform-foundation.local/trusted-context.v1.schema.json",
+  "title": "TrustedExecutionContext v1",
+  "description": "Created by gateway/router from authenticated identity. Never derived from the business payload. Immutable for one dispatch. The context carries NO signature of itself; binding to the message lives in dispatch-envelope.v1 (see FOUNDATION-core.md §4.2, §4.3). Any 'binding' or 'tenantId' supplied by a caller is rejected.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "dispatchId",
+    "tenantId",
+    "actorId",
+    "actorType",
+    "scopes",
+    "sourceComponent",
+    "authenticatedAt",
+    "expiresAt"
+  ],
+  "properties": {
+    "dispatchId": {
+      "$ref": "#/$defs/id"
+    },
+    "tenantId": {
+      "$ref": "#/$defs/id",
+      "description": "Trusted tenant. For single-tenant deployments use a fixed constant, never omit."
+    },
+    "actorId": {
+      "$ref": "#/$defs/id",
+      "description": "Authenticated identity performing this dispatch."
+    },
+    "actorType": {
+      "type": "string",
+      "enum": [
+        "human",
+        "ai-agent",
+        "deterministic-module",
+        "executor",
+        "endpoint-agent",
+        "service",
+        "scheduler"
+      ]
+    },
+    "originatingActorId": {
+      "$ref": "#/$defs/id",
+      "description": "Original human or system identity at the start of the chain. Prevents confused deputy across hops."
+    },
+    "authStrength": {
+      "type": "string",
+      "enum": [
+        "oidc-user",
+        "client-credentials",
+        "certificate",
+        "session",
+        "mtls"
+      ]
+    },
+    "scopes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/capabilityName"
+      },
+      "minItems": 0,
+      "uniqueItems": true,
+      "description": "Capabilities this actor is authorized to request. Granted by platform policy, never by the component's own descriptor."
+    },
+    "sourceComponent": {
+      "$ref": "#/$defs/id"
+    },
+    "targetComponent": {
+      "$ref": "#/$defs/id",
+      "description": "Filled by the Capability Router. Never supplied by the business caller."
+    },
+    "authenticatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$",
+      "description": "UTC only, must end with Z (CTR-TIME-001)."
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "After this time the context must be re-derived from identity. UTC only, must end with Z (CTR-TIME-001).",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$"
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@-]*$"
+    },
+    "capabilityName": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)+(\\.\\*)?$"
+    }
+  },
+  "examples": [
+    {
+      "dispatchId": "dsp-101",
+      "tenantId": "tenant-42",
+      "actorId": "svc-mail-01",
+      "actorType": "service",
+      "originatingActorId": "user-17",
+      "authStrength": "client-credentials",
+      "scopes": [
+        "invoice.extract"
+      ],
+      "sourceComponent": "mail-agent",
+      "targetComponent": "invoice-agent-02",
+      "authenticatedAt": "2026-09-05T11:59:58Z",
+      "expiresAt": "2026-09-05T12:59:58Z"
+    }
+  ]
+}

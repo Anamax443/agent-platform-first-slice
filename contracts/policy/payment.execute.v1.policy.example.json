@@ -1,0 +1,33 @@
+{
+  "$comment": "Platform policy EXAMPLE (ADR-016). Authority artefact owned by the platform, never by the provider. A module-descriptor points here via capabilities[].semanticValidation.policyRef. Schema for this file is deliberately not yet written: it is produced together with the first component that consumes it (P2). Times UTC with Z.",
+  "policyRef": "policy/payment.execute/v1",
+  "capability": "payment.execute",
+  "capabilityVersion": "1",
+  "owner": "platform",
+  "validFrom": "2026-09-05T00:00:00Z",
+  "grants": [
+    {
+      "actorId": "svc-orchestrator",
+      "actorType": "service",
+      "scopes": ["payment.execute"],
+      "tenants": ["tenant-42"],
+      "rateLimit": { "commandsPerMinute": 10 }
+    }
+  ],
+  "approval": {
+    "required": true,
+    "reviewerRole": "payment.approver",
+    "minAuthStrength": "oidc-user",
+    "approvalBoundTo": ["reviewTaskId", "workflowId"]
+  },
+  "effectFieldValidators": {
+    "paymentId": { "validator": "payment.approval.validate", "mustPass": true },
+    "bankAccount": { "validator": "supplier.bankaccount.validate", "mustPass": true },
+    "amount": { "validator": "payment.amountpolicy.validate", "mustPass": true, "params": { "maxPerCommand": "250000.00", "currency": "CZK" } }
+  },
+  "isolation": {
+    "acceptedIsolationClass": "PRINCIPAL",
+    "isolationDecisionRef": "ADR-003 rev. rc2.1; SEC-HOST-001 evidence 2026-09-05"
+  },
+  "failClosed": true
+}

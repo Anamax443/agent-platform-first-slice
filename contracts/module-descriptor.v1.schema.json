@@ -1,0 +1,781 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.agent-platform-foundation.local/module-descriptor.v1.schema.json",
+  "title": "Module descriptor v1",
+  "description": "What a component IS and CLAIMS: capabilities, versions, side effects, isolation. It is a provider claim, not an authority: who may call it, for which tenant and with which approval lives in platform policy, never here. Verification profiles are DERIVED from declared characteristics and validated by this schema (a component cannot lower its own test obligations). See FOUNDATION-core.md §8 and VERIFICATION-CONTRACT.md §1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "module",
+    "componentVersion",
+    "runtime",
+    "tenantMode",
+    "capabilities",
+    "verificationProfiles"
+  ],
+  "properties": {
+    "module": {
+      "$ref": "#/$defs/id"
+    },
+    "componentVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+([-+][0-9A-Za-z.-]+)?$"
+    },
+    "buildCommit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "runtime": {
+      "type": "string",
+      "enum": [
+        "endpoint",
+        "server",
+        "container",
+        "cloud-function",
+        "cloud-service",
+        "managed-service",
+        "in-process"
+      ]
+    },
+    "deploymentModel": {
+      "type": "string",
+      "enum": [
+        "ON_PREM_SINGLE_TENANT",
+        "CLOUD_SINGLE_TENANT",
+        "CLOUD_MULTI_TENANT",
+        "HYBRID"
+      ]
+    },
+    "tenantMode": {
+      "type": "string",
+      "enum": [
+        "N/A",
+        "SINGLE",
+        "MULTI_TENANT_READY",
+        "MULTI_TENANT_ACTIVE"
+      ]
+    },
+    "owner": {
+      "type": "string"
+    },
+    "dependsOn": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/capabilityName"
+      },
+      "description": "Capabilities this component calls. Non-empty list derives the MODULE_DEPENDENCY profile (INT-FAIL-*, INT-UPGRADE-*)."
+    },
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/capability"
+      }
+    },
+    "verificationProfiles": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "WRITE_EXECUTOR",
+          "MULTI_TENANT",
+          "PROVIDER",
+          "AI_CAPABILITY",
+          "DURABLE_WORKFLOW",
+          "EVIDENCE",
+          "MODULE_DEPENDENCY"
+        ]
+      },
+      "description": "Must contain every profile derived from the declared characteristics (enforced below). May contain more."
+    },
+    "endpoints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "health": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "capabilities": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "$comment": "Derived profile: any side effect -> WRITE_EXECUTOR",
+      "if": {
+        "properties": {
+          "capabilities": {
+            "contains": {
+              "required": [
+                "sideEffects"
+              ],
+              "properties": {
+                "sideEffects": {
+                  "enum": [
+                    "internal-write",
+                    "external-write"
+                  ]
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "then": {
+        "properties": {
+          "verificationProfiles": {
+            "contains": {
+              "const": "WRITE_EXECUTOR"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "type": "object"
+    },
+    {
+      "$comment": "Derived profile: external write -> EVIDENCE",
+      "if": {
+        "properties": {
+          "capabilities": {
+            "contains": {
+              "required": [
+                "sideEffects"
+              ],
+              "properties": {
+                "sideEffects": {
+                  "const": "external-write"
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "then": {
+        "properties": {
+          "verificationProfiles": {
+            "contains": {
+              "const": "EVIDENCE"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "type": "object"
+    },
+    {
+      "$comment": "Derived profile: usesLlm -> AI_CAPABILITY",
+      "if": {
+        "properties": {
+          "capabilities": {
+            "contains": {
+              "required": [
+                "usesLlm"
+              ],
+              "properties": {
+                "usesLlm": {
+                  "const": true
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "then": {
+        "properties": {
+          "verificationProfiles": {
+            "contains": {
+              "const": "AI_CAPABILITY"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "type": "object"
+    },
+    {
+      "$comment": "Derived profile: MULTI_TENANT_ACTIVE -> MULTI_TENANT",
+      "if": {
+        "properties": {
+          "tenantMode": {
+            "const": "MULTI_TENANT_ACTIVE"
+          }
+        },
+        "type": "object"
+      },
+      "then": {
+        "properties": {
+          "verificationProfiles": {
+            "contains": {
+              "const": "MULTI_TENANT"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "type": "object"
+    },
+    {
+      "$comment": "Derived profile: dependsOn non-empty -> MODULE_DEPENDENCY",
+      "if": {
+        "required": [
+          "dependsOn"
+        ],
+        "properties": {
+          "dependsOn": {
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "then": {
+        "properties": {
+          "verificationProfiles": {
+            "contains": {
+              "const": "MODULE_DEPENDENCY"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "type": "object"
+    },
+    {
+      "$comment": "Every provider is a PROVIDER",
+      "properties": {
+        "verificationProfiles": {
+          "contains": {
+            "const": "PROVIDER"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    }
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+(\\.[0-9]+)?$"
+    },
+    "capabilityName": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)+$"
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "versions",
+        "preferredVersion",
+        "sideEffects",
+        "executionMode",
+        "trustClass"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/capabilityName"
+        },
+        "versions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/version"
+          }
+        },
+        "preferredVersion": {
+          "$ref": "#/$defs/version"
+        },
+        "deprecatedVersions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/version"
+          }
+        },
+        "inputSchema": {
+          "type": "string",
+          "description": "Reference to the input JSON Schema id."
+        },
+        "outputSchema": {
+          "type": "string"
+        },
+        "conformanceSuiteVersion": {
+          "type": "string"
+        },
+        "conformanceTier": {
+          "type": "string",
+          "enum": [
+            "exact",
+            "semantic",
+            "property",
+            "ai-eval"
+          ],
+          "description": "How golden outputs are compared: exact (byte-equal), semantic (MUST fields equal, others ignored), property (invariants over output), ai-eval (thresholds over golden set). Prevents golden fixtures from freezing implementations."
+        },
+        "executionMode": {
+          "type": "string",
+          "enum": [
+            "sync",
+            "async"
+          ]
+        },
+        "sideEffects": {
+          "type": "string",
+          "enum": [
+            "none",
+            "internal-write",
+            "external-write"
+          ]
+        },
+        "trustClass": {
+          "type": "string",
+          "enum": [
+            "untrusted-processing",
+            "deterministic",
+            "executor"
+          ]
+        },
+        "riskClass": {
+          "type": "string",
+          "enum": [
+            "LOW",
+            "MEDIUM",
+            "HIGH",
+            "CRITICAL"
+          ]
+        },
+        "isolationClass": {
+          "type": "string",
+          "enum": [
+            "LOGICAL",
+            "PRINCIPAL",
+            "PROCESS"
+          ],
+          "description": "LOGICAL = policy/allowlist inside a shared host; PRINCIPAL = own credential identity, may share a host; PROCESS = own process/container/sandbox. Minimum is derived from riskClass (enforced below)."
+        },
+        "isolationDecision": {
+          "type": "string",
+          "description": "Reference to the explicit, recorded risk decision when a HIGH capability runs with PRINCIPAL isolation instead of PROCESS (e.g. ADR id + SEC-HOST-001 evidence)."
+        },
+        "requiredScopes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/capabilityName"
+          },
+          "description": "Scopes a caller must hold. Declares the requirement; the GRANT of scopes to actors lives in platform policy."
+        },
+        "usesLlm": {
+          "type": "boolean"
+        },
+        "idempotency": {
+          "type": "string",
+          "enum": [
+            "required",
+            "natural",
+            "not-applicable"
+          ]
+        },
+        "idempotencyRetention": {
+          "type": "string",
+          "description": "ISO 8601 duration the dedup evidence is kept, or 'business-identity' for IRREVERSIBLE."
+        },
+        "deadlinePolicy": {
+          "type": "string",
+          "description": "Default notValidAfter window as ISO 8601 duration, or 'caller'."
+        },
+        "reversibility": {
+          "type": "string",
+          "enum": [
+            "REVERSIBLE",
+            "COMPENSATABLE",
+            "IRREVERSIBLE",
+            "not-applicable"
+          ]
+        },
+        "compensationCapability": {
+          "$ref": "#/$defs/capabilityName"
+        },
+        "unknownOutcomeRecovery": {
+          "type": "string",
+          "enum": [
+            "query-external-status",
+            "reconcile",
+            "human-review",
+            "not-applicable"
+          ]
+        },
+        "statusQuery": {
+          "type": "string",
+          "description": "How the external status is queried when unknownOutcomeRecovery = query-external-status: the external identifier used and the adapter operation (e.g. 'bank.getPaymentStatus(endToEndId)'). Required for that recovery mode."
+        },
+        "reconciliationBudget": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20,
+          "default": 3,
+          "description": "Number of reconciliation attempts before UNKNOWN_OUTCOME escalates to WAITING(REVIEW) (WF-UNK-002)."
+        },
+        "humanApproval": {
+          "type": "string",
+          "enum": [
+            "required",
+            "policy",
+            "none"
+          ]
+        },
+        "errorCodes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{2,63}$"
+          }
+        },
+        "effectFields": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "Claim: which payload fields select the TARGET or SCOPE of the side effect (recipient, account, amount, resource). Required for riskClass HIGH/CRITICAL. Each such field must carry validation evidence from a validator named in the platform policy referenced by semanticValidation.policyRef before the executor accepts the command (FOUNDATION-core.md §1 F2, SEC-SEM-001).",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "field",
+              "role"
+            ],
+            "properties": {
+              "field": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z_][A-Za-z0-9_./]*$",
+                "description": "Field name or JSON pointer within payload."
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "target",
+                  "scope",
+                  "amount",
+                  "resource"
+                ]
+              },
+              "validator": {
+                "$ref": "#/$defs/capabilityName",
+                "description": "Optional hint of the expected validator capability (domain.name.validate, same naming rules as any capability). The binding of field -> validator that counts is in platform policy, not here."
+              }
+            }
+          }
+        },
+        "semanticValidation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "policyRef"
+          ],
+          "properties": {
+            "policyRef": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "description": "Reference to the platform policy entry that maps every effectField to a deterministic semantic validator. Authority lives in policy; the descriptor only claims which fields are effect-sensitive."
+            },
+            "evidenceField": {
+              "type": "string",
+              "default": "validation",
+              "description": "Name of the provenance sub-object on each effect field carrying { status, provider, at }."
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "sideEffects": {
+                "const": "external-write"
+              }
+            },
+            "type": "object"
+          },
+          "then": {
+            "required": [
+              "idempotency",
+              "idempotencyRetention",
+              "deadlinePolicy",
+              "reversibility",
+              "unknownOutcomeRecovery",
+              "humanApproval",
+              "riskClass",
+              "isolationClass"
+            ],
+            "type": "object"
+          },
+          "type": "object"
+        },
+        {
+          "if": {
+            "properties": {
+              "reversibility": {
+                "const": "COMPENSATABLE"
+              }
+            },
+            "type": "object"
+          },
+          "then": {
+            "required": [
+              "compensationCapability"
+            ],
+            "type": "object"
+          },
+          "type": "object"
+        },
+        {
+          "if": {
+            "properties": {
+              "unknownOutcomeRecovery": {
+                "const": "query-external-status"
+              }
+            },
+            "type": "object"
+          },
+          "then": {
+            "required": [
+              "statusQuery"
+            ],
+            "type": "object"
+          },
+          "type": "object"
+        },
+        {
+          "$comment": "riskClass CRITICAL -> PROCESS isolation required",
+          "if": {
+            "properties": {
+              "riskClass": {
+                "const": "CRITICAL"
+              }
+            },
+            "required": [
+              "riskClass"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "properties": {
+              "isolationClass": {
+                "const": "PROCESS"
+              }
+            },
+            "required": [
+              "isolationClass"
+            ],
+            "type": "object"
+          },
+          "type": "object"
+        },
+        {
+          "$comment": "riskClass HIGH -> PRINCIPAL (with recorded isolationDecision) or PROCESS",
+          "if": {
+            "properties": {
+              "riskClass": {
+                "const": "HIGH"
+              }
+            },
+            "required": [
+              "riskClass"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "required": [
+              "isolationClass"
+            ],
+            "properties": {
+              "isolationClass": {
+                "enum": [
+                  "PRINCIPAL",
+                  "PROCESS"
+                ]
+              }
+            },
+            "if": {
+              "properties": {
+                "isolationClass": {
+                  "const": "PRINCIPAL"
+                }
+              },
+              "type": "object"
+            },
+            "then": {
+              "required": [
+                "isolationDecision"
+              ],
+              "type": "object"
+            },
+            "type": "object"
+          },
+          "type": "object"
+        },
+        {
+          "$comment": "riskClass MEDIUM -> at least PRINCIPAL",
+          "if": {
+            "properties": {
+              "riskClass": {
+                "const": "MEDIUM"
+              }
+            },
+            "required": [
+              "riskClass"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "properties": {
+              "isolationClass": {
+                "enum": [
+                  "PRINCIPAL",
+                  "PROCESS"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "type": "object"
+        },
+        {
+          "$comment": "riskClass HIGH/CRITICAL -> effectFields and semanticValidation required (SEC-SEM-001)",
+          "if": {
+            "properties": {
+              "riskClass": {
+                "enum": [
+                  "HIGH",
+                  "CRITICAL"
+                ]
+              }
+            },
+            "required": [
+              "riskClass"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "required": [
+              "effectFields",
+              "semanticValidation"
+            ],
+            "type": "object"
+          },
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "examples": [
+    {
+      "module": "payment-executor-host",
+      "componentVersion": "1.2.0",
+      "buildCommit": "ad4245f",
+      "runtime": "cloud-service",
+      "deploymentModel": "CLOUD_MULTI_TENANT",
+      "tenantMode": "MULTI_TENANT_ACTIVE",
+      "owner": "platform",
+      "dependsOn": [
+        "bank.status.query"
+      ],
+      "verificationProfiles": [
+        "WRITE_EXECUTOR",
+        "MULTI_TENANT",
+        "PROVIDER",
+        "EVIDENCE",
+        "MODULE_DEPENDENCY"
+      ],
+      "capabilities": [
+        {
+          "name": "payment.execute",
+          "versions": [
+            "1"
+          ],
+          "preferredVersion": "1",
+          "conformanceTier": "semantic",
+          "executionMode": "async",
+          "sideEffects": "external-write",
+          "trustClass": "executor",
+          "riskClass": "HIGH",
+          "isolationClass": "PRINCIPAL",
+          "isolationDecision": "ADR-003; SEC-HOST-001 evidence run 2026-09-05",
+          "requiredScopes": [
+            "payment.execute"
+          ],
+          "idempotency": "required",
+          "idempotencyRetention": "business-identity",
+          "deadlinePolicy": "PT10M",
+          "reversibility": "IRREVERSIBLE",
+          "unknownOutcomeRecovery": "query-external-status",
+          "statusQuery": "bank.status.query(endToEndId = paymentId)",
+          "reconciliationBudget": 3,
+          "humanApproval": "required",
+          "errorCodes": [
+            "APPROVAL_REQUIRED",
+            "APPROVAL_MISMATCH",
+            "COMMAND_EXPIRED",
+            "DUPLICATE_COMMAND",
+            "UNKNOWN_EXTERNAL_OUTCOME"
+          ],
+          "effectFields": [
+            {
+              "field": "paymentId",
+              "role": "resource",
+              "validator": "payment.approval.validate"
+            },
+            {
+              "field": "bankAccount",
+              "role": "target",
+              "validator": "supplier.bankaccount.validate"
+            },
+            {
+              "field": "amount",
+              "role": "amount",
+              "validator": "payment.amountpolicy.validate"
+            }
+          ],
+          "semanticValidation": {
+            "policyRef": "policy/payment.execute/v1"
+          }
+        }
+      ],
+      "endpoints": {
+        "health": "/health",
+        "version": "/version",
+        "capabilities": "/capabilities"
+      }
+    }
+  ]
+}
