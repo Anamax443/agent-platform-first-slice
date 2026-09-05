@@ -1,0 +1,10 @@
+{
+  "$id": "document.classify.input.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifactId"],
+  "properties": {
+    "artifactId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "strategy": { "type": "string", "enum": ["llm", "keyword", "human-corrected"] }
+  }
+}

@@ -1,0 +1,395 @@
+import type { Audit } from "./audit.js";
+import type { Clock } from "./clock.js";
+import { iso, plus } from "./clock.js";
+import type { Gateway } from "./gateway.js";
+import { newId } from "./ids.js";
+import type { Instance, Journal, SideEffects, StepRecord } from "./journal.js";
+import type { ReviewService, Decision } from "./review.js";
+import type { Router } from "./router.js";
+import type { ErrorClass, MessageEnvelope, ResultEnvelope } from "./types.js";
+
+export type OnFailed = "retryQuality" | "review" | "fail";
+
+export interface StepDef {
+  id: string;
+  capability: string;
+  capabilityVersion: string;
+  sideEffects: SideEffects;
+  /** JSON-pointer-lite: "$input.x", "$steps.<stepId>.payload.a.b", "$strategy" */
+  inputs: Record<string, string>;
+  strategies?: string[];
+  qualityBudget?: number;
+  technicalRetries?: number;
+  reconciliationBudget?: number;
+  onFailed?: Partial<Record<ErrorClass, OnFailed>>;
+  reviewRole?: string;
+  reviewExpiresInMs?: number;
+}
+
+export interface WorkflowDef {
+  workflow: string;
+  workflowVersion: string;
+  conformanceTier: "exact" | "semantic" | "property" | "ai-eval";
+  deadlineMs: number;
+  steps: StepDef[];
+}
+
+export type ReconcileResult =
+  | { status: "SUCCEEDED"; payload: Record<string, unknown> }
+  | { status: "FAILED" }
+  | { status: "UNKNOWN" };
+
+export type Reconciler = (ref: string, step: StepRecord, instance: Instance) => Promise<ReconcileResult>;
+
+export type RunOutcome = "SUCCEEDED" | "FAILED" | "WAITING";
+
+/**
+ * Deterministic orchestrator over a versioned workflow definition (FOUNDATION-core §2, §5).
+ * Owns workflow state, not domain data. Every ending is explicit and journaled.
+ */
+export class Orchestrator {
+  constructor(
+    private readonly opts: {
+      workflow: WorkflowDef;
+      gateway: Gateway;
+      router: Router;
+      journal: Journal;
+      review: ReviewService;
+      audit: Audit;
+      clock: Clock;
+      actorId: string;
+      reconcilers?: Record<string, Reconciler>;
+    },
+  ) {}
+
+  get workflow(): WorkflowDef {
+    return this.opts.workflow;
+  }
+
+  start(input: { tenantId: string } & Record<string, unknown>, correlationId?: string): Instance {
+    const now = iso(this.opts.clock.now());
+    const { tenantId, ...rest } = input;
+    const inst: Instance = {
+      workflowId: newId("wf"),
+      workflow: this.opts.workflow.workflow,
+      workflowVersion: this.opts.workflow.workflowVersion,
+      correlationId: correlationId ?? newId("cor"),
+      tenantId,
+      actorId: this.opts.actorId,
+      status: "RUNNING",
+      currentStep: 0,
+      input: rest,
+      steps: [],
+      published: { status: "RUNNING" },
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.save(inst);
+    return inst;
+  }
+
+  /** Runs until the instance is terminal or waits. Idempotent to call again after WAITING is resolved. */
+  async run(workflowId: string): Promise<Instance> {
+    let inst = this.load(workflowId);
+    if (inst.workflowVersion !== this.opts.workflow.workflowVersion) {
+      throw new Error(`instance ${workflowId} is pinned to workflow v${inst.workflowVersion}, this orchestrator runs v${this.opts.workflow.workflowVersion} (WF-VER-001)`);
+    }
+    while (inst.status === "RUNNING" && inst.currentStep < this.opts.workflow.steps.length) {
+      const outcome = await this.runStep(inst, inst.currentStep);
+      inst = this.load(workflowId);
+      if (outcome !== "SUCCEEDED") break;
+    }
+    if (inst.status === "RUNNING" && inst.currentStep >= this.opts.workflow.steps.length) {
+      inst.status = "SUCCEEDED";
+      inst.published = { status: "SUCCEEDED" };
+      this.save(inst);
+      this.opts.audit.append({ kind: "state", workflowId: inst.workflowId, correlationId: inst.correlationId, tenantId: inst.tenantId, details: { status: "SUCCEEDED" } });
+    }
+    return inst;
+  }
+
+  /** Restart recovery (RES-CRASH-001): RUNNING steps either rerun (no side effects) or reconcile (writes). */
+  async recover(): Promise<Instance[]> {
+    const out: Instance[] = [];
+    for (const inst of this.opts.journal.list()) {
+      if (inst.status !== "RUNNING") continue;
+      const step = inst.steps.find((s) => s.status === "RUNNING");
+      if (step && step.sideEffects !== "none") {
+        step.status = "UNKNOWN_OUTCOME";
+        step.reconciliationRef = step.reconciliationRef ?? step.executionId;
+        this.opts.audit.append({ kind: "reconciliation", workflowId: inst.workflowId, correlationId: inst.correlationId, details: { stepId: step.stepId, reason: "recovered RUNNING write step as UNKNOWN_OUTCOME" } });
+        this.save(inst);
+      } else if (step) {
+        step.status = "PENDING";
+        this.save(inst);
+      }
+      out.push(await this.run(inst.workflowId));
+    }
+    return out;
+  }
+
+  /** Apply a review decision and continue (F7: the decision itself was authorized in ReviewService). */
+  async resumeAfterReview(workflowId: string, reviewTaskId: string): Promise<Instance> {
+    const inst = this.load(workflowId);
+    const task = this.opts.review.get(reviewTaskId);
+    if (!task || task.status !== "DECIDED" || !task.decision) throw new Error(`review ${reviewTaskId} not decided`);
+    if (task.workflowId !== workflowId || inst.waiting?.reviewTaskId !== reviewTaskId) throw new Error("review task is not bound to this instance (APPROVAL_MISMATCH)");
+    const step = inst.steps.find((s) => s.stepId === inst.waiting?.stepId && (s.status === "WAITING" || s.status === "UNKNOWN_OUTCOME"));
+    if (!step) throw new Error("no waiting step");
+    const d: Decision = task.decision.decision;
+    if (d === "REJECT") {
+      step.status = "FAILED";
+      inst.status = "FAILED";
+      inst.published = { status: "FAILED" };
+      delete inst.waiting;
+      this.save(inst);
+      return inst;
+    }
+    if (task.reasonCode === "UNKNOWN_OUTCOME_UNRESOLVED") {
+      // APPROVE = human confirmed the side effect happened (with evidence in correction)
+      step.status = "SUCCEEDED";
+      step.finishedAt = iso(this.opts.clock.now());
+      step.result = { ...(step.result as ResultEnvelope), status: "SUCCEEDED", payload: { ...(task.decision.correction ?? {}), confirmedBy: task.decision.actorId } };
+      inst.currentStep += 1;
+    } else if (d === "CORRECT" || d === "RECLASSIFY") {
+      inst.input = { ...inst.input, ...(task.decision.correction ?? {}) };
+      step.status = "PENDING";
+      step.strategy = "human-corrected";
+      step.strategyIndex = -1;
+    } else {
+      // APPROVE on a business failure: accept the last payload as is
+      step.status = "SUCCEEDED";
+      step.finishedAt = iso(this.opts.clock.now());
+      const prev = step.result as ResultEnvelope;
+      step.result = { ...prev, status: "SUCCEEDED", payload: { ...(prev.payload ?? {}), approvedBy: task.decision.actorId } };
+      delete step.result.error;
+      inst.currentStep += 1;
+    }
+    inst.status = "RUNNING";
+    inst.published = { status: "RUNNING" };
+    delete inst.waiting;
+    this.save(inst);
+    return this.run(workflowId);
+  }
+
+  private async runStep(instIn: Instance, idx: number): Promise<RunOutcome> {
+    const def = this.opts.workflow.steps[idx] as StepDef;
+    const inst = instIn;
+    let step = inst.steps.find((s) => s.stepId === def.id && s.status !== "SUCCEEDED" && s.status !== "FAILED" && s.status !== "CANCELLED");
+    const technicalRetries = def.technicalRetries ?? 2;
+    const strategies = def.strategies ?? ["default"];
+    const qualityBudget = def.qualityBudget ?? strategies.length;
+    let qualityAttempts = 0;
+
+    if (step && step.status === "UNKNOWN_OUTCOME") {
+      const r = await this.reconcile(inst, step, def);
+      if (r !== "RETRY") return r;
+      step.attempt += 1;
+      step.status = "PENDING";
+    }
+
+    for (;;) {
+      if (!step || step.status === "PENDING") {
+        const strategyIndex = step && step.strategyIndex >= 0 ? step.strategyIndex : 0;
+        const strategy = step?.strategy === "human-corrected" ? "human-corrected" : (strategies[strategyIndex] as string);
+        const attempt = step ? step.attempt : 1;
+        const key = `${inst.workflowId}:${def.id}:${strategy}:${attempt}`;
+        step = step ?? {
+          stepId: def.id,
+          capability: def.capability,
+          capabilityVersion: def.capabilityVersion,
+          sideEffects: def.sideEffects,
+          executionId: "",
+          attempt,
+          strategyIndex,
+          strategy,
+          idempotencyKey: key,
+          status: "PENDING",
+          startedAt: iso(this.opts.clock.now()),
+        };
+        step.executionId = newId("exe");
+        step.idempotencyKey = key;
+        step.status = "RUNNING";
+        step.message = this.buildMessage(inst, def, step);
+        if (!inst.steps.includes(step)) inst.steps.push(step);
+        this.save(inst);
+      }
+
+      const message = step.message as MessageEnvelope;
+      const env = this.opts.gateway.dispatch(message, inst.actorId);
+      const res = await this.opts.router.route(env);
+      step.result = res;
+      step.finishedAt = iso(this.opts.clock.now());
+
+      if (res.status === "SUCCEEDED") {
+        step.status = "SUCCEEDED";
+        inst.currentStep = idx + 1;
+        this.save(inst);
+        return "SUCCEEDED";
+      }
+      if (res.status === "WAITING") {
+        step.status = "WAITING";
+        inst.status = "WAITING";
+        inst.waiting = { reason: res.waitReason ?? "EXTERNAL", stepId: def.id, deadline: res.deadline ?? iso(this.opts.clock.now()) };
+        if (res.reviewTaskId) inst.waiting.reviewTaskId = res.reviewTaskId;
+        inst.published = { status: "WAITING" };
+        this.save(inst);
+        return "WAITING";
+      }
+      if (res.status === "UNKNOWN_OUTCOME") {
+        step.status = "UNKNOWN_OUTCOME";
+        step.reconciliationRef = res.reconciliationRef;
+        this.save(inst);
+        const r = await this.reconcile(inst, step, def);
+        if (r !== "RETRY") return r;
+        step.attempt += 1;
+        step.status = "PENDING";
+        continue;
+      }
+      // FAILED
+      const err = res.error;
+      const cls = err?.class ?? "UNKNOWN";
+      if (err?.retryable && (cls === "TECHNICAL" || cls === "DEPENDENCY") && step.attempt < technicalRetries + 1) {
+        step.attempt += 1;
+        step.status = "PENDING";
+        this.save(inst);
+        continue;
+      }
+      if (err?.retryable && cls === "QUALITY" && step.strategyIndex + 1 < strategies.length && qualityAttempts + 1 < qualityBudget) {
+        qualityAttempts += 1;
+        step.status = "FAILED";
+        const next: StepRecord = { ...step, executionId: "", attempt: 1, strategyIndex: step.strategyIndex + 1, strategy: strategies[step.strategyIndex + 1] as string, status: "PENDING", startedAt: iso(this.opts.clock.now()) };
+        delete next.finishedAt;
+        delete next.result;
+        delete next.message;
+        step = next;
+        this.save(inst);
+        continue;
+      }
+      const policy = def.onFailed?.[cls] ?? "fail";
+      if (policy === "review") {
+        const task = this.opts.review.create({
+          workflowId: inst.workflowId,
+          stepId: def.id,
+          tenantId: inst.tenantId,
+          reasonCode: err?.code ?? "STEP_FAILED",
+          requiredRole: def.reviewRole ?? "document.reviewer",
+          allowedDecisions: ["APPROVE", "CORRECT", "REJECT", "RECLASSIFY"],
+          expiresInMs: def.reviewExpiresInMs ?? 3 * 24 * 3_600_000,
+          expiryPolicy: "ESCALATE",
+          escalateTo: "document.supervisor",
+          currentValue: err?.details ?? null,
+        });
+        step.status = "WAITING";
+        inst.status = "WAITING";
+        inst.waiting = { reason: "REVIEW", stepId: def.id, reviewTaskId: task.reviewTaskId, deadline: task.expiresAt };
+        inst.published = { status: "WAITING" };
+        this.save(inst);
+        return "WAITING";
+      }
+      step.status = "FAILED";
+      inst.status = "FAILED";
+      inst.published = { status: "FAILED" };
+      this.save(inst);
+      this.opts.audit.append({ kind: "state", workflowId: inst.workflowId, correlationId: inst.correlationId, tenantId: inst.tenantId, details: { status: "FAILED", step: def.id, code: err?.code } });
+      return "FAILED";
+    }
+  }
+
+  /** UNKNOWN_OUTCOME handling (§5.1): bounded reconciliation, never blind resend; then WAITING(REVIEW). */
+  private async reconcile(inst: Instance, step: StepRecord, def: StepDef): Promise<RunOutcome | "RETRY"> {
+    const budget = def.reconciliationBudget ?? 3;
+    const reconciler = this.opts.reconcilers?.[def.capability];
+    inst.published = { status: "UNKNOWN_OUTCOME", reconciliation: "IN_PROGRESS" };
+    this.save(inst);
+    step.reconciliationAttempts = step.reconciliationAttempts ?? 0;
+    while (reconciler && step.reconciliationAttempts < budget) {
+      step.reconciliationAttempts += 1;
+      const r = await reconciler(step.reconciliationRef as string, step, inst);
+      this.opts.audit.append({ kind: "reconciliation", workflowId: inst.workflowId, correlationId: inst.correlationId, details: { stepId: step.stepId, attempt: step.reconciliationAttempts, result: r.status } });
+      if (r.status === "SUCCEEDED") {
+        step.status = "SUCCEEDED";
+        step.finishedAt = iso(this.opts.clock.now());
+        step.result = { ...(step.result as ResultEnvelope), status: "SUCCEEDED", payload: r.payload };
+        delete (step.result as ResultEnvelope).reconciliationRef;
+        inst.currentStep += 1;
+        inst.published = { status: "RUNNING" };
+        this.save(inst);
+        return "SUCCEEDED";
+      }
+      if (r.status === "FAILED") {
+        // side effect provably did not happen: same intent, same key, technical re-issue
+        this.save(inst);
+        return "RETRY";
+      }
+      this.save(inst);
+    }
+    const task = this.opts.review.create({
+      workflowId: inst.workflowId,
+      stepId: def.id,
+      tenantId: inst.tenantId,
+      reasonCode: "UNKNOWN_OUTCOME_UNRESOLVED",
+      requiredRole: "document.operator",
+      allowedDecisions: ["APPROVE", "REJECT"],
+      expiresInMs: 4 * 3_600_000,
+      expiryPolicy: "ESCALATE",
+      escalateTo: "document.supervisor",
+      currentValue: step.reconciliationRef,
+    });
+    inst.status = "WAITING";
+    inst.waiting = { reason: "REVIEW", stepId: def.id, reviewTaskId: task.reviewTaskId, deadline: task.expiresAt };
+    inst.published = { status: "UNKNOWN_OUTCOME", reconciliation: "AWAITING_REVIEW" };
+    this.save(inst);
+    return "WAITING";
+  }
+
+  private buildMessage(inst: Instance, def: StepDef, step: StepRecord): MessageEnvelope {
+    const now = this.opts.clock.now();
+    const payload: Record<string, unknown> = {};
+    for (const [k, ref] of Object.entries(def.inputs)) {
+      const v = this.resolveRef(inst, step, ref);
+      if (v !== undefined) payload[k] = v;
+    }
+    const prev = inst.steps.filter((s) => s.status === "SUCCEEDED").at(-1);
+    const m: MessageEnvelope = {
+      messageId: newId("msg"),
+      correlationId: inst.correlationId,
+      workflowId: inst.workflowId,
+      stepId: def.id,
+      type: "command",
+      capability: def.capability,
+      capabilityVersion: def.capabilityVersion,
+      schemaVersion: "1",
+      idempotencyKey: step.idempotencyKey,
+      createdAt: iso(now),
+      notValidAfter: iso(plus(now, this.opts.workflow.deadlineMs)),
+      payload,
+    };
+    if (prev?.result) m.causationId = prev.result.messageId;
+    return m;
+  }
+
+  private resolveRef(inst: Instance, step: StepRecord, ref: string): unknown {
+    if (ref === "$strategy") return step.strategy;
+    if (ref.startsWith("$input.")) return inst.input[ref.slice(7)];
+    if (ref.startsWith("$steps.")) {
+      const [stepId, ...path] = ref.slice(7).split(".");
+      const s = inst.steps.filter((x) => x.stepId === stepId && x.status === "SUCCEEDED").at(-1);
+      let cur: unknown = s?.result;
+      for (const p of path) cur = cur && typeof cur === "object" ? (cur as Record<string, unknown>)[p] : undefined;
+      return cur;
+    }
+    return ref;
+  }
+
+  private load(id: string): Instance {
+    const i = this.opts.journal.get(id);
+    if (!i) throw new Error(`unknown workflow instance ${id}`);
+    return i;
+  }
+
+  private save(inst: Instance): void {
+    inst.updatedAt = iso(this.opts.clock.now());
+    this.opts.journal.put(inst);
+  }
+}
