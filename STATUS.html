@@ -62,7 +62,8 @@
     <tr><th>Stav</th><td><span class="pill live">M1–M4 hotové</span> <span class="pill prep">bez cloudu, bez reálného modelu</span>
       <b>Dvojí stav schválně.</b> <i>Hotové</i> — oba toky běží end-to-end, MUST sada normy je zelená na třech write executorech, CI zelené.
       <i>Bez cloudu</i> — všechno běží lokálně s fakes (LLM, registr, DMS, archiv, SMTP), žádný API klíč, izolace PRINCIPAL je v jednom procesu simulovaná. Nasazení na Workers je až další krok.</td></tr>
-    <tr><th>Kontrola</th><td>CI při každém pushi (Node 24): typecheck, Vitest, <code>ARCH-DEP-001</code> + lint hodin, sken tajemství (gitleaks), kontrola odkazů (lychee). Poslední běh <span class="pill live">zelený</span> pro commit <code>208ae0d</code>.</td></tr>
+    <tr><th>Kontrola</th><td>CI při každém pushi (Node 24): typecheck, Vitest, <code>ARCH-DEP-001</code> + lint hodin, <code>farm:check</code>, sken tajemství (gitleaks), kontrola odkazů (lychee). Poslední běh <span class="pill live">zelený</span>.</td></tr>
+    <tr><th>Vývojový diagram</th><td><a href="VYVOJOVY-DIAGRAM.html">VYVOJOVY-DIAGRAM.html</a>: cesta jednoho příkazu bezpečnostním řetězcem (gateway → router → executor host → výsledek) a běh toku od e-mailu k notifikaci se všemi konci, které smí nastat.</td></tr>
   </table>
 
   <div class="kpis">

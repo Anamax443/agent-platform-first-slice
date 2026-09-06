@@ -44,6 +44,7 @@ npm run arch      # ARCH-DEP-001: komponenta neimportuje jinou komponentu ani vn
 ## Stav
 
 - [STATUS.html](STATUS.html) — stavový list ke čtení v prohlížeči (přehled, toky, měření, nálezy, rozhodnutí); anglicky: [STATUS.en.html](STATUS.en.html)
+- [VYVOJOVY-DIAGRAM.html](VYVOJOVY-DIAGRAM.html) — vývojový diagram: cesta jednoho příkazu bezpečnostním řetězcem a běh toku od e-mailu k notifikaci se všemi konci; anglicky: [VYVOJOVY-DIAGRAM.en.html](VYVOJOVY-DIAGRAM.en.html)
 - [HANDOFF.md](HANDOFF.md) — deník stavu, nejnovější nahoře
 - [docs/MEASUREMENT.md](docs/MEASUREMENT.md) — co norma stála a co zachytila
 

@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Flowchart · agent-platform-first-slice</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@600&display=swap">
+<style>
+  :root { color-scheme: light dark;
+    --paper:#EEF2F6; --card:#FFFFFF; --sunk:#F6F8FA; --ink:#141B23; --soft:#56646F; --line:#CBD5DF;
+    --accent:#2B4C7E; --warn:#A2521C; --warn-bg:#FAEFE5; --ok:#135F4C; --ok-bg:#E5F1ED; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+    --paper:#0E1319; --card:#161D26; --sunk:#10161D; --ink:#E3E9F0; --soft:#94A3B2; --line:#2C3742;
+    --accent:#86AEE0; --warn:#E4A06A; --warn-bg:#2A1E14; --ok:#6BC9AA; --ok-bg:#12261F; } }
+  :root[data-theme="dark"] {
+    --paper:#0E1319; --card:#161D26; --sunk:#10161D; --ink:#E3E9F0; --soft:#94A3B2; --line:#2C3742;
+    --accent:#86AEE0; --warn:#E4A06A; --warn-bg:#2A1E14; --ok:#6BC9AA; --ok-bg:#12261F; }
+  body { margin:0; background:var(--paper); color:var(--ink); font:400 16px/1.65 "IBM Plex Sans",system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:1040px; margin:0 auto; padding:56px 24px 96px; display:flex; flex-direction:column; gap:40px; }
+  .prose { max-width:70ch; display:flex; flex-direction:column; gap:14px; }
+  .eyebrow { font:500 11px/1 "IBM Plex Mono",monospace; letter-spacing:.14em; text-transform:uppercase; color:var(--accent); }
+  h1 { font:600 clamp(30px,5vw,44px)/1.1 "IBM Plex Serif",Georgia,serif; margin:10px 0 0; text-wrap:balance; }
+  h2 { font:600 24px/1.2 "IBM Plex Serif",Georgia,serif; margin:0; text-wrap:balance; }
+  .stand { font-size:18px; color:var(--soft); margin-top:8px; }
+  p { margin:0; }
+  code, .mono { font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:.88em; }
+  code { background:var(--sunk); border:1px solid var(--line); border-radius:4px; padding:1px 5px; }
+  a { color:var(--accent); }
+  .rule { height:1px; background:var(--line); border:0; margin:0; }
+  section { display:flex; flex-direction:column; gap:22px; }
+  .sechead { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
+  .tag { font:500 11px/1 "IBM Plex Mono",monospace; letter-spacing:.1em; text-transform:uppercase; padding:5px 9px; border-radius:4px; }
+  .tag-a { color:var(--accent); background:var(--sunk); border:1px solid var(--line); }
+  .tag-ok { color:var(--ok); background:var(--ok-bg); }
+  figure { margin:0; display:flex; flex-direction:column; gap:12px; }
+  .board { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:18px; overflow-x:auto; }
+  .dgm { display:block; width:100%; min-width:760px; height:auto; color:var(--soft); }
+  figcaption { font:400 13px/1.5 "IBM Plex Mono",monospace; color:var(--soft); }
+  .dgm .box  { fill:var(--sunk); stroke:var(--line); stroke-width:1.5; }
+  .dgm .band { fill:none; stroke:var(--line); stroke-width:1.5; stroke-dasharray:6 5; }
+  .dgm .dia  { fill:var(--card); stroke:var(--accent); stroke-width:1.5; }
+  .dgm .flow { stroke:currentColor; stroke-width:1.6; fill:none; }
+  .dgm .warn { stroke:var(--warn); stroke-width:1.7; fill:none; }
+  .dgm .ok   { stroke:var(--ok); stroke-width:1.7; fill:none; }
+  .dgm .okd  { stroke:var(--ok); stroke-width:1.7; fill:none; stroke-dasharray:5 4; }
+  .dgm .mk-ink { fill:currentColor; } .dgm .mk-warn { fill:var(--warn); } .dgm .mk-ok { fill:var(--ok); }
+  .dgm .t   { fill:var(--ink); font:500 13px "IBM Plex Sans",sans-serif; }
+  .dgm .t2  { fill:var(--ink); font:500 11.5px "IBM Plex Sans",sans-serif; }
+  .dgm .ts  { fill:var(--soft); font:400 10.5px "IBM Plex Mono",monospace; }
+  .dgm .tw  { fill:var(--warn); font:500 10.5px "IBM Plex Mono",monospace; }
+  .dgm .tok { fill:var(--ok); font:500 10.5px "IBM Plex Mono",monospace; }
+  ol.keyed { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:14px; }
+  ol.keyed li { display:grid; grid-template-columns:26px 1fr; gap:14px; align-items:start; }
+  .num { width:24px; height:24px; border-radius:50%; display:grid; place-items:center; font:600 12px/1 "IBM Plex Sans",sans-serif; color:var(--card); background:var(--accent); margin-top:3px; }
+  .lang { font:400 13px "IBM Plex Mono",monospace; color:var(--soft); }
+</style>
+</head><body>
+<div class="wrap">
+
+  <header class="prose">
+    <div class="eyebrow">agent-platform-first-slice · flowchart</div>
+    <h1>How one document passes through a system that must not trust it</h1>
+    <p class="stand">Two views. First, the path of every single command through the security chain: what is checked, in which order, and where it can end. Second, the run of a whole flow from an e-mail to a notification with every ending that is allowed to happen.</p>
+    <p class="lang">Language: <a href="VYVOJOVY-DIAGRAM.html">Čeština</a> · <b>English</b> · back to <a href="STATUS.en.html">STATUS</a></p>
+  </header>
+
+  <hr class="rule">
+
+  <section>
+    <div class="sechead"><h2>1 · The path of one command</h2><span class="tag tag-a">every step of every flow</span></div>
+    <p class="prose">Classification, stamp or e-mail: every command passes the same gate. None of it is done by the component itself; the router and the executor host are platform, and the component receives the command only after the last "yes".</p>
+    <figure>
+      <div class="board">
+        <svg class="dgm" viewBox="0 0 960 530" role="img" aria-label="Path of one command: caller, gateway signs the envelope, router performs eight checks in a fixed order, read-only handler or executor host with its own chain, result always as a ResultEnvelope with audit.">
+          <defs>
+            <marker id="a-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-ink" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="a-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-warn" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="a-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-ok" d="M0,0 L10,5 L0,10 z"/></marker>
+          </defs>
+
+          <rect class="box" x="40" y="30" width="200" height="48" rx="6"/>
+          <text class="t" x="140" y="51" text-anchor="middle">Caller</text>
+          <text class="ts" x="140" y="68" text-anchor="middle">orchestrator · harness</text>
+          <line class="flow" x1="240" y1="54" x2="296" y2="54" marker-end="url(#a-ink)"/>
+          <rect class="box" x="300" y="30" width="300" height="48" rx="6"/>
+          <text class="t" x="450" y="51" text-anchor="middle">Gateway</text>
+          <text class="ts" x="450" y="68" text-anchor="middle">identity → TrustedContext · Ed25519 signature</text>
+          <line class="flow" x1="600" y1="54" x2="656" y2="54" marker-end="url(#a-ink)"/>
+          <rect class="box" x="660" y="30" width="260" height="48" rx="6"/>
+          <text class="t" x="790" y="51" text-anchor="middle">DispatchEnvelope</text>
+          <text class="ts" x="790" y="68" text-anchor="middle">{ message, context, binding }</text>
+          <polyline class="flow" points="790,78 790,96 480,96 480,108" marker-end="url(#a-ink)"/>
+
+          <rect class="band" x="40" y="110" width="880" height="150" rx="12"/>
+          <text class="ts" x="52" y="126">Router · in this order · the first DENY ends it</text>
+
+          <rect class="box" x="52" y="138" width="92" height="40" rx="6"/><text class="t2" x="98" y="162" text-anchor="middle">schema</text>
+          <line class="flow" x1="144" y1="158" x2="158" y2="158" marker-end="url(#a-ink)"/>
+          <rect class="box" x="160" y="138" width="92" height="40" rx="6"/><text class="t2" x="206" y="162" text-anchor="middle">mechanism</text>
+          <line class="flow" x1="252" y1="158" x2="266" y2="158" marker-end="url(#a-ink)"/>
+          <rect class="box" x="268" y="138" width="92" height="40" rx="6"/><text class="t2" x="314" y="162" text-anchor="middle">signature</text>
+          <line class="flow" x1="360" y1="158" x2="374" y2="158" marker-end="url(#a-ink)"/>
+          <rect class="box" x="376" y="138" width="92" height="40" rx="6"/><text class="t2" x="422" y="162" text-anchor="middle">expiry</text>
+          <line class="flow" x1="468" y1="158" x2="482" y2="158" marker-end="url(#a-ink)"/>
+          <rect class="box" x="484" y="138" width="92" height="40" rx="6"/><text class="t2" x="530" y="162" text-anchor="middle">scope</text>
+          <line class="flow" x1="576" y1="158" x2="590" y2="158" marker-end="url(#a-ink)"/>
+          <rect class="box" x="592" y="138" width="92" height="40" rx="6"/><text class="t2" x="638" y="162" text-anchor="middle">version</text>
+          <line class="flow" x1="684" y1="158" x2="698" y2="158" marker-end="url(#a-ink)"/>
+          <rect class="box" x="700" y="138" width="92" height="40" rx="6"/><text class="t2" x="746" y="162" text-anchor="middle">policy · tenant</text>
+          <line class="flow" x1="792" y1="158" x2="806" y2="158" marker-end="url(#a-ink)"/>
+          <rect class="box" x="808" y="138" width="92" height="40" rx="6"/><text class="t2" x="854" y="162" text-anchor="middle">input schema</text>
+
+          <line class="warn" x1="98" y1="178" x2="98" y2="206" marker-end="url(#a-warn)"/>
+          <text class="tw" x="98" y="222" text-anchor="middle">SCHEMA_VALIDATION</text><text class="tw" x="98" y="235" text-anchor="middle">_FAILED</text>
+          <line class="warn" x1="206" y1="178" x2="206" y2="206" marker-end="url(#a-warn)"/>
+          <text class="tw" x="206" y="222" text-anchor="middle">CONTEXT_BINDING</text><text class="tw" x="206" y="235" text-anchor="middle">_INVALID</text>
+          <line class="warn" x1="314" y1="178" x2="314" y2="206" marker-end="url(#a-warn)"/>
+          <text class="tw" x="314" y="222" text-anchor="middle">CONTEXT_BINDING</text><text class="tw" x="314" y="235" text-anchor="middle">_INVALID</text>
+          <line class="warn" x1="422" y1="178" x2="422" y2="206" marker-end="url(#a-warn)"/>
+          <text class="tw" x="422" y="222" text-anchor="middle">CONTEXT</text><text class="tw" x="422" y="235" text-anchor="middle">_EXPIRED</text>
+          <line class="warn" x1="530" y1="178" x2="530" y2="206" marker-end="url(#a-warn)"/>
+          <text class="tw" x="530" y="222" text-anchor="middle">CAPABILITY</text><text class="tw" x="530" y="235" text-anchor="middle">_NOT_ALLOWED</text>
+          <line class="warn" x1="638" y1="178" x2="638" y2="206" marker-end="url(#a-warn)"/>
+          <text class="tw" x="638" y="222" text-anchor="middle">INCOMPATIBLE</text><text class="tw" x="638" y="235" text-anchor="middle">_VERSION</text>
+          <line class="warn" x1="746" y1="178" x2="746" y2="206" marker-end="url(#a-warn)"/>
+          <text class="tw" x="746" y="222" text-anchor="middle">TENANT_SCOPE</text><text class="tw" x="746" y="235" text-anchor="middle">_MISMATCH</text>
+          <line class="warn" x1="854" y1="178" x2="854" y2="206" marker-end="url(#a-warn)"/>
+          <text class="tw" x="854" y="222" text-anchor="middle">SCHEMA_VALIDATION</text><text class="tw" x="854" y="235" text-anchor="middle">_FAILED</text>
+          <text class="ts" x="52" y="254">DENY = FAILED with an error object + audit · SECURITY codes also go to the security log · the handler never runs</text>
+
+          <line class="flow" x1="200" y1="260" x2="200" y2="284" marker-end="url(#a-ink)"/>
+          <text class="ts" x="208" y="278">sideEffects: none</text>
+          <line class="flow" x1="690" y1="260" x2="690" y2="284" marker-end="url(#a-ink)"/>
+          <text class="ts" x="698" y="278">write</text>
+
+          <rect class="box" x="40" y="288" width="380" height="60" rx="6"/>
+          <text class="t" x="230" y="311" text-anchor="middle">Handler reads, never writes</text>
+          <text class="ts" x="230" y="329" text-anchor="middle">classify · validate · output only through schema and enum</text>
+
+          <rect class="band" x="460" y="288" width="460" height="170" rx="12"/>
+          <text class="ts" x="472" y="304">Executor host · chain right before the side effect</text>
+          <rect class="box" x="470" y="316" width="78" height="40" rx="6"/><text class="t2" x="509" y="340" text-anchor="middle">allowlist</text>
+          <line class="flow" x1="548" y1="336" x2="558" y2="336" marker-end="url(#a-ink)"/>
+          <rect class="box" x="560" y="316" width="78" height="40" rx="6"/><text class="t2" x="599" y="340" text-anchor="middle">tenant</text>
+          <line class="flow" x1="638" y1="336" x2="648" y2="336" marker-end="url(#a-ink)"/>
+          <rect class="box" x="650" y="316" width="78" height="40" rx="6"/><text class="t2" x="689" y="340" text-anchor="middle">deadline</text>
+          <line class="flow" x1="728" y1="336" x2="738" y2="336" marker-end="url(#a-ink)"/>
+          <rect class="box" x="740" y="316" width="78" height="40" rx="6"/><text class="t2" x="779" y="340" text-anchor="middle">key</text>
+          <line class="flow" x1="818" y1="336" x2="828" y2="336" marker-end="url(#a-ink)"/>
+          <rect class="box" x="830" y="316" width="78" height="40" rx="6"/><text class="t2" x="869" y="340" text-anchor="middle">write</text>
+
+          <line class="warn" x1="509" y1="356" x2="509" y2="384" marker-end="url(#a-warn)"/>
+          <text class="tw" x="509" y="398" text-anchor="middle">CAPABILITY</text><text class="tw" x="509" y="411" text-anchor="middle">_NOT_ALLOWED</text>
+          <line class="warn" x1="599" y1="356" x2="599" y2="384" marker-end="url(#a-warn)"/>
+          <text class="tw" x="599" y="398" text-anchor="middle">TENANT_SCOPE</text><text class="tw" x="599" y="411" text-anchor="middle">_MISMATCH</text>
+          <line class="warn" x1="689" y1="356" x2="689" y2="384" marker-end="url(#a-warn)"/>
+          <text class="tw" x="689" y="398" text-anchor="middle">COMMAND</text><text class="tw" x="689" y="411" text-anchor="middle">_EXPIRED · ±30 s</text>
+          <line class="ok" x1="779" y1="356" x2="779" y2="384" marker-end="url(#a-ok)"/>
+          <text class="tok" x="779" y="398" text-anchor="middle">seen → original</text><text class="tok" x="779" y="411" text-anchor="middle">outcome, no write</text>
+          <line class="warn" x1="869" y1="356" x2="869" y2="384" marker-end="url(#a-warn)"/>
+          <text class="tw" x="869" y="398" text-anchor="middle">UNKNOWN</text><text class="tw" x="869" y="411" text-anchor="middle">_OUTCOME</text>
+          <text class="ts" x="472" y="436">audit before and after the write · credential per handler identity</text>
+          <text class="ts" x="472" y="450">never a second side effect</text>
+
+          <line class="flow" x1="230" y1="348" x2="230" y2="466" marker-end="url(#a-ink)"/>
+          <line class="flow" x1="690" y1="458" x2="690" y2="466" marker-end="url(#a-ink)"/>
+          <rect class="box" x="40" y="470" width="880" height="48" rx="24"/>
+          <text class="t" x="480" y="490" text-anchor="middle">ResultEnvelope · always with audit under one correlationId</text>
+          <text class="ts" x="480" y="507" text-anchor="middle">SUCCEEDED · FAILED (code, class, retryable, reissuable) · WAITING (REVIEW) · UNKNOWN_OUTCOME (reconciliationRef)</text>
+        </svg>
+      </div>
+      <figcaption>Router: <code>src/platform/router.ts</code>. Executor host: <code>src/platform/executor-host.ts</code>. The eight router checks and five host steps follow FOUNDATION-core §3.3. Orange = DENY, green = safe short-circuit.</figcaption>
+    </figure>
+    <ol class="keyed">
+      <li><span class="num">1</span><p><b>The caller never says who it is.</b> The gateway takes the identity from authentication (an identity table in tests, Cloudflare Access on the farm), builds a <code>TrustedContext</code> with tenant and scopes and signs <code>{ message, context }</code>. The payload cannot claim anything trusted about itself. Tests <code>SEC-CTX-003</code>, <code>SEC-CRED-002..003</code>.</p></li>
+      <li><span class="num">2</span><p><b>The router checks in a fixed order</b> and the first failure ends it: envelope shape, accepted binding mechanism, signature against the key valid at signing time, context expiry, caller scope, capability version, platform policy grant for the tenant, capability input schema. The AI identity holds a single scope, so it hits the wall at the fifth check for any write. Tests <code>SEC-PRIV-001</code>, <code>CTR-TIME-001</code>.</p></li>
+      <li><span class="num">3</span><p><b>A read-only handler gets data only.</b> The classifier and the validator hold no credential and cannot write; their output passes an output schema and an enum allowlist. An injection in the text has nowhere to overflow. Tests <code>SEC-INJ-001..002</code>.</p></li>
+      <li><span class="num">4</span><p><b>The executor host repeats the check right before the write:</b> host allowlist, tenant of the targeted resource against the context, deadline with 30 s clock tolerance, idempotency key (a seen key returns the original outcome and writes nothing), audit before and after. Each of these guards has a mutant that switches it off and a test that notices. Tests <code>SEC-CTX-002</code>, <code>IDM-REPLAY-001</code>, <code>IDM-DEADLINE-001..002</code>, mutants <code>MUT-*</code>.</p></li>
+      <li><span class="num">5</span><p><b>An unknown outcome is a state, not an error.</b> When the external system answers unclearly, the host returns <code>UNKNOWN_OUTCOME</code> with a reference and never repeats the write on its own; what happens next is the orchestrator's job (diagram 2, step 4).</p></li>
+    </ol>
+  </section>
+
+  <hr class="rule">
+
+  <section>
+    <div class="sechead"><h2>2 · The run of a flow from e-mail to notification</h2><span class="tag tag-ok">mail-intake.v1 · document-intake.v1 = steps 2–4</span></div>
+    <p class="prose">The orchestrator holds a workflow as a closed list of steps and states. Every diamond is a decision by code, not by the model. On the right are all the endings that may happen: there is no other.</p>
+    <figure>
+      <div class="board">
+        <svg class="dgm" viewBox="0 0 960 1090" role="img" aria-label="Run of the mail-intake flow: mail ingest, classification by a model checked against the allowlist with quality retry, validation with a second signal and the registry, stamp with reconciliation of an unknown outcome, notification through an executor in its own credential domain; endings SUCCEEDED, WAITING REVIEW, FAILED.">
+          <defs>
+            <marker id="b-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-ink" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="b-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-warn" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="b-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-ok" d="M0,0 L10,5 L0,10 z"/></marker>
+          </defs>
+
+          <rect class="box" x="20" y="20" width="360" height="44" rx="22"/>
+          <text class="t" x="200" y="46" text-anchor="middle">E-mail to apf-intake@ · or a document via API</text>
+          <line class="flow" x1="200" y1="64" x2="200" y2="92" marker-end="url(#b-ink)"/>
+
+          <rect class="box" x="20" y="96" width="360" height="60" rx="6"/>
+          <text class="t" x="200" y="118" text-anchor="middle">1 · mail.ingest</text>
+          <text class="ts" x="200" y="136" text-anchor="middle">internal-write · original (sha256) · headers as data</text>
+          <line class="flow" x1="200" y1="156" x2="200" y2="182" marker-end="url(#b-ink)"/>
+
+          <polygon class="dia" points="200,184 340,214 200,244 60,214"/>
+          <text class="t2" x="200" y="218" text-anchor="middle">did the store accept the original?</text>
+          <line class="warn" x1="340" y1="214" x2="436" y2="214" marker-end="url(#b-warn)"/>
+          <text class="tw" x="388" y="206" text-anchor="middle">no</text>
+          <rect class="box" x="440" y="190" width="480" height="48" rx="6"/>
+          <text class="t2" x="680" y="209" text-anchor="middle">STORAGE_FULL · retryable</text>
+          <text class="ts" x="680" y="227" text-anchor="middle">3 technical attempts, same key, then FAILED · nothing falsely accepted</text>
+          <line class="flow" x1="200" y1="244" x2="200" y2="272" marker-end="url(#b-ink)"/>
+          <text class="tok" x="208" y="264">yes</text>
+
+          <rect class="box" x="20" y="276" width="360" height="60" rx="6"/>
+          <text class="t" x="200" y="298" text-anchor="middle">2 · document.classify (AI)</text>
+          <text class="ts" x="200" y="316" text-anchor="middle">text in delimiters · model answers · code checks enum</text>
+          <line class="flow" x1="200" y1="336" x2="200" y2="362" marker-end="url(#b-ink)"/>
+
+          <polygon class="dia" points="200,364 340,394 200,424 60,394"/>
+          <text class="t2" x="200" y="398" text-anchor="middle">answer in the allowlist?</text>
+          <line class="warn" x1="340" y1="394" x2="436" y2="394" marker-end="url(#b-warn)"/>
+          <text class="tw" x="388" y="386" text-anchor="middle">no</text>
+          <rect class="box" x="440" y="370" width="480" height="48" rx="6"/>
+          <text class="t2" x="680" y="389" text-anchor="middle">MODEL_OUTPUT_NOT_ALLOWED · QUALITY</text>
+          <text class="ts" x="680" y="407" text-anchor="middle">retry with rules strategy under a new key · the instruction stayed data</text>
+          <polyline class="okd" points="680,370 680,352 390,352 390,306 364,306" marker-end="url(#b-ok)"/>
+          <text class="tok" x="400" y="345">step 2 again, other strategy</text>
+          <line class="flow" x1="200" y1="424" x2="200" y2="452" marker-end="url(#b-ink)"/>
+          <text class="tok" x="208" y="444">yes</text>
+
+          <rect class="box" x="20" y="456" width="360" height="60" rx="6"/>
+          <text class="t" x="200" y="478" text-anchor="middle">3 · document.validate</text>
+          <text class="ts" x="200" y="496" text-anchor="middle">hash of the original · second signal by rules · registry</text>
+          <line class="flow" x1="200" y1="516" x2="200" y2="542" marker-end="url(#b-ink)"/>
+
+          <polygon class="dia" points="200,544 340,574 200,604 60,574"/>
+          <text class="t2" x="200" y="578" text-anchor="middle">agrees and may be stamped?</text>
+          <line class="warn" x1="340" y1="574" x2="436" y2="574" marker-end="url(#b-warn)"/>
+          <text class="tw" x="388" y="566" text-anchor="middle">no</text>
+          <rect class="box" x="440" y="540" width="480" height="84" rx="6"/>
+          <text class="t2" x="680" y="559" text-anchor="middle">→ REVIEW for the role document.reviewer</text>
+          <text class="ts" x="680" y="577" text-anchor="middle">CLASSIFICATION_DISPUTED · STAMP_NOT_ALLOWED</text>
+          <text class="ts" x="680" y="593" text-anchor="middle">REGISTRY_REJECTED · REGISTRY_TYPE_CONFLICT</text>
+          <text class="ts" x="680" y="609" text-anchor="middle">registry down: 3 attempts, then FAILED (DEPENDENCY_UNAVAILABLE / TIMEOUT)</text>
+          <line class="flow" x1="200" y1="604" x2="200" y2="632" marker-end="url(#b-ink)"/>
+          <text class="tok" x="208" y="624">yes</text>
+
+          <rect class="box" x="20" y="636" width="360" height="60" rx="6"/>
+          <text class="t" x="200" y="658" text-anchor="middle">4 · document.stamp</text>
+          <text class="ts" x="200" y="676" text-anchor="middle">internal-write · LOGICAL host · derivation, derivedFrom</text>
+          <line class="flow" x1="200" y1="696" x2="200" y2="722" marker-end="url(#b-ink)"/>
+
+          <polygon class="dia" points="200,724 340,754 200,784 60,754"/>
+          <text class="t2" x="200" y="758" text-anchor="middle">did the DMS confirm the write?</text>
+          <line class="warn" x1="340" y1="754" x2="436" y2="754" marker-end="url(#b-warn)"/>
+          <text class="tw" x="388" y="746" text-anchor="middle">unknown</text>
+          <rect class="box" x="440" y="718" width="480" height="72" rx="6"/>
+          <text class="t2" x="680" y="737" text-anchor="middle">UNKNOWN_OUTCOME · no second write</text>
+          <text class="ts" x="680" y="755" text-anchor="middle">reconcile up to 3× by clientRef = idempotencyKey</text>
+          <text class="ts" x="680" y="773" text-anchor="middle">written → continue · not written → same key · unknown → REVIEW</text>
+          <polyline class="okd" points="680,790 680,812 212,812" marker-end="url(#b-ok)"/>
+          <text class="tok" x="560" y="806">written: continue</text>
+          <line class="flow" x1="200" y1="784" x2="200" y2="812" marker-end="url(#b-ink)"/>
+          <text class="tok" x="208" y="804">yes</text>
+
+          <rect class="box" x="20" y="816" width="360" height="60" rx="6"/>
+          <text class="t" x="200" y="838" text-anchor="middle">5 · email.send</text>
+          <text class="ts" x="200" y="856" text-anchor="middle">external-write · PRINCIPAL host · recipient from policy</text>
+          <line class="flow" x1="200" y1="876" x2="200" y2="902" marker-end="url(#b-ink)"/>
+
+          <polygon class="dia" points="200,904 340,934 200,964 60,934"/>
+          <text class="t2" x="200" y="938" text-anchor="middle">did the provider confirm delivery?</text>
+          <line class="warn" x1="340" y1="934" x2="436" y2="934" marker-end="url(#b-warn)"/>
+          <text class="tw" x="388" y="926" text-anchor="middle">unknown</text>
+          <rect class="box" x="440" y="910" width="480" height="48" rx="6"/>
+          <text class="t2" x="680" y="929" text-anchor="middle">UNKNOWN_OUTCOME · same procedure as step 4</text>
+          <text class="ts" x="680" y="947" text-anchor="middle">the provider dedups by Message-ID = key, a repeat never sends twice</text>
+          <line class="flow" x1="200" y1="964" x2="200" y2="992" marker-end="url(#b-ink)"/>
+          <text class="tok" x="208" y="984">yes</text>
+
+          <rect class="box" x="20" y="996" width="360" height="44" rx="22"/>
+          <text class="t" x="200" y="1022" text-anchor="middle">SUCCEEDED · all in the journal and the audit</text>
+
+          <rect class="box" x="440" y="984" width="230" height="60" rx="6"/>
+          <text class="t2" x="555" y="1003" text-anchor="middle">WAITING (REVIEW)</text>
+          <text class="ts" x="555" y="1019" text-anchor="middle">APPROVE · CORRECT ·</text>
+          <text class="ts" x="555" y="1033" text-anchor="middle">REJECT · RECLASSIFY</text>
+          <rect class="box" x="690" y="984" width="230" height="60" rx="6"/>
+          <text class="t2" x="805" y="1003" text-anchor="middle">FAILED</text>
+          <text class="ts" x="805" y="1019" text-anchor="middle">explicit, with an error object</text>
+          <text class="ts" x="805" y="1033" text-anchor="middle">review expiry → escalation → FAILED</text>
+          <text class="ts" x="440" y="1070">No ending is silent: each one is in the journal and in the audit under one correlationId.</text>
+        </svg>
+      </div>
+      <figcaption>Flow definitions: <code>workflows/mail-intake.v1.json</code>, <code>workflows/document-intake.v1.json</code>. Golden master of every scenario: <code>conformance/workflows/</code>. Dashed green = return into the flow without a new write.</figcaption>
+    </figure>
+    <ol class="keyed">
+      <li><span class="num">1</span><p><b>Ingest stores, it does not interpret.</b> The whole mail is one immutable original with a hash; sender address and subject are stored as untrusted data. A full store is an explicit, retryable failure, never a silent acceptance. Tests <code>EVD-001</code>, <code>RES-STOR-001</code>.</p></li>
+      <li><span class="num">2</span><p><b>The model proposes, code approves.</b> An answer outside the allowed set is not a security error but a quality one: the orchestrator tries another strategy (rules) under a new key. An instruction hidden in the text causes at most a second attempt. Tests <code>SEC-INJ-001</code>, <code>IDM-STRAT-001</code>.</p></li>
+      <li><span class="num">3</span><p><b>Second signal and registry.</b> The validator recomputes the document type by rules over the text with instruction-like lines removed; disagreement goes to a human. The registry answer is untrusted until it passes the range and semantic checks. Tests <code>INT-FAIL-001..004</code>, scenario <code>disputed-classification</code>.</p></li>
+      <li><span class="num">4</span><p><b>The stamp is a derivation.</b> The original is never overwritten. When the DMS does not answer clearly, the host returns an unknown outcome, the orchestrator asks three times by client reference and only then calls the operator. Meanwhile the published state is "unclear, being resolved", never a premature "done" or "failed". Tests <code>WF-UNK-001..003</code>, <code>RES-CRASH-001</code>.</p></li>
+      <li><span class="num">5</span><p><b>Mail leaves from its own credential domain.</b> The mail executor is a separate host with a single permission: send. The recipient is never named by the payload or the mail, only by a key into the allowlist in platform policy. The irreversible action carries a business identity at the provider, so even a lost answer never produces a second e-mail. Tests <code>SEC-HOST-001</code>, <code>IDM-RET-002</code>, <code>SEC-CTX-002</code> between flows.</p></li>
+      <li><span class="num">6</span><p><b>Three endings and no fourth.</b> Success, waiting for a human with a deadline and escalation, or an explicit failure with a code. A reviewer decides only with a verified role, tenant and binding to the specific task. Tests <code>WF-REV-003..004</code>, <code>EVD-003</code>.</p></li>
+    </ol>
+  </section>
+
+  <hr class="rule">
+  <p class="prose lang">Part of the rolling documentation of the project. State: <a href="STATUS.en.html">STATUS.en.html</a> · measurement: <code>docs/MEASUREMENT.md</code> · norm: <a href="https://github.com/Anamax443/agent-platform-foundation">agent-platform-foundation</a>.</p>
+</div>
+</body></html>

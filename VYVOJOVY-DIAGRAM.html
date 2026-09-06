@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="cs"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vývojový diagram · agent-platform-first-slice</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@600&display=swap">
+<style>
+  :root { color-scheme: light dark;
+    --paper:#EEF2F6; --card:#FFFFFF; --sunk:#F6F8FA; --ink:#141B23; --soft:#56646F; --line:#CBD5DF;
+    --accent:#2B4C7E; --warn:#A2521C; --warn-bg:#FAEFE5; --ok:#135F4C; --ok-bg:#E5F1ED; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+    --paper:#0E1319; --card:#161D26; --sunk:#10161D; --ink:#E3E9F0; --soft:#94A3B2; --line:#2C3742;
+    --accent:#86AEE0; --warn:#E4A06A; --warn-bg:#2A1E14; --ok:#6BC9AA; --ok-bg:#12261F; } }
+  :root[data-theme="dark"] {
+    --paper:#0E1319; --card:#161D26; --sunk:#10161D; --ink:#E3E9F0; --soft:#94A3B2; --line:#2C3742;
+    --accent:#86AEE0; --warn:#E4A06A; --warn-bg:#2A1E14; --ok:#6BC9AA; --ok-bg:#12261F; }
+  body { margin:0; background:var(--paper); color:var(--ink); font:400 16px/1.65 "IBM Plex Sans",system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:1040px; margin:0 auto; padding:56px 24px 96px; display:flex; flex-direction:column; gap:40px; }
+  .prose { max-width:70ch; display:flex; flex-direction:column; gap:14px; }
+  .eyebrow { font:500 11px/1 "IBM Plex Mono",monospace; letter-spacing:.14em; text-transform:uppercase; color:var(--accent); }
+  h1 { font:600 clamp(30px,5vw,44px)/1.1 "IBM Plex Serif",Georgia,serif; margin:10px 0 0; text-wrap:balance; }
+  h2 { font:600 24px/1.2 "IBM Plex Serif",Georgia,serif; margin:0; text-wrap:balance; }
+  .stand { font-size:18px; color:var(--soft); margin-top:8px; }
+  p { margin:0; }
+  code, .mono { font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:.88em; }
+  code { background:var(--sunk); border:1px solid var(--line); border-radius:4px; padding:1px 5px; }
+  a { color:var(--accent); }
+  .rule { height:1px; background:var(--line); border:0; margin:0; }
+  section { display:flex; flex-direction:column; gap:22px; }
+  .sechead { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
+  .tag { font:500 11px/1 "IBM Plex Mono",monospace; letter-spacing:.1em; text-transform:uppercase; padding:5px 9px; border-radius:4px; }
+  .tag-a { color:var(--accent); background:var(--sunk); border:1px solid var(--line); }
+  .tag-ok { color:var(--ok); background:var(--ok-bg); }
+  figure { margin:0; display:flex; flex-direction:column; gap:12px; }
+  .board { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:18px; overflow-x:auto; }
+  .dgm { display:block; width:100%; min-width:760px; height:auto; color:var(--soft); }
+  figcaption { font:400 13px/1.5 "IBM Plex Mono",monospace; color:var(--soft); }
+  .dgm .box  { fill:var(--sunk); stroke:var(--line); stroke-width:1.5; }
+  .dgm .band { fill:none; stroke:var(--line); stroke-width:1.5; stroke-dasharray:6 5; }
+  .dgm .dia  { fill:var(--card); stroke:var(--accent); stroke-width:1.5; }
+  .dgm .flow { stroke:currentColor; stroke-width:1.6; fill:none; }
+  .dgm .warn { stroke:var(--warn); stroke-width:1.7; fill:none; }
+  .dgm .ok   { stroke:var(--ok); stroke-width:1.7; fill:none; }
+  .dgm .okd  { stroke:var(--ok); stroke-width:1.7; fill:none; stroke-dasharray:5 4; }
+  .dgm .mk-ink { fill:currentColor; } .dgm .mk-warn { fill:var(--warn); } .dgm .mk-ok { fill:var(--ok); }
+  .dgm .t   { fill:var(--ink); font:500 13px "IBM Plex Sans",sans-serif; }
+  .dgm .t2  { fill:var(--ink); font:500 11.5px "IBM Plex Sans",sans-serif; }
+  .dgm .ts  { fill:var(--soft); font:400 10.5px "IBM Plex Mono",monospace; }
+  .dgm .tw  { fill:var(--warn); font:500 10.5px "IBM Plex Mono",monospace; }
+  .dgm .tok { fill:var(--ok); font:500 10.5px "IBM Plex Mono",monospace; }
+  ol.keyed { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:14px; }
+  ol.keyed li { display:grid; grid-template-columns:26px 1fr; gap:14px; align-items:start; }
+  .num { width:24px; height:24px; border-radius:50%; display:grid; place-items:center; font:600 12px/1 "IBM Plex Sans",sans-serif; color:var(--card); background:var(--accent); margin-top:3px; }
+  .lang { font:400 13px "IBM Plex Mono",monospace; color:var(--soft); }
+</style>
+</head><body>
+<div class="wrap">
+
+  <header class="prose">
+    <div class="eyebrow">agent-platform-first-slice · vývojový diagram</div>
+    <h1>Jak projde jeden dokument systémem, který mu nesmí věřit</h1>
+    <p class="stand">Dva pohledy. První je cesta každého jednotlivého příkazu přes bezpečnostní řetězec: co se kontroluje, v jakém pořadí a kde to může skončit. Druhý je běh celého toku od e-mailu k notifikaci se všemi konci, které smí nastat.</p>
+    <p class="lang">Jazyk: <b>Čeština</b> · <a href="VYVOJOVY-DIAGRAM.en.html">English</a> · zpět na <a href="STATUS.html">STATUS</a></p>
+  </header>
+
+  <hr class="rule">
+
+  <section>
+    <div class="sechead"><h2>1 · Cesta jednoho příkazu</h2><span class="tag tag-a">každý krok každého toku</span></div>
+    <p class="prose">Ať jde o klasifikaci, razítko nebo e-mail, každý příkaz projde stejnou branou. Nic z toho nedělá komponenta sama: router a executor host jsou platforma, komponenta dostane příkaz až po posledním „ano".</p>
+    <figure>
+      <div class="board">
+        <svg class="dgm" viewBox="0 0 960 530" role="img" aria-label="Cesta jednoho příkazu: volající, gateway podepíše obálku, router provede osm kontrol v pevném pořadí, čtecí handler nebo executor host s vlastním řetězcem, výsledek vždy jako ResultEnvelope s auditem.">
+          <defs>
+            <marker id="a-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-ink" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="a-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-warn" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="a-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-ok" d="M0,0 L10,5 L0,10 z"/></marker>
+          </defs>
+
+          <rect class="box" x="40" y="30" width="200" height="48" rx="6"/>
+          <text class="t" x="140" y="51" text-anchor="middle">Volající</text>
+          <text class="ts" x="140" y="68" text-anchor="middle">orchestrátor · harness</text>
+          <line class="flow" x1="240" y1="54" x2="296" y2="54" marker-end="url(#a-ink)"/>
+          <rect class="box" x="300" y="30" width="300" height="48" rx="6"/>
+          <text class="t" x="450" y="51" text-anchor="middle">Gateway</text>
+          <text class="ts" x="450" y="68" text-anchor="middle">identita → TrustedContext · podpis Ed25519</text>
+          <line class="flow" x1="600" y1="54" x2="656" y2="54" marker-end="url(#a-ink)"/>
+          <rect class="box" x="660" y="30" width="260" height="48" rx="6"/>
+          <text class="t" x="790" y="51" text-anchor="middle">DispatchEnvelope</text>
+          <text class="ts" x="790" y="68" text-anchor="middle">{ message, context, binding }</text>
+          <polyline class="flow" points="790,78 790,96 480,96 480,108" marker-end="url(#a-ink)"/>
+
+          <rect class="band" x="40" y="110" width="880" height="150" rx="12"/>
+          <text class="ts" x="52" y="126">Router · v tomto pořadí · první DENY končí</text>
+
+          <rect class="box" x="52" y="138" width="92" height="40" rx="6"/><text class="t2" x="98" y="162" text-anchor="middle">schéma</text>
+          <line class="flow" x1="144" y1="158" x2="158" y2="158" marker-end="url(#a-ink)"/>
+          <rect class="box" x="160" y="138" width="92" height="40" rx="6"/><text class="t2" x="206" y="162" text-anchor="middle">mechanismus</text>
+          <line class="flow" x1="252" y1="158" x2="266" y2="158" marker-end="url(#a-ink)"/>
+          <rect class="box" x="268" y="138" width="92" height="40" rx="6"/><text class="t2" x="314" y="162" text-anchor="middle">podpis</text>
+          <line class="flow" x1="360" y1="158" x2="374" y2="158" marker-end="url(#a-ink)"/>
+          <rect class="box" x="376" y="138" width="92" height="40" rx="6"/><text class="t2" x="422" y="162" text-anchor="middle">expirace</text>
+          <line class="flow" x1="468" y1="158" x2="482" y2="158" marker-end="url(#a-ink)"/>
+          <rect class="box" x="484" y="138" width="92" height="40" rx="6"/><text class="t2" x="530" y="162" text-anchor="middle">scope</text>
+          <line class="flow" x1="576" y1="158" x2="590" y2="158" marker-end="url(#a-ink)"/>
+          <rect class="box" x="592" y="138" width="92" height="40" rx="6"/><text class="t2" x="638" y="162" text-anchor="middle">verze</text>
+          <line class="flow" x1="684" y1="158" x2="698" y2="158" marker-end="url(#a-ink)"/>
+          <rect class="box" x="700" y="138" width="92" height="40" rx="6"/><text class="t2" x="746" y="162" text-anchor="middle">policy · tenant</text>
+          <line class="flow" x1="792" y1="158" x2="806" y2="158" marker-end="url(#a-ink)"/>
+          <rect class="box" x="808" y="138" width="92" height="40" rx="6"/><text class="t2" x="854" y="162" text-anchor="middle">vstup. schéma</text>
+
+          <line class="warn" x1="98" y1="178" x2="98" y2="206" marker-end="url(#a-warn)"/>
+          <text class="tw" x="98" y="222" text-anchor="middle">SCHEMA_VALIDATION</text><text class="tw" x="98" y="235" text-anchor="middle">_FAILED</text>
+          <line class="warn" x1="206" y1="178" x2="206" y2="206" marker-end="url(#a-warn)"/>
+          <text class="tw" x="206" y="222" text-anchor="middle">CONTEXT_BINDING</text><text class="tw" x="206" y="235" text-anchor="middle">_INVALID</text>
+          <line class="warn" x1="314" y1="178" x2="314" y2="206" marker-end="url(#a-warn)"/>
+          <text class="tw" x="314" y="222" text-anchor="middle">CONTEXT_BINDING</text><text class="tw" x="314" y="235" text-anchor="middle">_INVALID</text>
+          <line class="warn" x1="422" y1="178" x2="422" y2="206" marker-end="url(#a-warn)"/>
+          <text class="tw" x="422" y="222" text-anchor="middle">CONTEXT</text><text class="tw" x="422" y="235" text-anchor="middle">_EXPIRED</text>
+          <line class="warn" x1="530" y1="178" x2="530" y2="206" marker-end="url(#a-warn)"/>
+          <text class="tw" x="530" y="222" text-anchor="middle">CAPABILITY</text><text class="tw" x="530" y="235" text-anchor="middle">_NOT_ALLOWED</text>
+          <line class="warn" x1="638" y1="178" x2="638" y2="206" marker-end="url(#a-warn)"/>
+          <text class="tw" x="638" y="222" text-anchor="middle">INCOMPATIBLE</text><text class="tw" x="638" y="235" text-anchor="middle">_VERSION</text>
+          <line class="warn" x1="746" y1="178" x2="746" y2="206" marker-end="url(#a-warn)"/>
+          <text class="tw" x="746" y="222" text-anchor="middle">TENANT_SCOPE</text><text class="tw" x="746" y="235" text-anchor="middle">_MISMATCH</text>
+          <line class="warn" x1="854" y1="178" x2="854" y2="206" marker-end="url(#a-warn)"/>
+          <text class="tw" x="854" y="222" text-anchor="middle">SCHEMA_VALIDATION</text><text class="tw" x="854" y="235" text-anchor="middle">_FAILED</text>
+          <text class="ts" x="52" y="254">DENY = FAILED s error objektem + audit · SECURITY kódy navíc do security logu · handler se nespustí</text>
+
+          <line class="flow" x1="200" y1="260" x2="200" y2="284" marker-end="url(#a-ink)"/>
+          <text class="ts" x="208" y="278">sideEffects: none</text>
+          <line class="flow" x1="690" y1="260" x2="690" y2="284" marker-end="url(#a-ink)"/>
+          <text class="ts" x="698" y="278">write</text>
+
+          <rect class="box" x="40" y="288" width="380" height="60" rx="6"/>
+          <text class="t" x="230" y="311" text-anchor="middle">Handler čte, nepíše</text>
+          <text class="ts" x="230" y="329" text-anchor="middle">classify · validate · výstup jen přes schéma a enum</text>
+
+          <rect class="band" x="460" y="288" width="460" height="170" rx="12"/>
+          <text class="ts" x="472" y="304">Executor host · řetězec těsně před side effectem</text>
+          <rect class="box" x="470" y="316" width="78" height="40" rx="6"/><text class="t2" x="509" y="340" text-anchor="middle">allowlist</text>
+          <line class="flow" x1="548" y1="336" x2="558" y2="336" marker-end="url(#a-ink)"/>
+          <rect class="box" x="560" y="316" width="78" height="40" rx="6"/><text class="t2" x="599" y="340" text-anchor="middle">tenant</text>
+          <line class="flow" x1="638" y1="336" x2="648" y2="336" marker-end="url(#a-ink)"/>
+          <rect class="box" x="650" y="316" width="78" height="40" rx="6"/><text class="t2" x="689" y="340" text-anchor="middle">deadline</text>
+          <line class="flow" x1="728" y1="336" x2="738" y2="336" marker-end="url(#a-ink)"/>
+          <rect class="box" x="740" y="316" width="78" height="40" rx="6"/><text class="t2" x="779" y="340" text-anchor="middle">klíč</text>
+          <line class="flow" x1="818" y1="336" x2="828" y2="336" marker-end="url(#a-ink)"/>
+          <rect class="box" x="830" y="316" width="78" height="40" rx="6"/><text class="t2" x="869" y="340" text-anchor="middle">zápis</text>
+
+          <line class="warn" x1="509" y1="356" x2="509" y2="384" marker-end="url(#a-warn)"/>
+          <text class="tw" x="509" y="398" text-anchor="middle">CAPABILITY</text><text class="tw" x="509" y="411" text-anchor="middle">_NOT_ALLOWED</text>
+          <line class="warn" x1="599" y1="356" x2="599" y2="384" marker-end="url(#a-warn)"/>
+          <text class="tw" x="599" y="398" text-anchor="middle">TENANT_SCOPE</text><text class="tw" x="599" y="411" text-anchor="middle">_MISMATCH</text>
+          <line class="warn" x1="689" y1="356" x2="689" y2="384" marker-end="url(#a-warn)"/>
+          <text class="tw" x="689" y="398" text-anchor="middle">COMMAND</text><text class="tw" x="689" y="411" text-anchor="middle">_EXPIRED · ±30 s</text>
+          <line class="ok" x1="779" y1="356" x2="779" y2="384" marker-end="url(#a-ok)"/>
+          <text class="tok" x="779" y="398" text-anchor="middle">viděn → původní</text><text class="tok" x="779" y="411" text-anchor="middle">výsledek, bez zápisu</text>
+          <line class="warn" x1="869" y1="356" x2="869" y2="384" marker-end="url(#a-warn)"/>
+          <text class="tw" x="869" y="398" text-anchor="middle">UNKNOWN</text><text class="tw" x="869" y="411" text-anchor="middle">_OUTCOME</text>
+          <text class="ts" x="472" y="436">audit před i po zápisu · credential jen pro identitu handleru</text>
+          <text class="ts" x="472" y="450">nikdy druhý side effect</text>
+
+          <line class="flow" x1="230" y1="348" x2="230" y2="466" marker-end="url(#a-ink)"/>
+          <line class="flow" x1="690" y1="458" x2="690" y2="466" marker-end="url(#a-ink)"/>
+          <rect class="box" x="40" y="470" width="880" height="48" rx="24"/>
+          <text class="t" x="480" y="490" text-anchor="middle">ResultEnvelope · vždy s auditem pod jedním correlationId</text>
+          <text class="ts" x="480" y="507" text-anchor="middle">SUCCEEDED · FAILED (code, class, retryable, reissuable) · WAITING (REVIEW) · UNKNOWN_OUTCOME (reconciliationRef)</text>
+        </svg>
+      </div>
+      <figcaption>Router: <code>src/platform/router.ts</code>. Executor host: <code>src/platform/executor-host.ts</code>. Osm kontrol routeru a pět kroků hostu odpovídají FOUNDATION-core §3.3. Oranžová = DENY, zelená = bezpečný zkrat.</figcaption>
+    </figure>
+    <ol class="keyed">
+      <li><span class="num">1</span><p><b>Volající nikdy neříká, kdo je.</b> Gateway vezme identitu z autentizace (v testech tabulka identit, na farmě Cloudflare Access), vytvoří <code>TrustedContext</code> s tenantem a scopes a podepíše <code>{ message, context }</code>. Payload o sobě nemůže tvrdit nic důvěryhodného. Testy <code>SEC-CTX-003</code>, <code>SEC-CRED-002..003</code>.</p></li>
+      <li><span class="num">2</span><p><b>Router kontroluje v pevném pořadí</b> a první selhání končí: tvar obálky, přijímaný mechanismus bindingu, podpis proti klíči platnému v čase podpisu, expirace contextu, scope volajícího, verze capability, grant v platform policy pro tenant, vstupní schéma capability. AI identita má jediný scope, takže na zápis narazí už u pátého kroku. Testy <code>SEC-PRIV-001</code>, <code>CTR-TIME-001</code>.</p></li>
+      <li><span class="num">3</span><p><b>Čtecí handler dostane jen data.</b> Klasifikátor a validátor nemají credential ani možnost zápisu; jejich výstup projde výstupním schématem a enum allowlistem. Injekce v textu tak nemá kam přetéct. Testy <code>SEC-INJ-001..002</code>.</p></li>
+      <li><span class="num">4</span><p><b>Executor host opakuje kontrolu těsně před zápisem:</b> allowlist hostu, tenant cílového zdroje proti contextu, deadline s tolerancí hodin 30 s, idempotency klíč (viděný klíč vrátí původní výsledek a nic nezapíše), audit před i po. Každá z těchto pojistek má mutanta, který ji vypne, a test, který to pozná. Testy <code>SEC-CTX-002</code>, <code>IDM-REPLAY-001</code>, <code>IDM-DEADLINE-001..002</code>, mutanty <code>MUT-*</code>.</p></li>
+      <li><span class="num">5</span><p><b>Neznámý výsledek je stav, ne chyba.</b> Když externí systém odpoví nejasně, host vrátí <code>UNKNOWN_OUTCOME</code> s referencí a nikdy sám nezopakuje zápis; co dál, řeší orchestrátor (diagram 2, krok 4).</p></li>
+    </ol>
+  </section>
+
+  <hr class="rule">
+
+  <section>
+    <div class="sechead"><h2>2 · Běh toku od e-mailu k notifikaci</h2><span class="tag tag-ok">mail-intake.v1 · document-intake.v1 = kroky 2–4</span></div>
+    <p class="prose">Orchestrátor drží workflow jako uzavřený seznam kroků a stavů. Každý kosočtverec je rozhodnutí kódu, ne modelu. Vpravo jsou všechny konce, které smí nastat: jiný neexistuje.</p>
+    <figure>
+      <div class="board">
+        <svg class="dgm" viewBox="0 0 960 1090" role="img" aria-label="Běh toku mail-intake: příjem mailu, klasifikace modelem s kontrolou proti allowlistu a quality retry, validace s druhým signálem a registrem, razítko s reconciliací neznámého výsledku, notifikace přes executor s vlastní credential doménou; konce SUCCEEDED, WAITING REVIEW, FAILED.">
+          <defs>
+            <marker id="b-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-ink" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="b-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-warn" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="b-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-ok" d="M0,0 L10,5 L0,10 z"/></marker>
+          </defs>
+
+          <rect class="box" x="20" y="20" width="360" height="44" rx="22"/>
+          <text class="t" x="200" y="46" text-anchor="middle">E-mail na apf-intake@ · nebo dokument přes API</text>
+          <line class="flow" x1="200" y1="64" x2="200" y2="92" marker-end="url(#b-ink)"/>
+
+          <rect class="box" x="20" y="96" width="360" height="60" rx="6"/>
+          <text class="t" x="200" y="118" text-anchor="middle">1 · mail.ingest</text>
+          <text class="ts" x="200" y="136" text-anchor="middle">internal-write · originál (sha256) · hlavičky jen data</text>
+          <line class="flow" x1="200" y1="156" x2="200" y2="182" marker-end="url(#b-ink)"/>
+
+          <polygon class="dia" points="200,184 340,214 200,244 60,214"/>
+          <text class="t2" x="200" y="218" text-anchor="middle">úložiště přijalo originál?</text>
+          <line class="warn" x1="340" y1="214" x2="436" y2="214" marker-end="url(#b-warn)"/>
+          <text class="tw" x="388" y="206" text-anchor="middle">ne</text>
+          <rect class="box" x="440" y="190" width="480" height="48" rx="6"/>
+          <text class="t2" x="680" y="209" text-anchor="middle">STORAGE_FULL · retryable</text>
+          <text class="ts" x="680" y="227" text-anchor="middle">3 technické pokusy, stejný klíč, pak FAILED · nic falešně přijatého</text>
+          <line class="flow" x1="200" y1="244" x2="200" y2="272" marker-end="url(#b-ink)"/>
+          <text class="tok" x="208" y="264">ano</text>
+
+          <rect class="box" x="20" y="276" width="360" height="60" rx="6"/>
+          <text class="t" x="200" y="298" text-anchor="middle">2 · document.classify (AI)</text>
+          <text class="ts" x="200" y="316" text-anchor="middle">text v oddělovačích · model odpoví · kód ověří enum</text>
+          <line class="flow" x1="200" y1="336" x2="200" y2="362" marker-end="url(#b-ink)"/>
+
+          <polygon class="dia" points="200,364 340,394 200,424 60,394"/>
+          <text class="t2" x="200" y="398" text-anchor="middle">odpověď v allowlistu?</text>
+          <line class="warn" x1="340" y1="394" x2="436" y2="394" marker-end="url(#b-warn)"/>
+          <text class="tw" x="388" y="386" text-anchor="middle">ne</text>
+          <rect class="box" x="440" y="370" width="480" height="48" rx="6"/>
+          <text class="t2" x="680" y="389" text-anchor="middle">MODEL_OUTPUT_NOT_ALLOWED · QUALITY</text>
+          <text class="ts" x="680" y="407" text-anchor="middle">retry jinou strategií (pravidla) s novým klíčem · instrukce zůstala data</text>
+          <polyline class="okd" points="680,370 680,352 390,352 390,306 364,306" marker-end="url(#b-ok)"/>
+          <text class="tok" x="400" y="345">znovu krok 2, jiná strategie</text>
+          <line class="flow" x1="200" y1="424" x2="200" y2="452" marker-end="url(#b-ink)"/>
+          <text class="tok" x="208" y="444">ano</text>
+
+          <rect class="box" x="20" y="456" width="360" height="60" rx="6"/>
+          <text class="t" x="200" y="478" text-anchor="middle">3 · document.validate</text>
+          <text class="ts" x="200" y="496" text-anchor="middle">hash originálu · druhý signál pravidly · registr</text>
+          <line class="flow" x1="200" y1="516" x2="200" y2="542" marker-end="url(#b-ink)"/>
+
+          <polygon class="dia" points="200,544 340,574 200,604 60,574"/>
+          <text class="t2" x="200" y="578" text-anchor="middle">souhlasí a smí se razítkovat?</text>
+          <line class="warn" x1="340" y1="574" x2="436" y2="574" marker-end="url(#b-warn)"/>
+          <text class="tw" x="388" y="566" text-anchor="middle">ne</text>
+          <rect class="box" x="440" y="540" width="480" height="84" rx="6"/>
+          <text class="t2" x="680" y="559" text-anchor="middle">→ REVIEW pro roli document.reviewer</text>
+          <text class="ts" x="680" y="577" text-anchor="middle">CLASSIFICATION_DISPUTED · STAMP_NOT_ALLOWED</text>
+          <text class="ts" x="680" y="593" text-anchor="middle">REGISTRY_REJECTED · REGISTRY_TYPE_CONFLICT</text>
+          <text class="ts" x="680" y="609" text-anchor="middle">registr nedostupný: 3 pokusy, pak FAILED (DEPENDENCY_UNAVAILABLE / TIMEOUT)</text>
+          <line class="flow" x1="200" y1="604" x2="200" y2="632" marker-end="url(#b-ink)"/>
+          <text class="tok" x="208" y="624">ano</text>
+
+          <rect class="box" x="20" y="636" width="360" height="60" rx="6"/>
+          <text class="t" x="200" y="658" text-anchor="middle">4 · document.stamp</text>
+          <text class="ts" x="200" y="676" text-anchor="middle">internal-write · host LOGICAL · odvozenina s derivedFrom</text>
+          <line class="flow" x1="200" y1="696" x2="200" y2="722" marker-end="url(#b-ink)"/>
+
+          <polygon class="dia" points="200,724 340,754 200,784 60,754"/>
+          <text class="t2" x="200" y="758" text-anchor="middle">DMS potvrdilo zápis?</text>
+          <line class="warn" x1="340" y1="754" x2="436" y2="754" marker-end="url(#b-warn)"/>
+          <text class="tw" x="388" y="746" text-anchor="middle">neznámo</text>
+          <rect class="box" x="440" y="718" width="480" height="72" rx="6"/>
+          <text class="t2" x="680" y="737" text-anchor="middle">UNKNOWN_OUTCOME · žádný druhý zápis</text>
+          <text class="ts" x="680" y="755" text-anchor="middle">reconcile až 3× podle clientRef = idempotencyKey</text>
+          <text class="ts" x="680" y="773" text-anchor="middle">zapsáno → pokračuj · nezapsáno → znovu stejný klíč · neznámo → REVIEW</text>
+          <polyline class="okd" points="680,790 680,812 212,812" marker-end="url(#b-ok)"/>
+          <text class="tok" x="560" y="806">zapsáno: pokračuj</text>
+          <line class="flow" x1="200" y1="784" x2="200" y2="812" marker-end="url(#b-ink)"/>
+          <text class="tok" x="208" y="804">ano</text>
+
+          <rect class="box" x="20" y="816" width="360" height="60" rx="6"/>
+          <text class="t" x="200" y="838" text-anchor="middle">5 · email.send</text>
+          <text class="ts" x="200" y="856" text-anchor="middle">external-write · host PRINCIPAL · příjemce jen z policy</text>
+          <line class="flow" x1="200" y1="876" x2="200" y2="902" marker-end="url(#b-ink)"/>
+
+          <polygon class="dia" points="200,904 340,934 200,964 60,934"/>
+          <text class="t2" x="200" y="938" text-anchor="middle">provider potvrdil doručení?</text>
+          <line class="warn" x1="340" y1="934" x2="436" y2="934" marker-end="url(#b-warn)"/>
+          <text class="tw" x="388" y="926" text-anchor="middle">neznámo</text>
+          <rect class="box" x="440" y="910" width="480" height="48" rx="6"/>
+          <text class="t2" x="680" y="929" text-anchor="middle">UNKNOWN_OUTCOME · stejný postup jako u kroku 4</text>
+          <text class="ts" x="680" y="947" text-anchor="middle">provider dedupuje podle Message-ID = klíč, opakování nepošle dvakrát</text>
+          <line class="flow" x1="200" y1="964" x2="200" y2="992" marker-end="url(#b-ink)"/>
+          <text class="tok" x="208" y="984">ano</text>
+
+          <rect class="box" x="20" y="996" width="360" height="44" rx="22"/>
+          <text class="t" x="200" y="1022" text-anchor="middle">SUCCEEDED · vše v journalu a auditu</text>
+
+          <rect class="box" x="440" y="984" width="230" height="60" rx="6"/>
+          <text class="t2" x="555" y="1003" text-anchor="middle">WAITING (REVIEW)</text>
+          <text class="ts" x="555" y="1019" text-anchor="middle">APPROVE · CORRECT ·</text>
+          <text class="ts" x="555" y="1033" text-anchor="middle">REJECT · RECLASSIFY</text>
+          <rect class="box" x="690" y="984" width="230" height="60" rx="6"/>
+          <text class="t2" x="805" y="1003" text-anchor="middle">FAILED</text>
+          <text class="ts" x="805" y="1019" text-anchor="middle">explicitně, s error objektem</text>
+          <text class="ts" x="805" y="1033" text-anchor="middle">expirace review → eskalace → FAILED</text>
+          <text class="ts" x="440" y="1070">Žádný konec není tichý: každý je v journalu a v auditu pod jedním correlationId.</text>
+        </svg>
+      </div>
+      <figcaption>Definice toků: <code>workflows/mail-intake.v1.json</code>, <code>workflows/document-intake.v1.json</code>. Zlatý otisk každého scénáře: <code>conformance/workflows/</code>. Zelená přerušovaná = návrat do toku bez nového zápisu.</figcaption>
+    </figure>
+    <ol class="keyed">
+      <li><span class="num">1</span><p><b>Příjem uloží, neinterpretuje.</b> Celý mail je jeden neměnný originál s hashem; adresa odesílatele i předmět jsou uložené jako nedůvěryhodná data. Plné úložiště je výslovné selhání s možností opakování, nikdy tiché přijetí. Testy <code>EVD-001</code>, <code>RES-STOR-001</code>.</p></li>
+      <li><span class="num">2</span><p><b>Model navrhuje, kód schvaluje.</b> Odpověď mimo povolený výčet není chyba zabezpečení, ale kvalita: orchestrátor zkusí jinou strategii (pravidla) pod novým klíčem. Instrukce schovaná v textu tak nejvýš způsobí druhý pokus. Testy <code>SEC-INJ-001</code>, <code>IDM-STRAT-001</code>.</p></li>
+      <li><span class="num">3</span><p><b>Druhý signál a registr.</b> Validátor přepočítá typ dokumentu pravidly nad textem bez řádků, které vypadají jako instrukce; neshoda jde k člověku. Odpověď registru je nedůvěryhodná, dokud neprojde rozsahovou a sémantickou kontrolou. Testy <code>INT-FAIL-001..004</code>, scénář <code>disputed-classification</code>.</p></li>
+      <li><span class="num">4</span><p><b>Razítko je odvozenina.</b> Originál se nikdy nepřepíše. Když DMS neodpoví jasně, host vrátí neznámý výsledek, orchestrátor se třikrát zeptá podle klientské reference a teprve pak volá operátora. Během toho je navenek vidět stav „nejasné, řeší se", nikdy předčasné „hotovo" ani „selhalo". Testy <code>WF-UNK-001..003</code>, <code>RES-CRASH-001</code>.</p></li>
+      <li><span class="num">5</span><p><b>E-mail odchází z vlastní credential domény.</b> Executor pro poštu je oddělený host s jediným oprávněním: odeslat. Příjemce nikdy nejmenuje payload ani mail, ale klíč do allowlistu v platform policy. Nevratná akce má u providera business identitu, takže ani ztracená odpověď nevede k druhému e-mailu. Testy <code>SEC-HOST-001</code>, <code>IDM-RET-002</code>, <code>SEC-CTX-002</code> mezi toky.</p></li>
+      <li><span class="num">6</span><p><b>Tři konce a žádný čtvrtý.</b> Úspěch, čekání na člověka s deadlinem a eskalací, nebo výslovné selhání s kódem. Reviewer rozhoduje jen s ověřenou rolí, tenantem a vazbou na konkrétní úkol. Testy <code>WF-REV-003..004</code>, <code>EVD-003</code>.</p></li>
+    </ol>
+  </section>
+
+  <hr class="rule">
+  <p class="prose lang">Součást rolling dokumentace projektu. Stav: <a href="STATUS.html">STATUS.html</a> · měření: <code>docs/MEASUREMENT.md</code> · norma: <a href="https://github.com/Anamax443/agent-platform-foundation">agent-platform-foundation</a>.</p>
+</div>
+</body></html>

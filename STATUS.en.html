@@ -62,7 +62,8 @@
     <tr><th>State</th><td><span class="pill live">M1–M4 done</span> <span class="pill prep">no cloud, no real model</span>
       <b>Two states on purpose.</b> <i>Done</i> — both flows run end to end, the norm's MUST set is green on three write executors, CI is green.
       <i>No cloud</i> — everything runs locally with fakes (LLM, registry, DMS, archive, SMTP), no API key, PRINCIPAL isolation is simulated inside one process. Deployment to Workers is the next step.</td></tr>
-    <tr><th>Checks</th><td>CI on every push (Node 24): typecheck, Vitest, <code>ARCH-DEP-001</code> + clock lint, secret scan (gitleaks), link check (lychee). Last run <span class="pill live">green</span> for commit <code>208ae0d</code>.</td></tr>
+    <tr><th>Checks</th><td>CI on every push (Node 24): typecheck, Vitest, <code>ARCH-DEP-001</code> + clock lint, <code>farm:check</code>, secret scan (gitleaks), link check (lychee). Last run <span class="pill live">green</span>.</td></tr>
+    <tr><th>Flowchart</th><td><a href="VYVOJOVY-DIAGRAM.en.html">VYVOJOVY-DIAGRAM.en.html</a>: the path of one command through the security chain (gateway → router → executor host → result) and the run of a flow from e-mail to notification with every ending that may happen.</td></tr>
   </table>
 
   <div class="kpis">

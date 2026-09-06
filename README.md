@@ -44,6 +44,7 @@ npm run arch      # ARCH-DEP-001: no component imports another component or plat
 ## Status
 
 - [STATUS.en.html](STATUS.en.html) — status page for the browser (overview, flows, measurement, findings, decisions); Czech: [STATUS.html](STATUS.html)
+- [VYVOJOVY-DIAGRAM.en.html](VYVOJOVY-DIAGRAM.en.html) — flowchart: the path of one command through the security chain, and the run of a flow from e-mail to notification with every ending; Czech: [VYVOJOVY-DIAGRAM.html](VYVOJOVY-DIAGRAM.html)
 - [HANDOFF.md](HANDOFF.md) — state diary, newest first
 - [docs/MEASUREMENT.md](docs/MEASUREMENT.md) — what the norm cost and what it caught
 
