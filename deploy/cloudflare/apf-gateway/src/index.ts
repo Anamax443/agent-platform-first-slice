@@ -1,11 +1,13 @@
-// apf-gateway: intake + one Durable Object per workflow instance. Step 2 of docs/NAVRHOVY-LIST-farma.md, unit A:
-// a document handed in through the page (behind Cloudflare Access) becomes an immutable original, a workflow instance
-// starts in its own Durable Object (SQLite = journal, audit, artifacts; R2 and D1 get async copies) and the orchestrator
-// runs as far as the farm is wired. Until the router is wired, every step ends as an explicit DEPENDENCY_UNAVAILABLE.
-// The installation (profile + policies) comes from the build-time alias apf:installation and is assembled fail-closed at
-// import: a broken profile means this Worker does not start at all. Nothing installation-bound is written in this file.
+// apf-gateway: intake + one Durable Object per workflow instance. Step 2 of docs/NAVRHOVY-LIST-farma.md, units A and A2:
+// a document handed in through the page (behind Cloudflare Access) becomes an immutable original (text in the object,
+// binary in R2 keyed by sha256), a binary original is turned into a text derivation with provenance by Workers AI
+// (toMarkdown: PDF, images, docx), a workflow instance starts in its own Durable Object (SQLite = journal, audit,
+// artifacts; R2 and D1 get async copies) and the orchestrator runs as far as the farm is wired. Until the router is
+// wired, every step ends as an explicit DEPENDENCY_UNAVAILABLE. The installation (profile + policies) comes from the
+// build-time alias apf:installation and is assembled fail-closed at import. Nothing installation-bound is written here.
 import { DurableObject } from "cloudflare:workers";
 import { INSTALLATION, installation } from "apf:installation";
+import { sha256Bytes } from "../../../../src/platform/artifacts.js";
 import { iso, SystemClock } from "../../../../src/platform/clock.js";
 import { platformError } from "../../../../src/platform/errors.js";
 import { newId } from "../../../../src/platform/ids.js";
@@ -14,7 +16,7 @@ import { ReviewService } from "../../../../src/platform/review.js";
 import type { DispatchTransport } from "../../../../src/platform/transport.js";
 import type { MessageEnvelope, ResultEnvelope } from "../../../../src/platform/types.js";
 import { WORKFLOW_DEFINITIONS, workflowDef } from "../../../../src/platform/workflow.js";
-import { renderHome, renderInstance, type InstanceView, type Wired } from "./page.js";
+import { renderError, renderHome, renderInstance, type InstanceView, type Wired } from "./page.js";
 import { D1_AUDIT_DDL, DDL, SqliteArtifacts, SqliteAudit, SqliteJournal } from "./store.js";
 
 export interface Env {
@@ -34,9 +36,10 @@ export interface Env {
   GATEWAY_SIGNING_KEY?: string;
 }
 
-/** What this deployment can do. Read by /version, /health and the page; every unit of step 2 flips one flag. */
+/** What this deployment can do. Read by /version, /health and the page; every unit of step 2 flips one entry. */
 const WIRED: Wired = {
   intake: true,
+  extract: "workers-ai toMarkdown (pdf, obrázky, docx) → derivace s provenancí",
   journal: "durable-object-sqlite",
   audit: "durable-object-sqlite + d1",
   artifacts: "durable-object-sqlite + r2",
@@ -45,14 +48,30 @@ const WIRED: Wired = {
   accessJwtVerified: false,
 };
 
-const MAX_DOCUMENT_CHARS = 1_000_000;
+const MAX_TEXT_CHARS = 1_000_000;
+const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
+const EXTRACTOR = "workers-ai:toMarkdown";
+const EXTRACT_CAPABILITY = "document.extract";
+
+/** The original as the object receives it: text inline, or a binary that already sits in R2 (immutable, keyed by its hash). */
+type Original =
+  | { kind: "text"; bytes: string; contentType: string }
+  | { kind: "external"; sha256: string; contentType: string; byteLength: number; location: string; name: string };
+
+interface Extraction {
+  text: string;
+  format: string;
+  tokens: number;
+}
 
 interface IntakeInput {
   workflowId: string;
   workflow: string;
   tenantId: string;
-  bytes: string;
   receivedFrom: string;
+  original: Original;
+  /** Present for a binary original: the text Workers AI derived from it. */
+  extraction?: Extraction;
   stampText?: string;
 }
 
@@ -108,10 +127,29 @@ export class WorkflowInstance extends DurableObject<Env> {
 
   async intake(input: IntakeInput): Promise<InstanceView> {
     if (this.journal.list().length > 0) throw new Error(`instance ${input.workflowId} already exists`);
-    const artifact = this.artifacts.put({ tenantId: input.tenantId, bytes: input.bytes, receivedFrom: input.receivedFrom });
+    const o = input.original;
+    const original =
+      o.kind === "text"
+        ? this.artifacts.put({ tenantId: input.tenantId, bytes: o.bytes, receivedFrom: input.receivedFrom, contentType: o.contentType })
+        : this.artifacts.putExternal({ tenantId: input.tenantId, receivedFrom: input.receivedFrom, sha256: o.sha256, contentType: o.contentType, byteLength: o.byteLength, location: o.location });
+
+    // A binary original never reaches a capability: the workflow runs over the text derived from it (provenance = derivedFrom + producer).
+    let subject = original;
+    if (input.extraction) {
+      this.audit.append({ kind: "write-intent", workflowId: input.workflowId, tenantId: input.tenantId, capability: EXTRACT_CAPABILITY, details: { originalId: original.artifactId, producer: EXTRACTOR } });
+      subject = this.artifacts.derive(original.artifactId, input.extraction.text, EXTRACTOR, input.extraction.format === "markdown" ? "text/markdown" : "text/plain");
+      this.audit.append({
+        kind: "write-done",
+        workflowId: input.workflowId,
+        tenantId: input.tenantId,
+        capability: EXTRACT_CAPABILITY,
+        details: { status: "SUCCEEDED", artifactId: subject.artifactId, sha256: subject.sha256, tokens: input.extraction.tokens, format: input.extraction.format, chars: input.extraction.text.length },
+      });
+    }
+
     const orchestrator = this.orchestratorFor(workflowDef(input.workflow));
     const inst = orchestrator.start(
-      { tenantId: input.tenantId, artifactId: artifact.artifactId, ...(input.stampText ? { stampText: input.stampText } : {}) },
+      { tenantId: input.tenantId, artifactId: subject.artifactId, ...(input.stampText ? { stampText: input.stampText } : {}) },
       undefined,
       input.workflowId,
     );
@@ -120,7 +158,7 @@ export class WorkflowInstance extends DurableObject<Env> {
       workflowId: inst.workflowId,
       correlationId: inst.correlationId,
       tenantId: inst.tenantId,
-      details: { status: "RUNNING", receivedFrom: input.receivedFrom, artifactId: artifact.artifactId, sha256: artifact.sha256 },
+      details: { status: "RUNNING", receivedFrom: input.receivedFrom, originalId: original.artifactId, artifactId: subject.artifactId, sha256: original.sha256, contentType: original.contentType },
     });
     await orchestrator.run(inst.workflowId);
     this.ctx.waitUntil(this.copyOut());
@@ -145,12 +183,15 @@ export class WorkflowInstance extends DurableObject<Env> {
     });
   }
 
-  /** Originals to R2 (immutable, keyed by tenant + sha256) and audit records to the shared D1 trail. Idempotent. */
+  /** Text artifacts to R2 (immutable, keyed by tenant + sha256) and audit records to the shared D1 trail. Idempotent. */
   private async copyOut(): Promise<void> {
     for (const a of this.artifacts.uncopied()) {
-      const key = `originals/${a.tenantId}/${a.sha256}`;
+      const key = `${a.derivedFrom ? "derived" : "originals"}/${a.tenantId}/${a.sha256}`;
       if (!(await this.env.ARTIFACTS.head(key))) {
-        await this.env.ARTIFACTS.put(key, a.bytes, { customMetadata: { artifactId: a.artifactId, receivedFrom: a.receivedFrom, receivedAt: a.receivedAt } });
+        await this.env.ARTIFACTS.put(key, a.bytes, {
+          httpMetadata: { contentType: a.contentType ?? "text/plain" },
+          customMetadata: { artifactId: a.artifactId, receivedFrom: a.receivedFrom, receivedAt: a.receivedAt, ...(a.derivedFrom ? { derivedFrom: a.derivedFrom } : {}) },
+        });
       }
       this.artifacts.markCopied(a.artifactId);
     }
@@ -182,6 +223,29 @@ const intakeTenant = (): string => {
   return id.tenantId;
 };
 
+const BY_EXTENSION: Record<string, string> = {
+  pdf: "application/pdf",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  txt: "text/plain",
+  md: "text/markdown",
+  eml: "message/rfc822",
+  csv: "text/csv",
+  json: "application/json",
+};
+
+const contentTypeOf = (file: File): string => {
+  const ext = file.name.toLowerCase().split(".").pop() ?? "";
+  return file.type && file.type !== "application/octet-stream" ? file.type : (BY_EXTENSION[ext] ?? "application/octet-stream");
+};
+
+const isText = (contentType: string): boolean => contentType.startsWith("text/") || contentType === "message/rfc822" || contentType === "application/json";
+
+const homeModel = (request: Request) => ({ installation: INSTALLATION, user: receivedFrom(request), workflows: Object.keys(WORKFLOW_DEFINITIONS), wired: WIRED });
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -204,24 +268,59 @@ export default {
     }
     if (url.pathname === "/health") return Response.json({ ok: true, wired: WIRED });
 
-    if (url.pathname === "/" && request.method === "GET") {
-      return html(renderHome({ installation: INSTALLATION, user: receivedFrom(request), workflows: Object.keys(WORKFLOW_DEFINITIONS), wired: WIRED }));
-    }
+    if (url.pathname === "/" && request.method === "GET") return html(renderHome(homeModel(request)));
 
     if (url.pathname === "/intake" && request.method === "POST") {
       if (env.KILL_SWITCH === "true") return Response.json({ error: "KILL_SWITCH" }, { status: 503 });
       const form = await request.formData();
-      const file = form.get("file");
-      let bytes = String(form.get("text") ?? "");
-      if (file instanceof File && file.size > 0) bytes = await file.text();
-      if (!bytes.trim()) return html(renderHome({ installation: INSTALLATION, user: receivedFrom(request), workflows: Object.keys(WORKFLOW_DEFINITIONS), wired: WIRED }), 400);
-      if (bytes.length > MAX_DOCUMENT_CHARS) return Response.json({ error: "DOCUMENT_TOO_LARGE", max: MAX_DOCUMENT_CHARS }, { status: 413 });
       const workflow = String(form.get("workflow") ?? "document-intake");
       if (!(workflow in WORKFLOW_DEFINITIONS)) return Response.json({ error: "UNKNOWN_WORKFLOW", workflow }, { status: 400 });
       const stampText = String(form.get("stampText") ?? "").trim();
+      const tenantId = intakeTenant();
+      const from = receivedFrom(request);
+      const file = form.get("file");
+
+      let original: Original;
+      let extraction: Extraction | undefined;
+      if (file instanceof File && file.size > 0) {
+        if (file.size > MAX_UPLOAD_BYTES) return html(renderError("Soubor je příliš velký", `Limit je ${MAX_UPLOAD_BYTES / 1024 / 1024} MB.`, { size: file.size }), 413);
+        const contentType = contentTypeOf(file);
+        if (isText(contentType)) {
+          original = { kind: "text", bytes: await file.text(), contentType };
+        } else {
+          // Binary original: into R2 first (immutable, keyed by hash), then Workers AI derives the text the workflow will see.
+          const buf = await file.arrayBuffer();
+          const digest = sha256Bytes(new Uint8Array(buf));
+          const location = `originals/${tenantId}/${digest}`;
+          if (!(await env.ARTIFACTS.head(location))) {
+            await env.ARTIFACTS.put(location, buf, { httpMetadata: { contentType }, customMetadata: { name: file.name, receivedFrom: from, receivedAt: new Date().toISOString() } });
+          }
+          original = { kind: "external", sha256: digest, contentType, byteLength: file.size, location, name: file.name };
+          let converted: ConversionResponse;
+          try {
+            converted = await env.AI.toMarkdown({ name: file.name, blob: new Blob([buf], { type: contentType }) });
+          } catch (e) {
+            return html(renderError("Extrakce textu selhala", "Workers AI konverzi neprovedla; originál je uložený, tok nebyl spuštěn.", { sha256: digest, contentType, error: String(e) }), 422);
+          }
+          if (converted.format === "error") {
+            return html(renderError("Extrakce textu selhala", "Workers AI soubor odmítla; originál je uložený, tok nebyl spuštěn.", { sha256: digest, contentType, error: converted.error }), 422);
+          }
+          if (!converted.data.trim()) {
+            return html(renderError("Prázdný výsledek extrakce", "Workers AI ze souboru nezískala žádný text (např. sken bez OCR vrstvy nebo prázdná stránka); originál je uložený, tok nebyl spuštěn.", { sha256: digest, contentType }), 422);
+          }
+          extraction = { text: converted.data, format: converted.format, tokens: converted.tokens };
+        }
+      } else {
+        const text = String(form.get("text") ?? "");
+        if (!text.trim()) return html(renderHome(homeModel(request)), 400);
+        original = { kind: "text", bytes: text, contentType: "text/plain" };
+      }
+      if (original.kind === "text" && original.bytes.length > MAX_TEXT_CHARS) return Response.json({ error: "DOCUMENT_TOO_LARGE", max: MAX_TEXT_CHARS }, { status: 413 });
+      if (extraction && extraction.text.length > MAX_TEXT_CHARS) extraction = { ...extraction, text: extraction.text.slice(0, MAX_TEXT_CHARS) };
+
       const workflowId = newId("wf");
       const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(workflowId));
-      await stub.intake({ workflowId, workflow, tenantId: intakeTenant(), bytes, receivedFrom: receivedFrom(request), ...(stampText ? { stampText } : {}) });
+      await stub.intake({ workflowId, workflow, tenantId, receivedFrom: from, original, ...(extraction ? { extraction } : {}), ...(stampText ? { stampText } : {}) });
       return Response.redirect(new URL(`/workflow/${workflowId}`, url).toString(), 303);
     }
 

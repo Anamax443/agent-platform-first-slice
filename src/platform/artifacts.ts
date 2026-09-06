@@ -8,15 +8,25 @@ export function sha256(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
 
+/** Same digest over raw bytes: binary originals (PDF, image) are identified by the hash of the file, never of a transcoding. */
+export function sha256Bytes(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
 export interface Artifact {
   artifactId: string;
   tenantId: string;
   sha256: string;
+  /** Text content. Empty when the original is binary and lives at `location` (a Worker runtime keeps PDFs and images in R2 only). */
   bytes: string;
   receivedAt: string;
   receivedFrom: string;
   derivedFrom?: string;
   producer?: string;
+  contentType?: string;
+  byteLength?: number;
+  /** Where a binary original is kept (runtime-specific key, e.g. an R2 object key). */
+  location?: string;
 }
 
 /** The store cannot accept another original (RES-STOR-001): the caller must fail explicitly, never pretend acceptance. */

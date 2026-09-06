@@ -2,6 +2,22 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-06 (15) — Krok 2, celek A2: PDF / fotka / docx jako vstup (binární originál v R2, Workers AI toMarkdown, derivace s provenancí)
+
+**Pokyn vlastníka:** „faktury jsou nejvíce v PDF a jako příloha e-mailu." Odpověď: celek A2 hned (soubory přes formulář), přílohy e-mailu v kroku 4 (mail-ingest: MIME → každá příloha = originál → táž extrakce).
+
+**Stav:** nasazeno 19:25, ověřeno na farmě service tokenem: `POST /intake` s PDF (823 B, jednostránková faktura vygenerovaná skriptem) → 303 za 2 s → instance má **originál** `application/pdf` s `location=originals/<tenant>/<sha256>` (jen v R2, v objektu metadata) a **derivaci** `text/markdown` od `workers-ai:toMarkdown` s textem faktury jako `input.artifactId` toku; audit `write-intent`/`write-done` pro `document.extract`; kroky dál `DEPENDENCY_UNAVAILABLE`. Lokálně totéž na `wrangler dev` (AI binding jde přes účet i lokálně). Testy 208, typecheck, lint, farm:check zelené.
+
+**Kód:** `src/platform/artifacts.ts` (`sha256Bytes`, `Artifact.contentType/byteLength/location`; `bytes` prázdné u binárního originálu); gateway `store.ts` (sloupce `content_type`, `byte_length`, `location`; `putExternal()`; derivace s `contentType`; binární originál rovnou `copied=1`; R2 klíč derivací `derived/<tenant>/<sha256>`), `page.ts` (formulář: soubor první, accept PDF/obrázky/docx/txt/eml, limit 4 MB; karta artefaktu ukazuje typ, velikost, pro binární originál umístění v R2; `renderError`; řádek „extrakce" v seznamu zapojeného), `index.ts` (typ souboru z `file.type` nebo přípony; textové typy → inline; binární → R2 `put` if not `head`, `AI.toMarkdown({name, blob})`, chyba/`format: "error"`/prázdný text → 422 stránka s otiskem, tok se nespustí; `WIRED.extract`).
+
+**Zjištění:** výstup `toMarkdown` pro PDF začíná `# <název>` a blokem `## Metadata` (vlastnosti PDF) a teprve pak textem; classify to uvidí jako součást dokumentu (data). Fotky: stejná konverze používá vision model (neurony Free plánu), **neověřeno skutečnou fotkou**, to je první věc příště na stránce. Extrakce není capability (W16): rozhodnout po B–D.
+
+**Testovací PDF:** `scratchpad/make-pdf.mjs` (mimo repo) generuje `faktura-test.pdf`; na druhém PC vezmi libovolné PDF s textovou vrstvou.
+
+**Další celek B (`/dispatch` + classify):** beze změny proti (14); navíc classify poběží nad derivací (markdown s metadaty).
+
+**Zbývá rozhodnout (Milan):** aliasy do jedné schránky (krok 4). Jinak nic.
+
 ## 2026-09-06 (14) — Krok 2, celek A: příjem dokumentu na farmě (stránka → DO instance → stránka instance), první „dílčí výstup" pro vlastníka
 
 **Pokyn vlastníka (večer):** „otevřu stránku, vložím dokumenty, fotky, spustí se proces a bude nějaký dílčí výstup." Pořadí kroku 2 přeskládáno podle toho: **A stránka + příjem (hotovo) → B dispatch + classify → C validate → D document-host + fakes (razítko) → OCR fotek (nová capability, Workers AI vision) → harness proti farmě.** Každý celek jde hned na farmu; vlastník kontroluje na `https://apf.maxferit.cz/`.
