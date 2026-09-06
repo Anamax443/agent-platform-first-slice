@@ -39,7 +39,7 @@ Pokračování protokolů XIII–XVI z `agent-platform-foundation`, ale tady se 
 ### Co posudek nezměnil
 
 - Rozhodnutí vlastníka o instalačním profilu, o M4b v tomto repu a o Free plánu Cloudflare (fronty jsou dostupné i na Free).
-- Otevřené položky pro vlastníka: čas vlastníka za M1–M4, adresy pro farmu (`apf.maxferit.cz`, `apf-intake@`, `apf-notify@`), skutečná schránka za `ops-mailbox`.
+- Otevřené položky pro vlastníka, **uzavřeno 6. 9. 2026 odpoledne:** čas vlastníka doplněn odhadem 4,25 h za M0–M4b (MEASUREMENT, limit 40 h vyhodnocen); adresy pro farmu potvrzeny a schránky v allowlistu řešeny aliasy Email Routing (rozhodnutí „up to you", `config/farm-bass443/`).
 
 ### Co z toho jde do foundation (část XVII)
 

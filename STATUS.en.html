@@ -72,7 +72,7 @@
     <div class="kpi"><b>208</b><span>tests in 11 files</span></div>
     <div class="kpi"><b>46</b><span>Test IDs from the verification contract</span></div>
     <div class="kpi"><b>5</b><span>capabilities in 2 flows</span></div>
-    <div class="kpi"><b>≈ 1 h 50 min</b><span>AI wall-clock M1–M4 · owner time not measured</span></div>
+    <div class="kpi"><b>≈ 3 h 45 min + 4.25 h</b><span>AI wall-clock M1–M4b + owner time (estimate) · 40 h limit met</span></div>
   </div>
 
   <h2>Two flows</h2>
@@ -124,10 +124,13 @@ Orchestrators: shared journal, review service, audit · each runs only its own d
     <tr><td>M1–M3 first flow (3 components, conformance, tests)</td><td>≈ 1 h 15 min</td><td>≈ 5,700</td><td>9</td></tr>
     <tr><td>M4 second flow + second signal (W4)</td><td>≈ 35 min</td><td>≈ 970 (platform +45)</td><td>3</td></tr>
     <tr><td><b>Total M1–M4</b></td><td><b>≈ 1 h 50 min</b></td><td><b>≈ 6,670</b></td><td><b>12</b></td></tr>
+    <tr><td>M4b step 1 portability + installation profile</td><td>≈ 1 h 10 min</td><td>≈ 1,010</td><td>0 (W12 resolved)</td></tr>
+    <tr><td>M4b step 2, unit 1 installation in the Worker, validator</td><td>≈ 45 min</td><td>≈ 250</td><td>2 (W13, W14)</td></tr>
+    <tr><td><b>Total M1–M4b</b></td><td><b>≈ 3 h 45 min</b></td><td><b>≈ 7,900</b></td><td><b>12 + W1–W14</b></td></tr>
   </table>
   <p>Ratio: <b>~480</b> lines of business logic (five handlers) · <b>3,084</b> lines of tests and fixtures · <b>2,350</b> lines of platform (one-off). The test cost per capability dropped between M3 and M4 because the runner, harness and golden comparison already existed.</p>
   <div class="note warnbox">
-    <b>Owner time is not measured.</b> The norm's limit (40 h for the MUST set) is a limit on human work; AI wall-clock is not comparable. Until the owner adds reading, questions and review time, the limit stays unevaluated.
+    <b>Owner time added (6 Sep 2026, estimate to the quarter hour for M0–M4b):</b> architecture and decisions 1.5 h · reviews 2 h · debugging 0.25 h · operations and accounts 0.5 h = <b>4.25 h</b>. Together with ≈ 3 h 45 min of AI wall-clock that is ≈ 8 h; the norm's 40 h limit for the MUST set is met with a wide margin. With an assistant, human time moves from writing code to deciding and reviewing, and debugging almost disappears. Limit: a retrospective estimate, not a stopwatch.
   </div>
 
   <h2>What the tests caught</h2>
@@ -180,7 +183,7 @@ Orchestrators: shared journal, review service, audit · each runs only its own d
         <li class="todo"><b>2 · M4b farm, steps 3–5:</b> deployment on bass443 behind Access, email (Routing + Sending), queue, DO crash. Waits for addresses from the owner.</li>
         <li class="todo"><b>3 · ADR-017 pentest</b> over real deployables: three questions with an expected NO (SMTP from the document host, DMS from the email executor, envelope signature outside the gateway) plus privilege escalation through indirect paths. The only MAJOR from the reviews.</li>
         <li class="todo"><b>4 · A real model</b> behind <code>document.classify</code> with a golden set (10 invoices + 3 injections, <code>criticalFields: [documentType]</code>) and <code>AI-EVAL-REG-001</code>, <code>AI-EVAL-ADV-001</code>. A v1.0 condition.</li>
-        <li class="todo"><b>5 · Owner time</b> for M1–M4, itemised, into MEASUREMENT. Without it the 40 h limit cannot be evaluated; can be added any time.</li>
+        <li class="ok"><b>5 · Owner time</b> added 6 Sep 2026 (4.25 h for M0–M4b, itemised), the 40 h limit evaluated in MEASUREMENT.</li>
         <li class="todo"><b>6 · A third domain</b> for the marginal cost: track "platform +lines" (M4 = 45).</li>
         <li class="todo"><b>7 · M5:</b> refresh <code>EVIDENCE-MATRIX</code> in foundation, Core Admission <code>EXISTS × 2</code> (candidates: result envelope, error object, ClockFixture, CredentialResolverFixture, conformance runner).</li>
         <li class="todo"><b>8 · M6:</b> first shared package = contracts, schemas, fixtures and the conformance runner only; the runtime stays duplicated.</li>
@@ -193,7 +196,7 @@ Orchestrators: shared journal, review service, audit · each runs only its own d
   <div class="card ask-card" style="margin-top:1rem">
     <strong>❓ Decisions waiting for the owner</strong>
     <ul>
-      <li class="ask">Owner time for M1–M4 (architecture / review / debugging / operations); without it the 40 h limit cannot be evaluated.</li>
+      <li class="ok">Owner time added 6 Sep 2026: 1.5 / 2 / 0.25 / 0.5 h (architecture / review / debugging / operations) = 4.25 h for M0–M4b.</li>
       <li class="ok">Farm decided 6 Sep 2026 ("up to you"): <code>apf.maxferit.cz</code>, <code>apf-intake@</code>, <code>apf-notify@maxferit.cz</code>; allowlisted mailboxes are Email Routing aliases (<code>apf-ops@</code>, <code>apf-supervisor@</code>, <code>apf-ops-t7@</code>), forwarding targets live only in the account; Workers Free until step 5.</li>
       <li class="ask">Aliases: do all three forward to one mailbox? Set in the account in step 4, the repo does not care.</li>
       <li class="ok">W4 decided (review 1): a CONDITIONAL rule, not a universal invariant.</li>

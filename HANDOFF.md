@@ -2,6 +2,14 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-06 (12) — Čas vlastníka doplněn, limit 40 h vyhodnocen; vlastník chce ověření v provozu
+
+**Čas vlastníka (odhad vlastníka, potvrzeno „sedí"):** architektura a rozhodování 1,5 h · posudky a review 2 h · ladění 0,25 h · provoz a účty 0,5 h = **4,25 h za M0–M4b**. Zapsáno do MEASUREMENT (tabulka + vyhodnocení: s AI wall-clock ≈ 3 h 45 min celkem ≈ 8 h, limit 40 h na MUST sadu splněn s velkou rezervou; lidský čas se s asistentem přesouvá do rozhodování a review), STATUS CZ/EN (kpi, tabulka měření včetně řádků M4b, warnbox, Zbývá 5 hotové, rozhodnutí), POSUDKY (otevřené položky uzavřeny). Kód beze změny.
+
+**Nový pokyn vlastníka (6. 9. 2026 odpoledne): „chtěl bych to ověřit v provozu."** Návrh postupu je v odpovědi asistenta a v dalším záznamu, až se rozhodne: nejdřív krok 3 „lite" = nasazení skeletonu pěti Workerů na bass443 za Access s custom doménou (ověří účet, prostředky D1/R2/KV, Access, doménu, `/version` z farmy), pak zbytek kroku 2 (journal DO, audit D1, `/dispatch`, hosty, fakes, harness) a teprve potom golden mastery proti farmě. Id prostředků (D1, KV) jsou instalační hodnoty → patří do `config/farm-bass443/farm.json`, ne do base configů.
+
+**Zbývá rozhodnout (Milan):** jestli aliasy `apf-ops@`/`apf-supervisor@`/`apf-ops-t7@` míří do jedné schránky (krok 4); souhlas s nasazením skeletonu na účet bass443 (vytváří DNS záznam pro `apf.maxferit.cz`, Access aplikaci a prostředky D1/R2/KV; na Free plánu bez nákladů).
+
 ## 2026-09-06 (11) — M4b krok 2, celek 1: instalace navázaná do Workeru, validátor bez generování kódu, rozhodnutí o adresách a plánu
 
 **Stav:** `npm run typecheck`, `npm test` (11 souborů, **208 testů**), `npm run arch` (20 instalačních hodnot, 0 nálezů), `npm run farm:check` (**10 configů** = 2 instalace × 5 deployables, včetně `tsc` nad deploy s generovanými moduly) zelené. **Ověřeno na `wrangler dev`** (což dry-run neumí, viz W13): gateway z `.wrangler/generated/{local-fakes,farm-bass443}/apf-gateway/wrangler.jsonc` odpovídá na `/version` `{"installation":"…","tenants":2,"identities":3,"policies":6,…}`; `/health` ok; `/dispatch` dál 501.

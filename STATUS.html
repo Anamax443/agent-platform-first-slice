@@ -72,7 +72,7 @@
     <div class="kpi"><b>208</b><span>testů v 11 souborech</span></div>
     <div class="kpi"><b>46</b><span>Test ID z verifikačního kontraktu</span></div>
     <div class="kpi"><b>5</b><span>capability ve 2 tocích</span></div>
-    <div class="kpi"><b>≈ 1 h 50 min</b><span>AI wall-clock M1–M4 · čas vlastníka nezměřen</span></div>
+    <div class="kpi"><b>≈ 3 h 45 min + 4,25 h</b><span>AI wall-clock M1–M4b + čas vlastníka (odhad) · limit 40 h splněn</span></div>
   </div>
 
   <h2>Dva toky</h2>
@@ -124,10 +124,13 @@ Orchestrátory: společný journal, review service, audit · každý jen svou de
     <tr><td>M1–M3 první tok (3 komponenty, conformance, testy)</td><td>≈ 1 h 15 min</td><td>≈ 5 700</td><td>9</td></tr>
     <tr><td>M4 druhý tok + druhý signál (W4)</td><td>≈ 35 min</td><td>≈ 970 (platforma +45)</td><td>3</td></tr>
     <tr><td><b>Celkem M1–M4</b></td><td><b>≈ 1 h 50 min</b></td><td><b>≈ 6 670</b></td><td><b>12</b></td></tr>
+    <tr><td>M4b krok 1 portabilita + instalační profil</td><td>≈ 1 h 10 min</td><td>≈ 1 010</td><td>0 (W12 vyřešeno)</td></tr>
+    <tr><td>M4b krok 2, celek 1 instalace ve Workeru, validátor</td><td>≈ 45 min</td><td>≈ 250</td><td>2 (W13, W14)</td></tr>
+    <tr><td><b>Celkem M1–M4b</b></td><td><b>≈ 3 h 45 min</b></td><td><b>≈ 7 900</b></td><td><b>12 + W1–W14</b></td></tr>
   </table>
   <p>Poměr: <b>~480</b> řádků business logiky (pět handlerů) · <b>3 084</b> řádků testů a fixtures · <b>2 350</b> řádků platformy (jednorázová). Cena testů na capability mezi M3 a M4 klesla, protože runner, harness a golden porovnání už existovaly.</p>
   <div class="note warnbox">
-    <b>Čas vlastníka není změřen.</b> Limit normy (40 h na MUST sadu) je limit na lidskou práci; AI wall-clock s ním není srovnatelný. Dokud vlastník nedoplní čtení, otázky a review, je hodnocení limitu otevřené.
+    <b>Čas vlastníka doplněn (6. 9. 2026, odhad na čtvrthodiny za M0–M4b):</b> architektura a rozhodování 1,5 h · posudky a review 2 h · ladění 0,25 h · provoz a účty 0,5 h = <b>4,25 h</b>. S AI wall-clock ≈ 3 h 45 min je to ≈ 8 h dohromady; limit normy 40 h na MUST sadu je splněn s velkou rezervou. S asistentem se lidský čas přesouvá z psaní kódu do rozhodování a review, ladění téměř mizí. Mez: zpětný odhad, ne stopky.
   </div>
 
   <h2>Co testy chytily</h2>
@@ -180,7 +183,7 @@ Orchestrátory: společný journal, review service, audit · každý jen svou de
         <li class="todo"><b>2 · M4b farma, krok 3–5:</b> nasazení na bass443 za Access, e-mail (Routing + Sending), fronta, pád DO. Čeká na adresy od vlastníka.</li>
         <li class="todo"><b>3 · Pentest ADR-017</b> nad skutečnými deployables: tři otázky s očekávaným NE (SMTP z document hostu, DMS z email executoru, podpis obálky mimo gateway) plus eskalace práv nepřímými cestami. Jediný MAJOR z posudků.</li>
         <li class="todo"><b>4 · Reálný model</b> za <code>document.classify</code> s golden setem (10 faktur + 3 injection, <code>criticalFields: [documentType]</code>) a <code>AI-EVAL-REG-001</code>, <code>AI-EVAL-ADV-001</code>. Podmínka v1.0.</li>
-        <li class="todo"><b>5 · Čas vlastníka</b> za M1–M4 v členění do MEASUREMENT. Bez něj se limit 40 h nedá vyhodnotit; jde doplnit kdykoli.</li>
+        <li class="ok"><b>5 · Čas vlastníka</b> doplněn 6. 9. 2026 (4,25 h za M0–M4b v členění), limit 40 h vyhodnocen v MEASUREMENT.</li>
         <li class="todo"><b>6 · Třetí doména</b> kvůli mezní ceně: sledovat „platforma +řádků" (M4 = 45).</li>
         <li class="todo"><b>7 · M5:</b> obnova <code>EVIDENCE-MATRIX</code> ve foundation, Core Admission <code>EXISTS × 2</code> (kandidáti: result envelope, error object, ClockFixture, CredentialResolverFixture, conformance runner).</li>
         <li class="todo"><b>8 · M6:</b> první sdílený balíček = jen kontrakty, schémata, fixtures a conformance runner; runtime zůstává duplikovaný.</li>
@@ -193,7 +196,7 @@ Orchestrátory: společný journal, review service, audit · každý jen svou de
   <div class="card ask-card" style="margin-top:1rem">
     <strong>❓ Rozhodnutí čekající na vlastníka</strong>
     <ul>
-      <li class="ask">Čas vlastníka za M1–M4 (architektura / review / ladění / provoz), bez něj se limit 40 h nedá vyhodnotit.</li>
+      <li class="ok">Čas vlastníka doplněn 6. 9. 2026: 1,5 / 2 / 0,25 / 0,5 h (architektura / review / ladění / provoz) = 4,25 h za M0–M4b.</li>
       <li class="ok">Farma rozhodnuto 6. 9. 2026 („up to you"): <code>apf.maxferit.cz</code>, <code>apf-intake@</code>, <code>apf-notify@maxferit.cz</code>; schránky v allowlistu jsou aliasy Email Routing (<code>apf-ops@</code>, <code>apf-supervisor@</code>, <code>apf-ops-t7@</code>), cíl přeposílání jen v účtu; plán Workers Free do kroku 5.</li>
       <li class="ask">Aliasy: míří všechny tři do jedné schránky? Nastaví se v účtu v kroku 4, repo to neřeší.</li>
       <li class="ok">W4 rozhodnuto (posudek 1): CONDITIONAL pravidlo, ne univerzální invariant.</li>

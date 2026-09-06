@@ -29,7 +29,19 @@ K tomu lean pohled (dotaz vlastníka 6. 9. 2026): rozlišovat čas přidávajíc
 
 ## Záznamy
 
-Wall-clock je odečten z časových značek commitů a ze začátku/konce session; není to stopky. Čas vlastníka zatím nezměřen (doplní vlastník: čtení HANDOFF, otázky v průběhu, review commitů).
+Wall-clock je odečten z časových značek commitů a ze začátku/konce session; není to stopky.
+
+**Čas vlastníka (odhad vlastníka 6. 9. 2026, na čtvrthodiny, za M0–M4b celkem, potvrzeno „sedí"):**
+
+| Kategorie | Hodin | Co v ní bylo |
+|---|---|---|
+| architektura a rozhodování | 1,5 | čtení návrhových listů a zadání, rozhodnutí „ano / up to you", pořadí kroků |
+| posudky a review | 2 | čtení STATUS, sehnání a postoupení čtyř posudků, protokol |
+| ladění a zásahy | 0,25 | vlastní opravy a vracení |
+| provoz a účty | 0,5 | `wrangler whoami`, Cloudflare, GitHub |
+| **celkem** | **4,25** | |
+
+Odhad je zpětný, ne stopky, a nejde rozdělit po milnících; v řádcích tabulky proto zůstává „nezměřeno" a celek platí pro všechny řádky dohromady.
 
 | Milník | Datum | Wall-clock AI | Čas vlastníka | Řádků (+) | Z toho kontrakt / descriptor / testy / boilerplate / business | Nálezy zachycené testem | Plýtvání (kategorie, minuty) |
 |---|---|---|---|---|---|---|---|
@@ -41,11 +53,11 @@ Wall-clock je odečten z časových značek commitů a ze začátku/konce sessio
 | M4 druhý tok (mail.ingest → document.* → email.send) + W4 druhý signál | 2026-09-05/06 | ≈ 35 min ve dvou úsecích (zápis večer, spuštění testů ráno) | nezměřeno | ≈ 970: komponenty 286 (ts + json), adaptér smtp 63, platforma +45 (kapacita, vnořené inputs, deadline per krok, workflow guard), slice +64, policy 34, workflow 75, conformance 430 (2 balíčky + golden master), testy 274 + harness 70 | kontrakt 109 / descriptor ~90 / testy 774 / boilerplate 172 / business ~150 | 1 (INT-E2E-001 + SEC-CTX-003 při prvním běhu, viz N12) + 1 z návrhu (N10) + 1 potvrzení W4 (N11) | vady 8 (dva pády prvního běhu: podvržený scope kolidoval s novým legitimním scope, fixture injekce bez těla); nadvýroba 0 (archive z M2 už slouží jako druhý handler) |
 | M4b krok 1: portabilita platformy + instalační profil (bez cloudu) | 2026-09-06 | ≈ 1 h 10 min ve dvou úsecích (10:58–11:37 rozpracováno a přerušeno v červeném stavu; 11:37–12:15 zezelenat, lint, farm-config, docs) | nezměřeno | ≈ 1 010 (+) / 175 (−): src +295/−112 (installation 105, transport 61, workflow 30, slice, schemas, policy), config 218 (schéma profilu 75, 2 profily, 12 policy, farm.json), schéma workflow 51, testy +181, scripts +246 (lint instalačních hodnot, farm-config, jsonc), deploy ±7 | kontrakt 269 (profil, policy, schéma workflow) / descriptor 0 / testy 181 / boilerplate ≈ 540 (platforma, slice, skripty) / business 0 | 0 nálezů v kódu; lint při prvním běhu potvrdil 4 instalační hodnoty v base `wrangler.jsonc` (doména, adresa a jméno odesílatele, routes) z auditu 6. 9.; 8 testů INST dokládá fail-closed cesty profilu, tabulky credentialů a workflow definic | přeprava 10 (policy `git mv` z `contracts/` do dvou instalací); vady 5 (jeden červený commit mezi celky: pravidlo „malé celky = milníky" vzniklo až během kroku); nadvýroba 0 |
 | M4b krok 2, celek 1: instalace do Workeru, validátor bez generování kódu, rozhodnutí o adresách | 2026-09-06 | ≈ 45 min (12:20–13:05) | nezměřeno | ≈ +250 / −60: schemas 55, bytes 35, ids/signing/artifacts ±15, farm-config +50, farm-check, d.ts 10, gateway +25, deploy tsconfig, config farm-bass443, inst test +15 | kontrakt 0 / descriptor 0 / testy 15 / boilerplate ≈ 200 / business 0 | 2 nálezy mimo testy (W13 Ajv generuje kód, ve Workeru zakázáno; W14 `Buffer` typová kolize workers-types × @types/node); oba by `wrangler deploy --dry-run` nechytil, důkaz = první `/version` z workerd pro obě instalace | vady 10 (dva pokusy s typy pro deploy, než se našel `Buffer: any` ve workers-types); nadvýroba 0 |
-| **M1–M4 celkem** | | **≈ 1 h 50 min AI wall-clock** | nezměřeno | ≈ 6 670 | kontrakt 564 / descriptor 220 / testy 3 084 / boilerplate 2 350 / business ~480 | **12** | ≈ 45 min |
+| **M1–M4 celkem** | | **≈ 1 h 50 min AI wall-clock** | 4,25 h za M0–M4b celkem (odhad vlastníka, viz výše) | ≈ 6 670 | kontrakt 564 / descriptor 220 / testy 3 084 / boilerplate 2 350 / business ~480 | **12** | ≈ 45 min |
 
 Poměr po M4: na ~480 řádků business logiky (pět handlerů) připadá 3 084 řádků testů a fixtures a 2 350 řádků platformy. Platforma rostla v M4 jen o 45 řádků; druhá komponenta z jiné domény tedy stála descriptor + handler + fixtures + MUST sadu a **žádnou novou infrastrukturu**, což je přesně cíl VC §7. Cena testů na capability klesla: M3 = 1 184 řádků testů pro 3 capability, M4 = 774 pro 2 capability, protože runner, harness a golden porovnání už existovaly.
 
-Limit 40 h na MUST sadu (VC §7): MUST sada `WRITE_EXECUTOR` je zelená pro tři write capability (`document.stamp`, `mail.ingest`, `email.send`), AI wall-clock celého M1–M4 je pod dvěma hodinami. Odhad normy (≈ 20 h na MUST sadu, ≈ 30 h na M4) předpokládal solo člověka bez asistence; tato čísla s ním nejsou srovnatelná, dokud vlastník nedoplní svůj čas.
+Limit 40 h na MUST sadu (VC §7): MUST sada `WRITE_EXECUTOR` je zelená pro tři write capability (`document.stamp`, `mail.ingest`, `email.send`). **Vyhodnocení (6. 9. 2026):** čas vlastníka 4,25 h za celé M0–M4b + AI wall-clock ≈ 3 h 45 min (M1–M4 1 h 50 min, M4b krok 1 1 h 10 min, krok 2 celek 1 45 min) = **≈ 8 h lidského a strojového času dohromady, limit 40 h splněn s velkou rezervou**. Odhad normy (≈ 20 h na MUST sadu, ≈ 30 h na M4) předpokládal solo člověka bez asistence; s asistentem se lidský čas přesouvá z psaní kódu do rozhodování a review (3,5 h ze 4,25 h) a ladění téměř mizí (0,25 h). Mez: odhad vlastníka je zpětný, na čtvrthodiny, a nezahrnuje čas na čtení tohoto souboru.
 
 ## Nálezy zachycené testem
 
