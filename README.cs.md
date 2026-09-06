@@ -22,7 +22,7 @@ TypeScript, Node 20+, Vitest, `@cfworker/json-schema` (interpretační validáto
 
 ```bash
 npm ci
-npm test          # 10 souborů, 198 testů, 46 Test ID, názvy testů nesou Test ID
+npm test          # 12 souborů, 219 testů, 46 Test ID, názvy testů nesou Test ID
 npm run typecheck
 npm run arch      # ARCH-DEP-001: komponenta neimportuje jinou komponentu ani vnitřnosti platformy; žádný přímý systémový čas
 ```

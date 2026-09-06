@@ -22,7 +22,7 @@ TypeScript, Node 20+, Vitest, `@cfworker/json-schema` (an interpreting validator
 
 ```bash
 npm ci
-npm test          # 10 files, 198 tests, 46 Test IDs, named by Test ID
+npm test          # 12 files, 219 tests, 46 Test IDs, named by Test ID
 npm run typecheck
 npm run arch      # ARCH-DEP-001: no component imports another component or platform internals; no direct system clock
 ```

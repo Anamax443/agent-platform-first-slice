@@ -62,17 +62,17 @@
     <tr><th>Stav</th><td><span class="pill live">M1–M4 hotové</span> <span class="pill prep">bez cloudu, bez reálného modelu</span>
       <b>Dvojí stav schválně.</b> <i>Hotové</i> — oba toky běží end-to-end, MUST sada normy je zelená na třech write executorech, CI zelené.
       <i>Bez cloudu</i> — všechno běží lokálně s fakes (LLM, registr, DMS, archiv, SMTP), žádný API klíč. Izolace PRINCIPAL je <b>návrhově prokázaná, fyzicky ne</b>: v jednom procesu je simulovaná, důkaz přinese až vlastní deployable na farmě (M4b).</td></tr>
-    <tr><th>Posudky</th><td>Čtyři posudky nad implementací (6. 9. 2026): <b>9,1</b> a <b>9,2 / 10</b>, dva bez skóre. Shoda: norma nevyvrácena, testy našly konstrukční chyby, reuse kostek doložen. Hodnoticí list: 0 BLOCKER · 1 MAJOR (fyzická izolace, plán M4b) · 3 MINOR (AI-EVAL, čas vlastníka, provozní realita). Přijato: W4 jako CONDITIONAL, reálný model s golden setem jako podmínka v1.0, pentest včetně eskalace práv, pořadí M4b → pentest → reálný model → třetí doména → M5, M6 jen kontrakty a fixtures. Protokol: <code>docs/POSUDKY.md</code>.</td></tr>
+    <tr><th>Posudky</th><td>Pět posudků nad implementací (6. 9. 2026): <b>9,1</b>, <b>9,2</b> a <b>8,8 / 10</b>, dva bez skóre. Shoda: norma nevyvrácena, testy našly konstrukční chyby, reuse kostek doložen. Hodnoticí list: 0 BLOCKER · 1 MAJOR (fyzická izolace, plán M4b) · 3 MINOR (AI-EVAL, čas vlastníka, provozní realita). Přijato: W4 jako CONDITIONAL, reálný model s golden setem jako podmínka v1.0, pentest včetně eskalace práv, pořadí M4b → pentest → reálný model → třetí doména → M5, M6 jen kontrakty a fixtures. <b>Posudek 5</b> jako první četl skutečný kód (ne jen STATUS) a našel reálnou konstrukční mezeru: sdílený dedup klíč napříč capability v <code>ExecutorHost</code> (W19), opraveno týž den. Protokol: <code>docs/POSUDKY.md</code>.</td></tr>
     <tr><th>Meze smyček</th><td>Každá smyčka má strop v definici workflow, nekonečná větev neexistuje: 2 strategie klasifikace × qualityBudget 2 · technické retry 2 (max 3 pokusy na strategii) · reconciliace 3 · eskalace review do hloubky 2 · deadline příkazu 30 min, u notifikace 10 min.</td></tr>
     <tr><th>Kontrola</th><td>CI při každém pushi (Node 24): typecheck, Vitest, <code>ARCH-DEP-001</code> + lint hodin, <code>farm:check</code>, sken tajemství (gitleaks), kontrola odkazů (lychee). Poslední běh <span class="pill live">zelený</span>.</td></tr>
     <tr><th>Vývojový diagram</th><td><a href="VYVOJOVY-DIAGRAM.html">VYVOJOVY-DIAGRAM.html</a>: cesta jednoho příkazu bezpečnostním řetězcem (gateway → router → executor host → výsledek) a běh toku od e-mailu k notifikaci se všemi konci, které smí nastat.</td></tr>
   </table>
 
   <div class="kpis">
-    <div class="kpi"><b>210</b><span>testů v 11 souborech</span></div>
+    <div class="kpi"><b>219</b><span>testů v 12 souborech</span></div>
     <div class="kpi"><b>46</b><span>Test ID z verifikačního kontraktu</span></div>
     <div class="kpi"><b>5</b><span>capability ve 2 tocích</span></div>
-    <div class="kpi"><b>≈ 3 h 45 min + 4,25 h</b><span>AI wall-clock M1–M4b + čas vlastníka (odhad) · limit 40 h splněn</span></div>
+    <div class="kpi"><b>≈ 8 h 10 min + 4,25 h</b><span>AI wall-clock M1 → dnes + čas vlastníka (odhad k 6. 9. odpoledni, dál nezměřeno) · limit 40 h splněn</span></div>
   </div>
 
   <h2>Dva toky</h2>
@@ -103,7 +103,7 @@ Orchestrátory: společný journal, review service, audit · každý jen svou de
     <tr><th><code>src/adapters/</code></th><td>Kontrakty externích systémů (LLM, registr, DMS, archiv, SMTP) s fakes a režimy selhání: timeout, 5xx, business chyba, schema-valid nesmysl, unknown outcome, pád po zápisu, plné úložiště.</td></tr>
     <tr><th><code>workflows/</code></th><td>Dvě verzované, immutable definice toků; běžící instance si verzi pinuje.</td></tr>
     <tr><th><code>conformance/</code></th><td>Per capability: fixtures (kanonické, poškozené, injection, hraniční, chybové), golden výstupy s MUST/DON'T CARE, <code>errors.md</code>, <code>compat.md</code>. Per workflow: scénáře a golden master.</td></tr>
-    <tr><th><code>tests/</code></th><td>Jeden soubor na rodinu (<code>ctr</code>, <code>sec</code>, <code>mut</code>, <code>idm</code>, <code>wf</code>, <code>res</code>, <code>int</code>, <code>evd</code>, <code>arch</code>) plus <code>mail</code> pro druhý tok. Názvy testů nesou Test ID, takže výpis je zároveň evidence.</td></tr>
+    <tr><th><code>tests/</code></th><td>Jeden soubor na rodinu (<code>ctr</code>, <code>sec</code>, <code>mut</code>, <code>idm</code>, <code>wf</code>, <code>res</code>, <code>int</code>, <code>evd</code>, <code>arch</code>) plus <code>mail</code> pro druhý tok, <code>inst</code> pro instalační profil a <code>fakes</code> pro <code>document.validate</code> přes protokol <code>apf-fakes</code>. Názvy testů nesou Test ID, takže výpis je zároveň evidence.</td></tr>
     <tr><th><code>docs/MEASUREMENT.md</code></th><td><b>To hlavní.</b> Hodiny, řádky, nálezy zachycené testem, plýtvání podle lean kategorií, co bylo nutné obejít a co se z toho navrhuje do normy.</td></tr>
     <tr><th><code>HANDOFF.md</code></th><td>Deník stavu, append-only, nejnovější nahoře. Zdroj pravdy pro pokračování z jiného počítače.</td></tr>
   </table>
@@ -126,7 +126,13 @@ Orchestrátory: společný journal, review service, audit · každý jen svou de
     <tr><td><b>Celkem M1–M4</b></td><td><b>≈ 1 h 50 min</b></td><td><b>≈ 6 670</b></td><td><b>12</b></td></tr>
     <tr><td>M4b krok 1 portabilita + instalační profil</td><td>≈ 1 h 10 min</td><td>≈ 1 010</td><td>0 (W12 vyřešeno)</td></tr>
     <tr><td>M4b krok 2, celek 1 instalace ve Workeru, validátor</td><td>≈ 45 min</td><td>≈ 250</td><td>2 (W13, W14)</td></tr>
-    <tr><td><b>Celkem M1–M4b</b></td><td><b>≈ 3 h 45 min</b></td><td><b>≈ 7 900</b></td><td><b>12 + W1–W14</b></td></tr>
+    <tr><td>M4b krok 3 „lite": skeleton na bass443 za Access</td><td>≈ 30 min</td><td>≈ 60</td><td>0 (provozní zjištění)</td></tr>
+    <tr><td>M4b krok 2, celek A: příjem dokumentu (DO journal + audit + R2/D1)</td><td>≈ 1 h 50 min</td><td>≈ 213 netto</td><td>0 (W15)</td></tr>
+    <tr><td>M4b krok 2, celek A2: PDF/fotka/docx → text (Workers AI toMarkdown)</td><td>≈ 25 min</td><td>≈ 164 netto</td><td>0 (W16)</td></tr>
+    <tr><td>M4b krok 2, celek B: podepsaný dispatch, classify se skutečným modelem</td><td>≈ 1 h</td><td>≈ 660 netto</td><td>3 (WF-VER-001, W17)</td></tr>
+    <tr><td>M4b krok 2, celek C: <code>document.validate</code> přes skutečnou síť</td><td>≈ 25 min</td><td>≈ 453 netto</td><td>0 (W18)</td></tr>
+    <tr><td>Posudek 5 + oprava W19: <code>ExecutorHost</code> dedup scoped na capability</td><td>≈ 15 min</td><td>≈ 23 netto</td><td>1 (W19, opraveno)</td></tr>
+    <tr><td><b>Celkem M1 → dnes</b></td><td><b>≈ 8 h 10 min</b></td><td><b>≈ 9 470</b></td><td><b>12 + W1–W20</b></td></tr>
   </table>
   <p>Poměr: <b>~480</b> řádků business logiky (pět handlerů) · <b>3 084</b> řádků testů a fixtures · <b>2 350</b> řádků platformy (jednorázová). Cena testů na capability mezi M3 a M4 klesla, protože runner, harness a golden porovnání už existovaly.</p>
   <div class="note warnbox">
@@ -152,6 +158,8 @@ Orchestrátory: společný journal, review service, audit · každý jen svou de
     <li>Idempotency klíč jde do externího systému jako business identita u všech write capability, ne jen IRREVERSIBLE.</li>
     <li><b>Druhý nezávislý signál</b> u AI capability, jejíž výstup vede k zápisu s rizikem od MEDIUM: návrh CONDITIONAL pravidla, <span class="pill prep">čeká na rozhodnutí</span>.</li>
     <li>Kdo počítá grace period klíče; anti-pattern „jméno oddělovače před blokem"; alert kanál při plném úložišti; PRINCIPAL v jednom procesu je simulace.</li>
+    <li><b>Dedup klíč executora musí nést capabilitu</b>, ne jen holý <code>idempotencyKey</code>: host obsluhující víc capabilit (stamp + archive) jinak může vrátit výsledek jedné pro druhou (W19, nalezeno posudkem nad kódem, opraveno v řezu).</li>
+    <li>Durabilita dedup na Workeru stojí na <code>reconcile()</code> (dotaz na vnější systém), ne na paměti hostu, protože Worker běží v jiném isolátu při každém požadavku (W20).</li>
   </ul>
 
   <h2>Zelené Test ID</h2>
@@ -179,12 +187,13 @@ Orchestrátory: společný journal, review service, audit · každý jen svou de
         <li class="ok">M4b krok 2, celek A2 (6. 9. 2026 večer): <b>PDF, fotka, docx</b> jako vstup: binární originál neměnně v R2 (klíč sha256), Workers AI <code>toMarkdown</code> z něj vytěží text jako derivaci s provenancí, tok běží nad ní; ověřeno PDF fakturou na farmě (2 s), fotka zatím jen touž konverzí bez skutečného testu</li>
         <li class="ok">M4b krok 2, celek B (6. 9. 2026 večer): <b>podepsaný dispatch</b> (Ed25519 klíč jako secret, ověřeno ve workerd), router v objektu instance, <b>classify se skutečným modelem</b> (Workers AI Llama 3.1 8B, ≈ 1,5 s) a <b>výběrem modelů z profilu instalace</b> (free Workers AI, placené Anthropic s <code>inferenceGeo: eu</code>; nedostupné volby jmenují chybějící secret), validate s druhým signálem; faktura i PDF → INVOICE, injekce u Llamy neprošla, u fake modelu ji chytil validátor; workflow v2 (v1 neměnné); ISDOC XML jako text pro pravidla</li>
         <li class="ok">M4b krok 2, celek C (6. 9. 2026 večer): <b><code>document.validate</code> přes skutečnou síť</b> — <code>apf-fakes</code> zapojen do gateway service bindingem, registr, DMS a archiv za jedním HTTP protokolem (<code>src/adapters/fakes-http.ts</code>) s chaos přepínači v KV čitelnými bez redeploye (<code>/chaos</code>); ověřeno <code>wrangler dev</code> se dvěma Workery najednou (service binding <code>[connected]</code>): dokument prošel classify → validate → <code>stamp:FAILED:DEPENDENCY_UNAVAILABLE</code> (hosty = celek D); 8 nových testů (<code>INT-HTTP-001..008</code>)</li>
+        <li class="ok">Posudek 5 + oprava W19 (6. 9. 2026 pozdní večer): první externí posudek nad skutečným TypeScript kódem, <b>8,8/10</b>; potvrzený reálný nález — <code>ExecutorHost</code> měl dedup klíč jen z <code>idempotencyKey</code>, sdílený mezi <code>document.stamp</code> a <code>document.archive</code>. Opraveno hned (vlastník „up to you"): klíč teď nese capabilitu, nový test <code>IDM-HOST-SCOPE-001</code> ověřen jako reálný regresní test (bez opravy padá). 219 testů zelených.</li>
       </ul>
     </div>
     <div class="card todo-card">
       <strong>⏳ Zbývá · v pořadí priority</strong>
       <ul>
-        <li class="todo"><b>1 · M4b farma, krok 2:</b> hotové celky 1 (instalace ve Workeru), A (příjem, journal a audit v DO, kopie do R2 a D1, stránka instance), A2 (PDF/fotka/docx → text), B (podepsaný dispatch, classify se skutečným modelem a výběrem modelů, validate) a C (<code>document.validate</code> přes <code>apf-fakes</code> se skutečnou sítí a chaos přepínači); zbývá D <code>apf-document-host</code> (razítko, archiv) s podepsanou obálkou, secrets <code>DMS_SECRET</code>/<code>ARCHIVE_SECRET</code>, DO jurisdikce EU, retence podle profilu, ISDOC pole deterministicky, ověření skutečné fotky, přílohy e-mailu (krok 4), harness proti farmě přes <code>HttpDispatchTransport</code>. Nezávisí na ničem.</li>
+        <li class="todo"><b>1 · M4b farma, krok 2:</b> hotové celky 1 (instalace ve Workeru), A (příjem, journal a audit v DO, kopie do R2 a D1, stránka instance), A2 (PDF/fotka/docx → text), B (podepsaný dispatch, classify se skutečným modelem a výběrem modelů, validate) a C (<code>document.validate</code> přes <code>apf-fakes</code> se skutečnou sítí a chaos přepínači); zbývá D <code>apf-document-host</code> (razítko, archiv) s podepsanou obálkou, secrets <code>DMS_SECRET</code>/<code>ARCHIVE_SECRET</code>, DO jurisdikce EU, retence podle profilu, ISDOC pole deterministicky, ověření skutečné fotky, přílohy e-mailu (krok 4), harness proti farmě přes <code>HttpDispatchTransport</code>. <b>Podmínka D (W20):</b> <code>reconcile()</code> zapojený a testovaný pro <code>document.stamp</code> i <code>document.archive</code> na skutečném Workeru — bez toho je dedup na farmě jen teoretický. Nezávisí na ničem jiném.</li>
         <li class="todo"><b>2 · M4b farma, krok 3–5:</b> skeleton už běží na bass443 za Access (krok 3 „lite", ověřeno přihlášením i service tokenem); zbývá secrets (`GATEWAY_SIGNING_KEY`, `DMS_SECRET`, `ARCHIVE_SECRET`) s celkem <code>/dispatch</code>, každý celek kroku 2 nasazovat rovnou na farmu, e-mail (Routing + Sending, krok 4), fronta a pád DO (krok 5). Adresy rozhodnuty.</li>
         <li class="todo"><b>3 · Pentest ADR-017</b> nad skutečnými deployables: tři otázky s očekávaným NE (SMTP z document hostu, DMS z email executoru, podpis obálky mimo gateway) plus eskalace práv nepřímými cestami. Jediný MAJOR z posudků.</li>
         <li class="todo"><b>4 · Reálný model</b> za <code>document.classify</code> s golden setem (10 faktur + 3 injection, <code>criticalFields: [documentType]</code>) a <code>AI-EVAL-REG-001</code>, <code>AI-EVAL-ADV-001</code>. Podmínka v1.0.</li>
@@ -192,7 +201,7 @@ Orchestrátory: společný journal, review service, audit · každý jen svou de
         <li class="todo"><b>6 · Třetí doména</b> kvůli mezní ceně: sledovat „platforma +řádků" (M4 = 45).</li>
         <li class="todo"><b>7 · M5:</b> obnova <code>EVIDENCE-MATRIX</code> ve foundation, Core Admission <code>EXISTS × 2</code> (kandidáti: result envelope, error object, ClockFixture, CredentialResolverFixture, conformance runner).</li>
         <li class="todo"><b>8 · M6:</b> první sdílený balíček = jen kontrakty, schémata, fixtures a conformance runner; runtime zůstává duplikovaný.</li>
-        <li class="todo"><b>9 · Část XVII</b> ve foundation z N1–N12, W1–W12 a čtyř posudků.</li>
+        <li class="todo"><b>9 · Část XVII</b> ve foundation z N1–N12, W1–W20 a pěti posudků.</li>
         <li class="todo"><b>10 ·</b> Backoff a circuit breaker u technického retry, alert při plném úložišti (až s durable frontou).</li>
       </ul>
     </div>

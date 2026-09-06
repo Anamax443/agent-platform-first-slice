@@ -62,17 +62,17 @@
     <tr><th>State</th><td><span class="pill live">M1–M4 done</span> <span class="pill prep">no cloud, no real model</span>
       <b>Two states on purpose.</b> <i>Done</i> — both flows run end to end, the norm's MUST set is green on three write executors, CI is green.
       <i>No cloud</i> — everything runs locally with fakes (LLM, registry, DMS, archive, SMTP), no API key. PRINCIPAL isolation is <b>design proven, not physically proven</b>: simulated inside one process, the proof comes with an own deployable on the farm (M4b).</td></tr>
-    <tr><th>Reviews</th><td>Four reviews of the implementation (6 Sep 2026): <b>9.1</b> and <b>9.2 / 10</b>, two without a score. Consensus: the norm was not refuted, tests found construction bugs, brick reuse is documented. Scorecard: 0 BLOCKER · 1 MAJOR (physical isolation, planned for M4b) · 3 MINOR (AI-EVAL, owner time, operational reality). Accepted: W4 as CONDITIONAL, a real model with a golden set as a v1.0 condition, pentest including privilege escalation, order M4b → pentest → real model → third domain → M5, M6 limited to contracts and fixtures. Protocol: <code>docs/POSUDKY.md</code> (Czech).</td></tr>
+    <tr><th>Reviews</th><td>Five reviews of the implementation (6 Sep 2026): <b>9.1</b>, <b>9.2</b> and <b>8.8 / 10</b>, two without a score. Consensus: the norm was not refuted, tests found construction bugs, brick reuse is documented. Scorecard: 0 BLOCKER · 1 MAJOR (physical isolation, planned for M4b) · 3 MINOR (AI-EVAL, owner time, operational reality). Accepted: W4 as CONDITIONAL, a real model with a golden set as a v1.0 condition, pentest including privilege escalation, order M4b → pentest → real model → third domain → M5, M6 limited to contracts and fixtures. <b>Review 5</b> was the first to read the actual code (not just STATUS) and found a real construction gap: a dedup key shared across capabilities in <code>ExecutorHost</code> (W19), fixed the same day. Protocol: <code>docs/POSUDKY.md</code> (Czech).</td></tr>
     <tr><th>Loop bounds</th><td>Every loop has a cap in the workflow definition, no infinite branch exists: 2 classification strategies × qualityBudget 2 · technical retries 2 (max 3 attempts per strategy) · reconciliation 3 · review escalation depth 2 · command deadline 30 min, 10 min for the notification.</td></tr>
     <tr><th>Checks</th><td>CI on every push (Node 24): typecheck, Vitest, <code>ARCH-DEP-001</code> + clock lint, <code>farm:check</code>, secret scan (gitleaks), link check (lychee). Last run <span class="pill live">green</span>.</td></tr>
     <tr><th>Flowchart</th><td><a href="VYVOJOVY-DIAGRAM.en.html">VYVOJOVY-DIAGRAM.en.html</a>: the path of one command through the security chain (gateway → router → executor host → result) and the run of a flow from e-mail to notification with every ending that may happen.</td></tr>
   </table>
 
   <div class="kpis">
-    <div class="kpi"><b>210</b><span>tests in 11 files</span></div>
+    <div class="kpi"><b>219</b><span>tests in 12 files</span></div>
     <div class="kpi"><b>46</b><span>Test IDs from the verification contract</span></div>
     <div class="kpi"><b>5</b><span>capabilities in 2 flows</span></div>
-    <div class="kpi"><b>≈ 3 h 45 min + 4.25 h</b><span>AI wall-clock M1–M4b + owner time (estimate) · 40 h limit met</span></div>
+    <div class="kpi"><b>≈ 8 h 10 min + 4.25 h</b><span>AI wall-clock M1 → today + owner time (estimate as of 6 Sep afternoon, not updated since) · 40 h limit met</span></div>
   </div>
 
   <h2>Two flows</h2>
@@ -103,7 +103,7 @@ Orchestrators: shared journal, review service, audit · each runs only its own d
     <tr><th><code>src/adapters/</code></th><td>Contracts of external systems (LLM, registry, DMS, archive, SMTP) with fakes and failure modes: timeout, 5xx, business error, schema-valid nonsense, unknown outcome, crash after write, full storage.</td></tr>
     <tr><th><code>workflows/</code></th><td>Two versioned, immutable flow definitions; running instances pin their version.</td></tr>
     <tr><th><code>conformance/</code></th><td>Per capability: fixtures (canonical, damaged, injection, boundary, error), golden outputs with MUST/DON'T CARE, <code>errors.md</code>, <code>compat.md</code>. Per workflow: scenarios and golden master.</td></tr>
-    <tr><th><code>tests/</code></th><td>One file per family (<code>ctr</code>, <code>sec</code>, <code>mut</code>, <code>idm</code>, <code>wf</code>, <code>res</code>, <code>int</code>, <code>evd</code>, <code>arch</code>) plus <code>mail</code> for the second flow. Test names carry Test IDs, so the run log is evidence.</td></tr>
+    <tr><th><code>tests/</code></th><td>One file per family (<code>ctr</code>, <code>sec</code>, <code>mut</code>, <code>idm</code>, <code>wf</code>, <code>res</code>, <code>int</code>, <code>evd</code>, <code>arch</code>) plus <code>mail</code> for the second flow, <code>inst</code> for the installation profile and <code>fakes</code> for <code>document.validate</code> over the <code>apf-fakes</code> protocol. Test names carry Test IDs, so the run log is evidence.</td></tr>
     <tr><th><code>docs/MEASUREMENT.md</code></th><td><b>The main thing.</b> Hours, lines, findings caught by tests, waste by lean category, what had to be worked around and what is proposed back to the norm.</td></tr>
     <tr><th><code>HANDOFF.md</code></th><td>State diary, append-only, newest first. Source of truth for continuing from another machine.</td></tr>
   </table>
@@ -126,7 +126,13 @@ Orchestrators: shared journal, review service, audit · each runs only its own d
     <tr><td><b>Total M1–M4</b></td><td><b>≈ 1 h 50 min</b></td><td><b>≈ 6,670</b></td><td><b>12</b></td></tr>
     <tr><td>M4b step 1 portability + installation profile</td><td>≈ 1 h 10 min</td><td>≈ 1,010</td><td>0 (W12 resolved)</td></tr>
     <tr><td>M4b step 2, unit 1 installation in the Worker, validator</td><td>≈ 45 min</td><td>≈ 250</td><td>2 (W13, W14)</td></tr>
-    <tr><td><b>Total M1–M4b</b></td><td><b>≈ 3 h 45 min</b></td><td><b>≈ 7,900</b></td><td><b>12 + W1–W14</b></td></tr>
+    <tr><td>M4b step 3 "lite": skeleton deployed on bass443 behind Access</td><td>≈ 30 min</td><td>≈ 60</td><td>0 (operational findings)</td></tr>
+    <tr><td>M4b step 2, unit A: document intake (DO journal + audit + R2/D1)</td><td>≈ 1 h 50 min</td><td>≈ 213 net</td><td>0 (W15)</td></tr>
+    <tr><td>M4b step 2, unit A2: PDF/photo/docx → text (Workers AI toMarkdown)</td><td>≈ 25 min</td><td>≈ 164 net</td><td>0 (W16)</td></tr>
+    <tr><td>M4b step 2, unit B: signed dispatch, classify with a real model</td><td>≈ 1 h</td><td>≈ 660 net</td><td>3 (WF-VER-001, W17)</td></tr>
+    <tr><td>M4b step 2, unit C: <code>document.validate</code> over a real network hop</td><td>≈ 25 min</td><td>≈ 453 net</td><td>0 (W18)</td></tr>
+    <tr><td>Review 5 + W19 fix: <code>ExecutorHost</code> dedup scoped by capability</td><td>≈ 15 min</td><td>≈ 23 net</td><td>1 (W19, fixed)</td></tr>
+    <tr><td><b>Total M1 → today</b></td><td><b>≈ 8 h 10 min</b></td><td><b>≈ 9,470</b></td><td><b>12 + W1–W20</b></td></tr>
   </table>
   <p>Ratio: <b>~480</b> lines of business logic (five handlers) · <b>3,084</b> lines of tests and fixtures · <b>2,350</b> lines of platform (one-off). The test cost per capability dropped between M3 and M4 because the runner, harness and golden comparison already existed.</p>
   <div class="note warnbox">
@@ -152,6 +158,8 @@ Orchestrators: shared journal, review service, audit · each runs only its own d
     <li>The idempotency key goes to the external system as business identity for every write capability, not only IRREVERSIBLE ones.</li>
     <li><b>A second independent signal</b> for an AI capability whose output leads to a write with risk MEDIUM or above: proposed as a CONDITIONAL rule, <span class="pill prep">awaiting decision</span>.</li>
     <li>Who computes the key grace period; the anti-pattern "delimiter name before the block"; an alert channel for full storage; PRINCIPAL inside one process is a simulation.</li>
+    <li><b>An executor's dedup key must carry the capability</b>, not just a bare <code>idempotencyKey</code>: a host serving more than one capability (stamp + archive) can otherwise return one capability's outcome for the other (W19, found by a review that read the code, fixed in the slice).</li>
+    <li>Dedup durability on a Worker rests on <code>reconcile()</code> (a query to the external system), not on the host's memory, because a Worker runs in a different isolate on every request (W20).</li>
   </ul>
 
   <h2>Green Test IDs</h2>
@@ -179,12 +187,13 @@ Orchestrators: shared journal, review service, audit · each runs only its own d
         <li class="ok">M4b step 2, unit A2 (6 Sep 2026, evening): <b>PDF, photo, docx</b> as input: the binary original goes immutably to R2 (key = sha256), Workers AI <code>toMarkdown</code> derives its text as a derivation with provenance and the flow runs over it; verified with a PDF invoice on the farm (2 s), photos use the same conversion but are not yet tested with a real one</li>
         <li class="ok">M4b step 2, unit B (6 Sep 2026, evening): <b>signed dispatch</b> (Ed25519 key as a secret, verified in workerd), router in the instance object, <b>classify with a real model</b> (Workers AI Llama 3.1 8B, ≈ 1.5 s) and <b>model choice from the installation profile</b> (free Workers AI, paid Anthropic with <code>inferenceGeo: eu</code>; unavailable options name the missing secret), validate with the second signal; invoice and PDF → INVOICE, the injection did not fool Llama and the validator caught it on the fake model; workflow v2 (v1 immutable); ISDOC XML as text for the rules</li>
         <li class="ok">M4b step 2, unit C (6 Sep 2026, evening): <b><code>document.validate</code> over a real network hop</b> — <code>apf-fakes</code> wired into the gateway through a service binding, registry, DMS and archive behind one HTTP protocol (<code>src/adapters/fakes-http.ts</code>) with chaos switches in KV readable without a redeploy (<code>/chaos</code>); verified with <code>wrangler dev</code> running two Workers at once (service binding <code>[connected]</code>): a document went classify → validate → <code>stamp:FAILED:DEPENDENCY_UNAVAILABLE</code> (hosts = unit D); 8 new tests (<code>INT-HTTP-001..008</code>)</li>
+        <li class="ok">Review 5 + W19 fix (6 Sep 2026, late evening): the first external review to read actual TypeScript code, <b>8.8/10</b>; confirmed a real finding — <code>ExecutorHost</code> keyed its dedup map by <code>idempotencyKey</code> alone, shared between <code>document.stamp</code> and <code>document.archive</code>. Fixed the same day (owner: "up to you"): the key now carries the capability; a new test <code>IDM-HOST-SCOPE-001</code> verified as a real regression test (fails without the fix). 219 tests green.</li>
       </ul>
     </div>
     <div class="card todo-card">
       <strong>⏳ Remaining · in priority order</strong>
       <ul>
-        <li class="todo"><b>1 · M4b farm, step 2:</b> units 1 (installation in the Worker), A (intake, journal and audit in the DO, copies to R2 and D1, instance page), A2 (PDF/photo/docx → text), B (signed dispatch, classify with a real model and model choice, validate) and C (<code>document.validate</code> through <code>apf-fakes</code> over a real network hop, chaos switches) done; left: D <code>apf-document-host</code> (stamp, archive) with a signed envelope, secrets <code>DMS_SECRET</code>/<code>ARCHIVE_SECRET</code>, DO in the EU jurisdiction, retention per profile, ISDOC fields deterministically, a real-photo check, e-mail attachments (step 4), the harness against the farm through <code>HttpDispatchTransport</code>. Depends on nothing.</li>
+        <li class="todo"><b>1 · M4b farm, step 2:</b> units 1 (installation in the Worker), A (intake, journal and audit in the DO, copies to R2 and D1, instance page), A2 (PDF/photo/docx → text), B (signed dispatch, classify with a real model and model choice, validate) and C (<code>document.validate</code> through <code>apf-fakes</code> over a real network hop, chaos switches) done; left: D <code>apf-document-host</code> (stamp, archive) with a signed envelope, secrets <code>DMS_SECRET</code>/<code>ARCHIVE_SECRET</code>, DO in the EU jurisdiction, retention per profile, ISDOC fields deterministically, a real-photo check, e-mail attachments (step 4), the harness against the farm through <code>HttpDispatchTransport</code>. <b>Precondition for D (W20):</b> <code>reconcile()</code> wired and tested for both <code>document.stamp</code> and <code>document.archive</code> on a real Worker — without it, dedup on the farm is only theoretical. Depends on nothing else.</li>
         <li class="todo"><b>2 · M4b farm, steps 3–5:</b> the skeleton already runs on bass443 behind Access (step 3 "lite", human login and service token both verified); left: secrets (<code>GATEWAY_SIGNING_KEY</code>, <code>DMS_SECRET</code>, <code>ARCHIVE_SECRET</code>) with the <code>/dispatch</code> unit, deploying every step-2 unit straight to the farm, email (Routing + Sending, step 4), queue and DO crash (step 5). Addresses decided.</li>
         <li class="todo"><b>3 · ADR-017 pentest</b> over real deployables: three questions with an expected NO (SMTP from the document host, DMS from the email executor, envelope signature outside the gateway) plus privilege escalation through indirect paths. The only MAJOR from the reviews.</li>
         <li class="todo"><b>4 · A real model</b> behind <code>document.classify</code> with a golden set (10 invoices + 3 injections, <code>criticalFields: [documentType]</code>) and <code>AI-EVAL-REG-001</code>, <code>AI-EVAL-ADV-001</code>. A v1.0 condition.</li>
@@ -192,7 +201,7 @@ Orchestrators: shared journal, review service, audit · each runs only its own d
         <li class="todo"><b>6 · A third domain</b> for the marginal cost: track "platform +lines" (M4 = 45).</li>
         <li class="todo"><b>7 · M5:</b> refresh <code>EVIDENCE-MATRIX</code> in foundation, Core Admission <code>EXISTS × 2</code> (candidates: result envelope, error object, ClockFixture, CredentialResolverFixture, conformance runner).</li>
         <li class="todo"><b>8 · M6:</b> first shared package = contracts, schemas, fixtures and the conformance runner only; the runtime stays duplicated.</li>
-        <li class="todo"><b>9 · Part XVII</b> in foundation from N1–N12, W1–W12 and the four reviews.</li>
+        <li class="todo"><b>9 · Part XVII</b> in foundation from N1–N12, W1–W20 and the five reviews.</li>
         <li class="todo"><b>10 ·</b> Backoff and circuit breaker for technical retry, alert on full storage (with a durable queue).</li>
       </ul>
     </div>

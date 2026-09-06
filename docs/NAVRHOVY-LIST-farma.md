@@ -10,7 +10,7 @@ Vyplněno podle `ai-agenti/sablony/navrhovy-list.md` dřív, než vznikne první
 |---|---|
 | **Název** | agent-platform-farm (deployables s prefixem `apf-`) |
 | **Vlastník** | Milan Trnka |
-| **K čemu je** | Spustit `document-intake.v1` a `mail-intake.v1` na Cloudflare Workers tak, aby stejných 198 testů běželo proti reálnému runtime a doložilo, co v jednom procesu bylo jen simulací (W11 v MEASUREMENT). |
+| **K čemu je** | Spustit `document-intake.v1` a `mail-intake.v1` na Cloudflare Workers tak, aby stejné testy běžely proti reálnému runtime a doložilo, co v jednom procesu bylo jen simulací (W11 v MEASUREMENT). |
 | **Co nahrazuje** | Kompoziční kořen `src/slice.ts` s fakes v jednom procesu. Nic v provozu; farma je testbed, ne služba pro uživatele. |
 | **Kdy je hotový** | (1) `SEC-HOST-001` platí konstrukcí: executor host nemá binding na cizí secret; (2) `IDM-REPLAY-001` běží proti skutečnému at-least-once doručení; (3) `RES-CRASH-001` proti evikci Durable Objectu; (4) golden mastery obou toků procházejí beze změny; (5) `MEASUREMENT.md` má řádek M4b s cenou v Kč a s nálezy. |
 | **Model nasazení** | `CLOUD_SINGLE_TENANT` (jeden tenant `tenant-42`, druhý `tenant-7` jen jako protistrana v testech) |
