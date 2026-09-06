@@ -18,7 +18,8 @@ const IMPORT = /^\s*(?:import|export)\s[^;]*?\sfrom\s+["']([^"']+)["']/gm;
 const CLOCK_EXEMPT = new Set(["platform/clock.ts", "platform/ids.ts"]);
 const STRING_LITERAL = /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\\n]|\\.)*`/g;
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/;
-const HOSTNAME = /(?:^|[^A-Za-z0-9.-])[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:cz|sk|com|org|net|eu|io|dev|app|de|at|pl|uk|info)(?![A-Za-z0-9.-])/;
+// Labels of at least two characters and no `.at`/`.de`: `r.at` or `x.de` in a template literal are property accesses, not hosts.
+const HOSTNAME = /(?:^|[^A-Za-z0-9.-])[a-z0-9-]{2,}(?:\.[a-z0-9-]{2,})*\.(?:cz|sk|com|org|net|eu|io|dev|app|pl|uk|info)(?![A-Za-z0-9.-])/;
 
 /** Every value bound to an installation, read from config/<installation>/profile.json and policy/*.json. value -> origin. */
 export function installationValues(configDir = join(repoRoot, "config")) {

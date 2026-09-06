@@ -1,4 +1,6 @@
 // Workflow definitions are data (workflows/*.json), bundled and checked fail-closed before an orchestrator exists.
+import documentIntakeJson from "../../workflows/document-intake.v1.json" with { type: "json" };
+import mailIntakeJson from "../../workflows/mail-intake.v1.json" with { type: "json" };
 import workflowSchema from "../../workflows/workflow-definition.schema.json" with { type: "json" };
 import type { WorkflowDef } from "./orchestrator.js";
 import { compileSchema } from "./schemas.js";
@@ -28,4 +30,15 @@ function* stepRefs(value: unknown): Generator<string> {
   } else if (value && typeof value === "object" && !Array.isArray(value)) {
     for (const v of Object.values(value)) yield* stepRefs(v);
   }
+}
+
+/** Every workflow definition this platform can run, validated fail-closed at import. Same list under Node and in a Worker. */
+export const WORKFLOW_DEFINITIONS: Readonly<Record<string, WorkflowDef>> = Object.freeze(
+  Object.fromEntries([documentIntakeJson, mailIntakeJson].map(parseWorkflowDef).map((d) => [d.workflow, d])),
+);
+
+export function workflowDef(name: string): WorkflowDef {
+  const def = WORKFLOW_DEFINITIONS[name];
+  if (!def) throw new Error(`unknown workflow definition ${name}`);
+  return def;
 }

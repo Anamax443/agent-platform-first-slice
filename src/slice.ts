@@ -2,8 +2,6 @@
 // Two flows share one gateway, router, journal, review service and audit: document-intake.v1 and mail-intake.v1.
 // Nothing bound to a customer or environment lives here: identities, tenants, policies and credential references
 // come from the installation profile, secret values from a SecretsSource (config/<installation>/, docs/NAVRHOVY-LIST-farma.md).
-import documentIntakeJson from "../workflows/document-intake.v1.json" with { type: "json" };
-import mailIntakeJson from "../workflows/mail-intake.v1.json" with { type: "json" };
 import { FakeArchiveAdapter } from "./adapters/archive.js";
 import { FakeDmsAdapter } from "./adapters/dms.js";
 import { classifyByRules, FakeLlmAdapter, KeywordClassifierAdapter, type LlmAdapter } from "./adapters/llm.js";
@@ -31,21 +29,12 @@ import { Router } from "./platform/router.js";
 import { generateKeyPair, KeyRegistry, Signer } from "./platform/signing.js";
 import { InProcessTransport } from "./platform/transport.js";
 import type { MessageEnvelope } from "./platform/types.js";
-import { parseWorkflowDef } from "./platform/workflow.js";
+import { workflowDef } from "./platform/workflow.js";
+
+export { WORKFLOW_DEFINITIONS, workflowDef } from "./platform/workflow.js";
 
 /** Test default for the fake clock. Not an installation value: real runtimes use SystemClock. */
 export const DEFAULT_CLOCK_START = "2026-09-06T08:00:00Z";
-
-/** Every workflow definition this slice can run, validated fail-closed at import. */
-export const WORKFLOW_DEFINITIONS: Readonly<Record<string, WorkflowDef>> = Object.freeze(
-  Object.fromEntries([documentIntakeJson, mailIntakeJson].map(parseWorkflowDef).map((d) => [d.workflow, d])),
-);
-
-export function workflowDef(name: string): WorkflowDef {
-  const def = WORKFLOW_DEFINITIONS[name];
-  if (!def) throw new Error(`unknown workflow definition ${name}`);
-  return def;
-}
 
 export interface SliceOptions {
   clockStart?: string;

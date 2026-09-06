@@ -1,4 +1,4 @@
-import type { Audit } from "./audit.js";
+import type { AuditTrail } from "./audit.js";
 import type { Clock } from "./clock.js";
 import { iso } from "./clock.js";
 import { newId } from "./ids.js";
@@ -39,7 +39,7 @@ export class Router {
   /** Binding mechanisms this receiver accepts. "in-process" only when message and context provably never left the process (SEC-CTX-005). */
   private readonly acceptedMechanisms: string[];
 
-  constructor(private readonly opts: { registry: KeyRegistry; clock: Clock; audit: Audit; acceptedMechanisms?: string[] }) {
+  constructor(private readonly opts: { registry: KeyRegistry; clock: Clock; audit: AuditTrail; acceptedMechanisms?: string[] }) {
     this.acceptedMechanisms = opts.acceptedMechanisms ?? ["signed-envelope"];
   }
 

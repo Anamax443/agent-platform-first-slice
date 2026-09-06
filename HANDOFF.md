@@ -2,6 +2,28 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-06 (14) — Krok 2, celek A: příjem dokumentu na farmě (stránka → DO instance → stránka instance), první „dílčí výstup" pro vlastníka
+
+**Pokyn vlastníka (večer):** „otevřu stránku, vložím dokumenty, fotky, spustí se proces a bude nějaký dílčí výstup." Pořadí kroku 2 přeskládáno podle toho: **A stránka + příjem (hotovo) → B dispatch + classify → C validate → D document-host + fakes (razítko) → OCR fotek (nová capability, Workers AI vision) → harness proti farmě.** Každý celek jde hned na farmu; vlastník kontroluje na `https://apf.maxferit.cz/`.
+
+**Stav:** nasazeno (`farm-deploy farm-bass443`, 19:03), ověřeno service tokenem: `GET /` 200 (formulář), `POST /intake` → 303 `/workflow/wf-…`, instance `FAILED` s krokem `classify:FAILED:3:DEPENDENCY_UNAVAILABLE`, artefakt s sha256 a `receivedFrom: access:service-token`, `/audit.json` z D1 vrací záznamy. Lokálně totéž na `wrangler dev` (local-fakes). Testy 208, typecheck, lint (20 hodnot), farm:check 10 configů zelené.
+
+**Kód:**
+- Platforma: `JournalStore` a `AuditTrail` jsou rozhraní (třídy `Journal`, `Audit` je implementují; router, executor host, review, credentials, orchestrátor berou rozhraní). `Orchestrator.start(input, correlationId?, workflowId?)` umí přednastavené id (DO per instance). Registr `WORKFLOW_DEFINITIONS`/`workflowDef()` přesunut do `src/platform/workflow.ts` (slice ho re-exportuje), aby ho gateway nebral z `slice.ts` s fakes.
+- `deploy/cloudflare/apf-gateway/src/store.ts`: `SqliteJournal`, `SqliteAudit` (insert-only + příznak `mirrored`), `SqliteArtifacts` nad `ctx.storage.sql` (DDL při konstrukci objektu); `D1_AUDIT_DDL`.
+- `deploy/cloudflare/apf-gateway/src/page.ts`: `renderHome` (formulář: text/soubor, tok, text razítka; seznam „co je zapojené" z `WIRED`), `renderInstance` (kroky, artefakty s náhledem, audit instance), bez skriptů a externích assetů, `esc()` na všechno.
+- `deploy/cloudflare/apf-gateway/src/index.ts`: `WorkflowInstance` DO (`intake()` RPC: artefakt → `start` s `workflowId` = jméno objektu → `run` → `waitUntil(copyOut())` = R2 `originals/<tenant>/<sha256>` + D1 `INSERT OR IGNORE`; `view()`), `NotWiredTransport` (každý dispatch = audit `dispatch {wired:false}` + `DEPENDENCY_UNAVAILABLE`), routy `/`, `/intake` (multipart, limit 1 M znaků, `KILL_SWITCH` → 503), `/workflow/:id(.json)`, `/audit.json?limit=`, `/version` + `/health` s objektem `WIRED`, `/dispatch` 501. Tenant příjmu = tenant identity `roles.orchestrator` z profilu; `receivedFrom` = `access:<e-mail z hlavičky Access>` nebo `access:service-token` (JWT ověření = pozdější celek, `WIRED.accessJwtVerified=false`).
+- `deploy/cloudflare/types/apf-installation.d.ts`: inline `import()` typ (relativní `import` v ambientním modulu je TS2439 a `skipLibCheck` ho skryl → `installation` bylo tiše `any`).
+- `scripts/arch-dep.mjs`: hostname regex bez `.at`/`.de` a s labely ≥ 2 znaky (falešný nález `r.at` v šabloně).
+
+**Rozhodnutí W15 (MEASUREMENT):** platformová úložiště zůstávají synchronní; na farmě je DO SQLite zdroj pravdy a R2/D1 jsou kopie po běhu; host v jiném Workeru si artefakt z R2 přednačte před synchronním handlerem.
+
+**Další celek B (`/dispatch` + classify):** v DO postavit `Gateway` + `Router` + `InProcessTransport` s registrací `document.classify` (a `document.validate`) přes `FakeLlmAdapter`/`KeywordClassifierAdapter` (reálný model = krok 7); podpisový klíč: `GATEWAY_SIGNING_KEY` přes `wrangler secret put … -c .wrangler/generated/farm-bass443/apf-gateway/wrangler.jsonc` (Ed25519 PKCS8 PEM) → **první věc ověřit `node:crypto` `createPrivateKey`/`sign`/`verify` Ed25519 ve workerd**, jinak WebCrypto (async → `Gateway.dispatch` async, harness). Router potřebuje `KeyRegistry` s veřejným klíčem (odvozený z privátního). Fakes adaptéry pro registr přes service binding na `apf-fakes` jsou celek C. `WIRED.dispatch = true` a stránka ukáže typ dokumentu.
+
+**Ověření z druhého PC:** `.env` s tokenem tam není; stránka jde přes Access login v prohlížeči bez tokenu.
+
+**Zbývá rozhodnout (Milan):** aliasy do jedné schránky (krok 4). Jinak nic.
+
 ## 2026-09-06 (13) — Krok 3 „lite": skeleton NASAZEN na bass443 za Access, ověřeno z internetu přihlášením i service tokenem
 
 **Stav:** farma existuje. `https://apf.maxferit.cz/version` vrací `{"installation":"farm-bass443","tenants":2,"identities":3,"policies":6,"contracts":"agent-platform-foundation 1.0-rc2.1 12a3c32","killSwitch":false,"wired":false}` přes Access login (Jen Ja) i přes service token `apf-harness` (politika `harness`, Service Auth); bez tokenu 302 na Access login; `/dispatch` 501 (obchodní tok ještě není zapojený). Kód a testy beze změny (208), lokální brána zelená.

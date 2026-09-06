@@ -1,4 +1,4 @@
-import type { Audit } from "./audit.js";
+import type { AuditTrail } from "./audit.js";
 import type { Clock } from "./clock.js";
 import { iso } from "./clock.js";
 import type { CredentialResolver } from "./credentials.js";
@@ -49,7 +49,7 @@ export class ExecutorHost {
   readonly mutants: HostMutants = {};
   readonly skewLog: Array<{ messageId: string; skewMs: number }> = [];
 
-  constructor(private readonly opts: { hostId: string; clock: Clock; audit: Audit; credentials: CredentialResolver }) {}
+  constructor(private readonly opts: { hostId: string; clock: Clock; audit: AuditTrail; credentials: CredentialResolver }) {}
 
   register(spec: HostHandlerSpec): void {
     this.handlers.set(spec.capability, spec);

@@ -1,8 +1,8 @@
-import type { Audit } from "./audit.js";
+import type { AuditTrail } from "./audit.js";
 import type { Clock } from "./clock.js";
 import { iso, plus } from "./clock.js";
 import { newId } from "./ids.js";
-import type { Instance, Journal, SideEffects, StepRecord } from "./journal.js";
+import type { Instance, JournalStore, SideEffects, StepRecord } from "./journal.js";
 import type { ReviewService, Decision } from "./review.js";
 import type { DispatchTransport } from "./transport.js";
 import type { Reconciler } from "./executor-host.js";
@@ -54,9 +54,9 @@ export class Orchestrator {
       workflow: WorkflowDef;
       /** In-process or HTTP: the orchestrator does not know and must not care (F3). */
       transport: DispatchTransport;
-      journal: Journal;
+      journal: JournalStore;
       review: ReviewService;
-      audit: Audit;
+      audit: AuditTrail;
       clock: Clock;
       actorId: string;
       reconcilers?: Record<string, Reconciler>;
@@ -67,11 +67,12 @@ export class Orchestrator {
     return this.opts.workflow;
   }
 
-  start(input: { tenantId: string } & Record<string, unknown>, correlationId?: string): Instance {
+  /** `workflowId` may be preset by a runtime that keys durable state by instance (one Durable Object per workflow). */
+  start(input: { tenantId: string } & Record<string, unknown>, correlationId?: string, workflowId?: string): Instance {
     const now = iso(this.opts.clock.now());
     const { tenantId, ...rest } = input;
     const inst: Instance = {
-      workflowId: newId("wf"),
+      workflowId: workflowId ?? newId("wf"),
       workflow: this.opts.workflow.workflow,
       workflowVersion: this.opts.workflow.workflowVersion,
       correlationId: correlationId ?? newId("cor"),

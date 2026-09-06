@@ -1,0 +1,168 @@
+// Durable Object SQLite behind the platform's synchronous stores: journal (JournalStore), audit (AuditTrail) and
+// artifacts (ArtifactWriter). Synchronous on purpose: the orchestrator and the read-only handlers run inside the object,
+// where ctx.storage.sql is synchronous and every transition is durable before the next call (RES-CRASH-001).
+// R2 (originals, immutable) and D1 (shared audit trail) receive asynchronous copies afterwards; the object is the source of truth.
+import type { AuditKind, AuditRecord, AuditTrail } from "../../../../src/platform/audit.js";
+import { sha256, type Artifact, type ArtifactWriter } from "../../../../src/platform/artifacts.js";
+import type { Clock } from "../../../../src/platform/clock.js";
+import { iso } from "../../../../src/platform/clock.js";
+import { newId } from "../../../../src/platform/ids.js";
+import type { Instance, JournalStore } from "../../../../src/platform/journal.js";
+
+export const DDL = [
+  "CREATE TABLE IF NOT EXISTS instance (workflow_id TEXT PRIMARY KEY, status TEXT NOT NULL, updated_at TEXT NOT NULL, json TEXT NOT NULL)",
+  "CREATE TABLE IF NOT EXISTS audit (seq INTEGER PRIMARY KEY AUTOINCREMENT, audit_id TEXT NOT NULL UNIQUE, at TEXT NOT NULL, kind TEXT NOT NULL, correlation_id TEXT, workflow_id TEXT, json TEXT NOT NULL, mirrored INTEGER NOT NULL DEFAULT 0)",
+  "CREATE TABLE IF NOT EXISTS artifact (artifact_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, sha256 TEXT NOT NULL, received_at TEXT NOT NULL, received_from TEXT NOT NULL, derived_from TEXT, producer TEXT, bytes TEXT NOT NULL, copied INTEGER NOT NULL DEFAULT 0)",
+];
+
+/** Shared D1 trail: the same record shape, one row per audit record, insert-only. */
+export const D1_AUDIT_DDL =
+  "CREATE TABLE IF NOT EXISTS audit (audit_id TEXT PRIMARY KEY, at TEXT NOT NULL, kind TEXT NOT NULL, correlation_id TEXT, workflow_id TEXT, tenant_id TEXT, actor_id TEXT, capability TEXT, json TEXT NOT NULL)";
+
+const parseJson = <T>(row: Record<string, SqlStorageValue>): T => JSON.parse(row.json as string) as T;
+
+export class SqliteJournal implements JournalStore {
+  constructor(private readonly sql: SqlStorage) {}
+
+  get(workflowId: string): Instance | undefined {
+    const row = this.sql.exec("SELECT json FROM instance WHERE workflow_id = ?", workflowId).toArray()[0];
+    return row ? parseJson<Instance>(row) : undefined;
+  }
+
+  put(instance: Instance): void {
+    this.sql.exec(
+      "INSERT OR REPLACE INTO instance (workflow_id, status, updated_at, json) VALUES (?, ?, ?, ?)",
+      instance.workflowId,
+      instance.status,
+      instance.updatedAt,
+      JSON.stringify(instance),
+    );
+  }
+
+  list(): Instance[] {
+    return this.sql.exec("SELECT json FROM instance ORDER BY updated_at").toArray().map((r) => parseJson<Instance>(r));
+  }
+}
+
+/** Insert-only. The `mirrored` flag is bookkeeping for the D1 copy; the record itself is never changed (EVD-004). */
+export class SqliteAudit implements AuditTrail {
+  constructor(
+    private readonly sql: SqlStorage,
+    private readonly clock: Clock,
+  ) {}
+
+  append(record: Omit<AuditRecord, "auditId" | "at">): AuditRecord {
+    const full: AuditRecord = { auditId: newId("aud"), at: iso(this.clock.now()), ...record };
+    this.sql.exec(
+      "INSERT INTO audit (audit_id, at, kind, correlation_id, workflow_id, json) VALUES (?, ?, ?, ?, ?, ?)",
+      full.auditId,
+      full.at,
+      full.kind,
+      full.correlationId ?? null,
+      full.workflowId ?? null,
+      JSON.stringify(full),
+    );
+    return structuredClone(full);
+  }
+
+  all(): readonly AuditRecord[] {
+    return this.sql.exec("SELECT json FROM audit ORDER BY seq").toArray().map((r) => parseJson<AuditRecord>(r));
+  }
+
+  byKind(kind: AuditKind): AuditRecord[] {
+    return this.all().filter((r) => r.kind === kind);
+  }
+
+  byCorrelation(correlationId: string): AuditRecord[] {
+    return this.all().filter((r) => r.correlationId === correlationId);
+  }
+
+  unmirrored(): AuditRecord[] {
+    return this.sql.exec("SELECT json FROM audit WHERE mirrored = 0 ORDER BY seq").toArray().map((r) => parseJson<AuditRecord>(r));
+  }
+
+  markMirrored(auditIds: string[]): void {
+    for (const id of auditIds) this.sql.exec("UPDATE audit SET mirrored = 1 WHERE audit_id = ?", id);
+  }
+}
+
+const rowToArtifact = (r: Record<string, SqlStorageValue>): Artifact => ({
+  artifactId: r.artifact_id as string,
+  tenantId: r.tenant_id as string,
+  sha256: r.sha256 as string,
+  bytes: r.bytes as string,
+  receivedAt: r.received_at as string,
+  receivedFrom: r.received_from as string,
+  ...(r.derived_from ? { derivedFrom: r.derived_from as string } : {}),
+  ...(r.producer ? { producer: r.producer as string } : {}),
+});
+
+/** Immutable originals and derivations (EVD-001): insert-only, a second write to an id is a programming error. */
+export class SqliteArtifacts implements ArtifactWriter {
+  constructor(
+    private readonly sql: SqlStorage,
+    private readonly clock: Clock,
+  ) {}
+
+  put(input: { tenantId: string; bytes: string; receivedFrom: string }): Artifact {
+    const a: Artifact = {
+      artifactId: newId("art"),
+      tenantId: input.tenantId,
+      sha256: sha256(input.bytes),
+      bytes: input.bytes,
+      receivedAt: iso(this.clock.now()),
+      receivedFrom: input.receivedFrom,
+    };
+    this.store(a);
+    return { ...a };
+  }
+
+  derive(originalId: string, bytes: string, producer: string): Artifact {
+    const orig = this.get(originalId);
+    if (!orig) throw new Error(`original ${originalId} not found`);
+    const a: Artifact = {
+      artifactId: newId("art"),
+      tenantId: orig.tenantId,
+      sha256: sha256(bytes),
+      bytes,
+      receivedAt: iso(this.clock.now()),
+      receivedFrom: producer,
+      derivedFrom: originalId,
+      producer,
+    };
+    this.store(a);
+    return { ...a };
+  }
+
+  get(artifactId: string): Artifact | undefined {
+    const row = this.sql.exec("SELECT * FROM artifact WHERE artifact_id = ?", artifactId).toArray()[0];
+    return row ? rowToArtifact(row) : undefined;
+  }
+
+  list(): Artifact[] {
+    return this.sql.exec("SELECT * FROM artifact ORDER BY received_at").toArray().map(rowToArtifact);
+  }
+
+  uncopied(): Artifact[] {
+    return this.sql.exec("SELECT * FROM artifact WHERE copied = 0 ORDER BY received_at").toArray().map(rowToArtifact);
+  }
+
+  markCopied(artifactId: string): void {
+    this.sql.exec("UPDATE artifact SET copied = 1 WHERE artifact_id = ?", artifactId);
+  }
+
+  private store(a: Artifact): void {
+    if (this.get(a.artifactId)) throw new Error(`artifact ${a.artifactId} already exists: artifacts are immutable`);
+    this.sql.exec(
+      "INSERT INTO artifact (artifact_id, tenant_id, sha256, received_at, received_from, derived_from, producer, bytes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      a.artifactId,
+      a.tenantId,
+      a.sha256,
+      a.receivedAt,
+      a.receivedFrom,
+      a.derivedFrom ?? null,
+      a.producer ?? null,
+      a.bytes,
+    );
+  }
+}

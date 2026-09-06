@@ -28,11 +28,19 @@ export interface AuditRecord {
   details?: Record<string, unknown>;
 }
 
+/** What the platform needs from an audit trail: append and read, nothing else (FOUNDATION-core §7). */
+export interface AuditTrail {
+  append(record: Omit<AuditRecord, "auditId" | "at">): AuditRecord;
+  all(): readonly AuditRecord[];
+  byKind(kind: AuditKind): AuditRecord[];
+  byCorrelation(correlationId: string): AuditRecord[];
+}
+
 /**
- * Append-only audit trail (FOUNDATION-core §7). There is deliberately no update or delete API:
- * EVD-004 asserts that by reflection on this class.
+ * Append-only audit trail for Node (memory + optional JSONL file). There is deliberately no update or delete API:
+ * EVD-004 asserts that by reflection on this class. A Worker uses Durable Object SQLite + D1 behind the same interface.
  */
-export class Audit {
+export class Audit implements AuditTrail {
   private readonly records: AuditRecord[] = [];
 
   constructor(

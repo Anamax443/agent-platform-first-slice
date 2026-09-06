@@ -1,4 +1,4 @@
-import type { Audit } from "./audit.js";
+import type { AuditTrail } from "./audit.js";
 import type { Clock } from "./clock.js";
 import { iso } from "./clock.js";
 import { newId } from "./ids.js";
@@ -59,7 +59,7 @@ export class ReviewService {
 
   constructor(
     private readonly clock: Clock,
-    private readonly audit: Audit,
+    private readonly audit: AuditTrail,
   ) {}
 
   create(input: CreateTask): ReviewTask {

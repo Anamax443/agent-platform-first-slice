@@ -46,8 +46,15 @@ export interface Instance {
   updatedAt: string;
 }
 
-/** Durable journal: JSON file, rewritten on every transition (RES-CRASH-001). */
-export class Journal {
+/** What the orchestrator needs from a journal. Synchronous on purpose: every transition is durable before the next call (RES-CRASH-001). */
+export interface JournalStore {
+  get(workflowId: string): Instance | undefined;
+  put(instance: Instance): void;
+  list(): Instance[];
+}
+
+/** Durable journal for Node: JSON file, rewritten on every transition. A Worker uses Durable Object SQLite instead (same interface). */
+export class Journal implements JournalStore {
   private readonly instances = new Map<string, Instance>();
 
   constructor(private readonly file?: string) {

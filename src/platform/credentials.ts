@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { Audit } from "./audit.js";
+import type { AuditTrail } from "./audit.js";
 
 export class CredentialDenied extends Error {
   constructor(message: string) {
@@ -26,7 +26,7 @@ export class CredentialResolver implements CredentialAccess {
 
   constructor(
     private readonly table: Record<string, Record<string, string>>,
-    private readonly audit?: Audit,
+    private readonly audit?: AuditTrail,
   ) {}
 
   setMode(mode: ResolverMode): void {
