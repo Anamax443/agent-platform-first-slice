@@ -1,0 +1,28 @@
+{
+  // D2: document-executor-host, isolation LOGICAL. Two handlers (document.stamp, document.archive) with two secrets
+  // in ONE Worker. That is exactly the case SEC-HOST-001 and the ADR-017 pentest are about.
+  "$schema": "../../../node_modules/wrangler/config-schema.json",
+  "name": "apf-document-host",
+  "main": "./src/index.ts",
+  "compatibility_date": "2026-08-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "observability": { "enabled": true },
+
+  // Derivations (stamps) are written next to the originals; the host may read and derive, never overwrite (EVD-001).
+  "r2_buckets": [{ "binding": "ARTIFACTS", "bucket_name": "apf-artifacts", "jurisdiction": "eu" }],
+
+  "services": [
+    { "binding": "GATEWAY", "service": "apf-gateway" },
+    { "binding": "FAKES", "service": "apf-fakes" }
+  ],
+
+  "vars": {
+    "HOST_ID": "document-executor-host",
+    "ISOLATION_CLASS": "LOGICAL",
+    // Receivers hold only public keys; JSON { keyId: { publicKeyPem, validFrom, validUntil? } }. Rotation = redeploy vars.
+    "SIGNING_PUBLIC_KEYS": "{}"
+  }
+  // Secrets (wrangler secret put): DMS_SECRET, ARCHIVE_SECRET. Both live in this Worker: LOGICAL means the boundary
+  // between the two handlers is policy (CredentialResolver table), not the platform.
+}

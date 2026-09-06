@@ -1,0 +1,30 @@
+{
+  // D3: email-executor, isolation PRINCIPAL. Its own Worker, its own credential domain: the ONLY write capability it has
+  // is the Email Sending binding below. No DMS secret, no archive secret, no signing key can exist here by construction.
+  "$schema": "../../../node_modules/wrangler/config-schema.json",
+  "name": "apf-email-executor",
+  "main": "./src/index.ts",
+  "compatibility_date": "2026-08-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "observability": { "enabled": true },
+
+  // Cloudflare Email Sending: the sender domain maxferit.cz is onboarded (job-watch uses it). This binding IS cred:smtp.
+  "send_email": [{ "name": "EMAIL" }],
+
+  // Read-only: the notification names an artifact id and must check it exists and belongs to the tenant.
+  "r2_buckets": [{ "binding": "ARTIFACTS", "bucket_name": "apf-artifacts", "jurisdiction": "eu" }],
+
+  "services": [{ "binding": "GATEWAY", "service": "apf-gateway" }],
+
+  "vars": {
+    "HOST_ID": "email-executor",
+    "ISOLATION_CLASS": "PRINCIPAL",
+    "EMAIL_FROM": "apf-notify@maxferit.cz",
+    "EMAIL_FROM_NAME": "agent-platform-farm",
+    "SIGNING_PUBLIC_KEYS": "{}",
+    // "sandbox" swaps the Email Sending binding for the SMTP fake with chaos modes (WF-UNK tests); "live" sends for real.
+    "SEND_MODE": "sandbox"
+  }
+  // Secrets: none. That absence is the point of PRINCIPAL.
+}

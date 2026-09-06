@@ -1,0 +1,24 @@
+{
+  // D5: test doubles of the external systems (DMS, registry, archive) behind a real network hop, with chaos switches in KV.
+  // Not a component of the norm: it exists so that INT-FAIL, WF-UNK and RES-CRASH can be driven against real transport.
+  "$schema": "../../../node_modules/wrangler/config-schema.json",
+  "name": "apf-fakes",
+  "main": "./src/index.ts",
+  "compatibility_date": "2026-08-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "observability": { "enabled": true },
+
+  // ids: fill in after `wrangler kv namespace create apf-chaos` and `wrangler kv namespace create apf-fakes-store`.
+  "kv_namespaces": [
+    { "binding": "CHAOS", "id": "00000000000000000000000000000000" },
+    { "binding": "STORE", "id": "00000000000000000000000000000000" }
+  ],
+
+  "vars": {
+    // Keys in CHAOS: dms.mode (ok|unknown-once|unknown-always|auth-fail), registry.mode (ok|timeout|unavailable|business|nonsense-range|nonsense-semantic)
+    "DEFAULT_DMS_MODE": "ok",
+    "DEFAULT_REGISTRY_MODE": "ok"
+  }
+  // Secrets: DMS_SECRET, ARCHIVE_SECRET (the values the fakes expect; the same values the document host holds).
+}

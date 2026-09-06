@@ -2,6 +2,27 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-06 (5) — M4b zahájeno: farma na Cloudflare, návrhový list + skeleton pěti deployables
+
+**Rozhodnutí vlastníka:** postavit malou farmu na Cloudflare, aby se závěry řezu ověřily na skutečném runtime (izolace PRINCIPAL, transport, fronta, pád DO, reálný model, reálná pošta). Zařazeno jako **M4b před M5/M6**, protože vyrábí evidenci pro otevřená rozhodnutí (pentest ADR-017, cena PRINCIPAL deployables). Žije v tomto repu (`deploy/cloudflare/`), testy a golden mastery zůstávají sdílené.
+
+**Hotové v této session:**
+- `docs/NAVRHOVY-LIST-farma.md` podle šablony ai-agenti: vstupy a odchozí kanály, nepřátelský vstup, regulace a retence per datová třída, scénáře S1–S5, brány a write akce, křížová kontrola, limity, selhání a vypínač, pět deployables jako moduly, pořadí stavby v šesti krocích, náklady, tři otevřené otázky.
+- `deploy/cloudflare/`: `wrangler.jsonc` + stub Worker pro `apf-gateway` (DO `WorkflowInstance`, D1 audit, R2, Workers AI, service bindings, secret podpisového klíče), `apf-document-host` (LOGICAL, dva secrets), `apf-email-executor` (PRINCIPAL, jediný binding = Email Sending, žádné secrets), `apf-mail-ingest` (`email()` handler, R2), `apf-fakes` (KV chaos přepínače). Všechny odpovídají `501 NOT_WIRED` mimo `/health` a `/version`; nic není nasazené.
+- `scripts/farm-check.mjs` + `npm run farm:check`: `wrangler deploy --dry-run` pro všech pět configů bez přihlášení. **Prošlo** (wrangler 4.129.0, workers-types nainstalované jako devDependency).
+- Ověřeno `wrangler whoami`: účet **bass443** (`a37a36270aa2db7382f62912ba5a0130`), kde je zóna maxferit.cz, Access i Email Sending.
+
+**Další krok = krok 1 návrhového listu (bez cloudu):** portabilita platformy. `src/platform/schemas.ts` a `policy.ts` čtou disk při importu (`readFileSync`, `projectRoot`), což ve Workeru neexistuje. Kontrakty a policy se budou importovat staticky jako JSON; testy musí zůstat zelené. Pak rozhraní `DispatchTransport` (`in-process` = dnešní `slice.ts`, `http` = klient na farmu), aby týchž 198 testů běželo proti oběma.
+
+**Rozpracované / chybí:**
+1. Krok 1 (portabilita) a krok 2 (gateway + document-host + fakes na `wrangler dev`, harness proti localhost).
+2. Krok 3 nasazení: D1, R2 (jurisdiction eu), KV, secrets, Access aplikace, custom doména `apf.maxferit.cz`.
+3. Krok 4 e-mail: Email Routing rule `apf-intake@maxferit.cz`, Email Sending `apf-notify@maxferit.cz`, skutečná schránka za `ops-mailbox`.
+4. Krok 5 fronta (Workers Paid) a `RES-CRASH-001` přes evikci DO; krok 6 pentest ADR-017 a řádek M4b v MEASUREMENT s cenou.
+5. Stále: čas vlastníka do MEASUREMENT; W4 do normy?; část XVII ve foundation.
+
+**Zbývá rozhodnout (Milan):** (a) Workers Paid kvůli Queues, nebo první verze bez front; (b) adresy `apf.maxferit.cz`, `apf-intake@`, `apf-notify@` a schránka za `ops-mailbox`. Kroky 1–2 na tom nezávisí.
+
 ## 2026-09-06 (4) — M4 hotové: druhý tok mail.ingest → document.* → email.send, W4 rozhodnuto druhým signálem
 
 **Stav:** `npm run typecheck`, `npm test` (10 souborů, 198 testů) a `npm run arch` zelené lokálně. Tři rozhodnutí z minulého zápisu vzal na sebe asistent na pokyn vlastníka („up to you"): W4 řešit v řezu druhým deterministickým signálem a měřit; M4 žije v tomto repu jako druhý deployable; čas vlastníka zůstává nezměřen (nelze vymyslet).

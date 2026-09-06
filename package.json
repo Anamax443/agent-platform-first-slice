@@ -4,20 +4,25 @@
   "private": true,
   "description": "First reference implementation of agent-platform-foundation v1.0-rc2.1: document.classify (AI) -> document.validate (deterministic) -> document.stamp (write executor).",
   "type": "module",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "arch": "node scripts/arch-dep.mjs"
+    "arch": "node scripts/arch-dep.mjs",
+    "farm:check": "node scripts/farm-check.mjs && tsc -p deploy/cloudflare/tsconfig.json"
   },
   "dependencies": {
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260906.1",
     "@types/node": "^24.3.0",
     "typescript": "^5.9.2",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "wrangler": "^4.129.0"
   }
 }

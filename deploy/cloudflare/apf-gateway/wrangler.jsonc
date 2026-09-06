@@ -1,0 +1,43 @@
+{
+  // D1 in docs/NAVRHOVY-LIST-farma.md: gateway + router + orchestrator (Durable Object journal) + the two read-only
+  // document capabilities. Holds the ONLY private signing key of the farm (Secret GATEWAY_SIGNING_KEY, Ed25519 PKCS8 PEM).
+  "$schema": "../../../node_modules/wrangler/config-schema.json",
+  "name": "apf-gateway",
+  "main": "./src/index.ts",
+  "compatibility_date": "2026-08-15",
+  "compatibility_flags": ["nodejs_compat"],
+  // workers.dev cannot sit behind Cloudflare Access (lesson from job-watch); the custom domain is the only way in.
+  "workers_dev": false,
+  "routes": [{ "pattern": "apf.maxferit.cz", "custom_domain": true }],
+  "observability": { "enabled": true },
+
+  "durable_objects": {
+    "bindings": [{ "name": "WORKFLOW", "class_name": "WorkflowInstance" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["WorkflowInstance"] }],
+
+  // Append-only audit trail shared by every host through the gateway's /audit endpoint (F7).
+  // database_id: fill in after `wrangler d1 create apf-audit`.
+  "d1_databases": [{ "binding": "AUDIT", "database_name": "apf-audit", "database_id": "00000000-0000-0000-0000-000000000000" }],
+
+  // Immutable originals and derivations, key = sha256. Create with `wrangler r2 bucket create apf-artifacts --jurisdiction eu`.
+  "r2_buckets": [{ "binding": "ARTIFACTS", "bucket_name": "apf-artifacts", "jurisdiction": "eu" }],
+
+  // First real LlmAdapter behind document.classify (free tier); a Claude key comes later and only here.
+  "ai": { "binding": "AI" },
+
+  // Hosts are separate deployables: the router reaches them through service bindings, never through shared code.
+  "services": [
+    { "binding": "DOCUMENT_HOST", "service": "apf-document-host" },
+    { "binding": "EMAIL_EXECUTOR", "service": "apf-email-executor" },
+    { "binding": "FAKES", "service": "apf-fakes" }
+  ],
+
+  "vars": {
+    "KILL_SWITCH": "false",
+    "SIGNING_KEY_ID": "k1",
+    "CONTRACTS_VERSION": "agent-platform-foundation 1.0-rc2.1 12a3c32",
+    "WORKFLOW_DEADLINE_MS": "1800000"
+  }
+  // Secrets (wrangler secret put, never in this file): GATEWAY_SIGNING_KEY
+}

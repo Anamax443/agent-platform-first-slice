@@ -1,0 +1,24 @@
+{
+  // D4: mail-ingest. Receives real mail through Email Routing (rule: apf-intake@maxferit.cz -> this Worker),
+  // stores the raw message as an immutable original in R2 and starts mail-intake.v1 through the gateway.
+  "$schema": "../../../node_modules/wrangler/config-schema.json",
+  "name": "apf-mail-ingest",
+  "main": "./src/index.ts",
+  "compatibility_date": "2026-08-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "observability": { "enabled": true },
+
+  "r2_buckets": [{ "binding": "ARTIFACTS", "bucket_name": "apf-artifacts", "jurisdiction": "eu" }],
+  "services": [{ "binding": "GATEWAY", "service": "apf-gateway" }],
+
+  "vars": {
+    "HOST_ID": "mail-ingest",
+    "ISOLATION_CLASS": "LOGICAL",
+    "MAX_RAW_BYTES": "1048576",
+    "MAX_MAILS_PER_DAY": "50",
+    "SIGNING_PUBLIC_KEYS": "{}"
+  }
+  // No secrets: the ingest host resolves no credential (its CredentialResolver table is empty by design).
+  // Email Routing rule is created outside this file: `wrangler email routing rules` or the dashboard.
+}

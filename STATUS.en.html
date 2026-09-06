@@ -165,11 +165,13 @@ Orchestrators: shared journal, review service, audit · each runs only its own d
         <li class="ok">W4 second signal in the validator</li>
         <li class="ok">MEASUREMENT with 12 findings and 11 proposals for the norm</li>
         <li class="ok">CI green, README CS/EN, HANDOFF, ARCHITECTURE, BUILD</li>
+        <li class="ok">M4b farm on Cloudflare: design sheet and skeleton of five deployables (<code>deploy/cloudflare/</code>, <code>npm run farm:check</code> green), nothing deployed</li>
       </ul>
     </div>
     <div class="card todo-card">
       <strong>⏳ Remaining</strong>
       <ul>
+        <li class="todo"><b>M4b farm</b>: platform portability (no disk reads at import, <code>DispatchTransport</code>), <code>wrangler dev</code> locally, deployment on bass443 behind Access, email, queue, ADR-017 pentest</li>
         <li class="todo"><b>Owner time</b> in MEASUREMENT (M1–M4)</li>
         <li class="todo">M5: refresh <code>EVIDENCE-MATRIX</code> in foundation, Core Admission <code>EXISTS × 2</code> (candidates: result envelope, error object, ClockFixture, CredentialResolverFixture, conformance runner)</li>
         <li class="todo">M6: first shared contract package (schemas + conformance + fixtures)</li>
@@ -185,7 +187,7 @@ Orchestrators: shared journal, review service, audit · each runs only its own d
     <strong>❓ Decisions waiting for the owner</strong>
     <ul>
       <li class="ask">Does the second signal (W4) go into the norm as a CONDITIONAL rule, or stay an implementation choice of the slice?</li>
-      <li class="ask">Order: M5/M6 now, or the isolation pentest per ADR-017 first?</li>
+      <li class="ask">Farm: Workers Paid for queues, or a first version without them? Addresses <code>apf-intake@</code>, <code>apf-notify@maxferit.cz</code> and the real mailbox behind <code>ops-mailbox</code>.</li>
     </ul>
   </div>
 
