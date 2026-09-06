@@ -24,13 +24,13 @@ npm test
 |---|---|
 | `npm run typecheck` | `tsc --noEmit` nad `src`, `tests` |
 | `npm run arch` | `ARCH-DEP-001`: komponenta smí importovat jen `platform/api`, vlastní adresář a adaptéry (nic z `node:*`); platforma nečte systémové hodiny; **lint instalačních hodnot**: žádný tenant, actor id, adresa kanálu ani host z `config/*/` a žádný e-mail či veřejný hostname jako literál v `src/**`, `deploy/cloudflare/*/src/**` a base `wrangler.jsonc` (tam ani `routes`) |
-| `npm run farm:check` | `wrangler deploy --dry-run` nad pěti base configy a nad configy vygenerovanými per instalace, pak `tsc` nad `deploy/cloudflare` |
-| `node scripts/farm-config.mjs [instalace]` | sloučí `deploy/cloudflare/<deployable>/wrangler.jsonc` (kód) s `config/<instalace>/farm.json` (routes, vars) do `.wrangler/generated/<instalace>/<deployable>/wrangler.jsonc` (git-ignored); z něj se nasazuje |
+| `npm run farm:check` | `scripts/farm-config.mjs` pro každou instalaci s profilem, pak `wrangler deploy --dry-run` nad každým vygenerovaným configem (instalace × deployables) a `tsc` nad `deploy/cloudflare` včetně generovaných modulů instalace. Base config sám build neprojde: kód + instalace = deployable. Dry-run neodhalí chyby za běhu (W13), proto brána kroku 2 zahrnuje i `wrangler dev` + `/version` |
+| `node scripts/farm-config.mjs [instalace]` | pro každou instalaci vygeneruje `.wrangler/generated/<instalace>/installation.ts` (statické importy `profile.json` + `policy/*.json`, `assembleInstallation` při importu) a `<deployable>/wrangler.jsonc` = base `deploy/cloudflare/<deployable>/wrangler.jsonc` + alias `apf:installation` na ten modul + `vars.INSTALLATION` + overlay `config/<instalace>/farm.json` (nepovinný: routes, vars); `main` přepočítaný. Git-ignored; z něj se nasazuje i spouští `wrangler dev` |
 | `npm run test:watch` | Vitest ve watch režimu |
 
 ## Aktualizace kontraktů
 
-Schémata v `contracts/` jsou kopie z foundation a jsou pinované v `contracts/CONTRACTS-VERSION.json` (`src/platform/schemas.ts` je importuje staticky, stejně jako komponenty své descriptory a schémata; nic se nečte z disku při importu, aby totéž běželo pod Node i ve Workeru). Aktualizace = nová kopie + nový pin + běh `npm test`. Nikdy se needitují tady.
+Schémata v `contracts/` jsou kopie z foundation a jsou pinované v `contracts/CONTRACTS-VERSION.json` (`src/platform/schemas.ts` je importuje staticky, stejně jako komponenty své descriptory a schémata; nic se nečte z disku při importu, aby totéž běželo pod Node i ve Workeru). Aktualizace = nová kopie + nový pin + běh `npm test`. Nikdy se needitují tady. Validátor je `@cfworker/json-schema` (interpret, draft 2020-12), ne Ajv: Ajv staví validátory přes `new Function`, což Workers zakazují; `wrangler deploy --dry-run` to neodhalí (bundle projde), spadlo by až při startu Workeru (W13).
 
 ## Instalační profil
 
@@ -42,7 +42,7 @@ Vše vázané na zákazníka nebo prostředí je mimo kód, v `config/<instalace
 | `policy/*.policy.json` | platform policy per capability (ADR-016): granty per tenant, allowlist příjemců pro `email.send`, `failClosed: true` |
 | `farm.json` | jen u instalací na Cloudflare: overlay per deployable (routes, vars) pro `scripts/farm-config.mjs` |
 
-`src/installation.ts` profil sestaví fail-closed (schéma, každá policy přítomna, každý grant na známou identitu se scope, který drží, a na známý tenant) a `credentialTable()` ověří, že kód handleru chce jen reference, které mu profil přiznává, a že každá má hodnotu ze zdroje secrets (env, wrangler secret, testovací mapa). `createSlice(installation, secrets, volby)` pak nezná žádný literál. Instalace v repu: `local-fakes` (testy, `tests/harness/installation.ts`) a `farm-bass443` (farma, adresy jsou návrh). **Nová instalace = nový adresář + secrets, nula změn v `src/`**; hlídá to `npm run arch`.
+`src/installation.ts` profil sestaví fail-closed (schéma, každá policy přítomna, každý grant na známou identitu se scope, který drží, a na známý tenant) a `credentialTable()` ověří, že kód handleru chce jen reference, které mu profil přiznává, a že každá má hodnotu ze zdroje secrets (env, wrangler secret, testovací mapa). `createSlice(installation, secrets, volby)` pak nezná žádný literál. Instalace v repu: `local-fakes` (testy, `tests/harness/installation.ts`) a `farm-bass443` (farma, adresy jsou návrh). **Nová instalace = nový adresář + secrets, nula změn v `src/`**; hlídá to `npm run arch`. Worker instalaci za běhu nenačítá ani nejmenuje: importuje modul `apf:installation`, který `scripts/farm-config.mjs` vygeneruje z profilu a policy a alias ve vygenerovaném wrangler configu ho naváže při buildu (typ `deploy/cloudflare/types/apf-installation.d.ts`); `assembleInstallation` běží při importu, takže s vadným profilem Worker vůbec nenastartuje, a `env.INSTALLATION` musí souhlasit s bundlem (jinak `INSTALLATION_MISMATCH`).
 
 ## CI
 

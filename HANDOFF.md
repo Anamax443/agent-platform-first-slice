@@ -2,6 +2,26 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-06 (11) — M4b krok 2, celek 1: instalace navázaná do Workeru, validátor bez generování kódu, rozhodnutí o adresách a plánu
+
+**Stav:** `npm run typecheck`, `npm test` (11 souborů, **208 testů**), `npm run arch` (20 instalačních hodnot, 0 nálezů), `npm run farm:check` (**10 configů** = 2 instalace × 5 deployables, včetně `tsc` nad deploy s generovanými moduly) zelené. **Ověřeno na `wrangler dev`** (což dry-run neumí, viz W13): gateway z `.wrangler/generated/{local-fakes,farm-bass443}/apf-gateway/wrangler.jsonc` odpovídá na `/version` `{"installation":"…","tenants":2,"identities":3,"policies":6,…}`; `/health` ok; `/dispatch` dál 501.
+
+**Rozhodnutí (asistent na „up to you" vlastníka, 6. 9. 2026):** adresy `apf.maxferit.cz`, `apf-intake@`, `apf-notify@maxferit.cz`; schránky v allowlistu = aliasy Email Routing `apf-ops@`, `apf-supervisor@` (tenant-42), `apf-ops-t7@maxferit.cz` (tenant-7), cíl přeposílání jen v účtu (repo skutečnou schránku nezná); plán **Workers Free** do kroku 5. Zapsáno v `config/farm-bass443/` (profil, policy, farm.json), v návrhovém listu (otevřené otázky) a ve STATUS. Čas vlastníka zůstává nezměřen (nejde rozhodnout za něj).
+
+**Hotové v tomto celku:**
+- `src/platform/schemas.ts`: Ajv nahrazen `@cfworker/json-schema` (interpret draft 2020-12; jediný `format` v kontraktech je `date-time`; jeden `Validator` per kontrakt s ostatními schématy přidanými kvůli `$ref`). Důvod: Ajv staví validátory přes `new Function`, workerd to zakazuje, dry-run bundle přesto projde (W13). `ajv`, `ajv-formats` odinstalovány.
+- `src/platform/bytes.ts` (utf8, hex, base64url nad `Uint8Array`); `ids.ts` přes `crypto.getRandomValues`, `signing.ts` a `artifacts.ts` bez `Buffer`. Důvod: workers-types deklaruje globální `Buffer: any`, vedle @types/node to rozbíjí typy (W14).
+- `scripts/farm-config.mjs`: pro každou `config/<inst>/` s profilem generuje `.wrangler/generated/<inst>/installation.ts` (statické importy profilu + policy, `assembleInstallation` při importu) a configy všech deployables s aliasem `apf:installation`, `vars.INSTALLATION` a nepovinným overlay `farm.json`. `farm-check` dry-runuje jen generované (base config sám build neprojde: kód + instalace = deployable). `farm.json` zjednodušen (INSTALLATION doplňuje generátor).
+- `deploy/cloudflare/types/apf-installation.d.ts`; deploy tsconfig `types: [workers-types, node]` + include generovaných modulů; `apf-gateway` importuje `apf:installation`, při neshodě s `env.INSTALLATION` odpovídá 500 `INSTALLATION_MISMATCH`, `/version` hlásí instalaci.
+- `tests/inst.test.ts` INST-004: každá `config/*/` se sestaví Node loaderem (farm profil je build input, ne fixture).
+- Docs: BUILD (validátor, farm-config/farm-check, `apf:installation`), ARCHITECTURE, README CZ/EN (validátor), deploy README (dvouvrstvé configy, příkazy s generovaným configem, sekce Rozhodnuto), návrhový list (otázky rozhodnuty), MEASUREMENT (řádek celku, W13, W14, 208/INST-004), STATUS CZ/EN.
+
+**Další celek (krok 2, celek 2): journal a audit s vyměnitelnou implementací.** Rozhraní `Journal`/`Audit` zůstávají v platformě; `DoSqliteJournal` (DO `WorkflowInstance`, SQLite storage) a `D1Audit` v `apf-gateway/src/`, ověřené miniflare (`wrangler dev` + D1/DO lokálně). Pak celek 3: `/dispatch` (identita z hlavičky Access service tokenu, lokálně dev hlavička; podpis klíčem z `.dev.vars`). **Pozor pro celek 3:** `signing.ts` používá `node:crypto` `sign`/`verify`/`generateKeyPairSync` s `KeyObject` (Ed25519); ve workerd přes `nodejs_compat` ověřit hned první věcí, jinak WebCrypto `crypto.subtle` (async → `Gateway.dispatch` async, dotkne se harnessu a testů `slice.gateway.dispatch(...)`). `credentials.ts` má `AsyncLocalStorage` (nodejs_compat ji podporuje). `journal.ts`/`audit.ts` s `node:fs` ve Workeru nahradí implementace z celku 2.
+
+**Postup pro lokální ověření:** `node scripts/farm-config.mjs` → `npx wrangler dev -c .wrangler/generated/local-fakes/apf-gateway/wrangler.jsonc --port 8787` → `curl http://127.0.0.1:8787/version`.
+
+**Zbývá rozhodnout (Milan):** čas vlastníka za M1–M4b; zda aliasy `apf-ops@`/`apf-supervisor@`/`apf-ops-t7@` míří do jedné schránky (nastavení v účtu, krok 4).
+
 ## 2026-09-06 (10) — M4b krok 1 HOTOVÝ (celek B): lint instalačních hodnot, generované wrangler configy, docs; 207 testů, pushnuto
 
 **Stav:** `npm run typecheck`, `npm test` (11 souborů, **207 testů**), `npm run arch` (0 nálezů, 17 instalačních hodnot z obou profilů), `npm run farm:check` (**10 configů**: 5 base + 5 vygenerovaných pro `farm-bass443`) zelené lokálně. Krok 1 návrhového listu farmy je uzavřený; po pushi ověřit CI (nově běží i lint nad `deploy/` a dry-run nad generovanými configy).

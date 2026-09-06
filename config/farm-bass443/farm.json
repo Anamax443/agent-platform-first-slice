@@ -1,13 +1,10 @@
 {
-  "$comment": "Per-deployable overlay merged onto deploy/cloudflare/<deployable>/wrangler.jsonc by scripts/farm-config.mjs. Everything here is installation-specific (routes, addresses); the base configs stay free of it.",
+  "$comment": "Per-deployable overlay merged onto deploy/cloudflare/<deployable>/wrangler.jsonc by scripts/farm-config.mjs. Everything here is installation-specific (routes, addresses); the base configs stay free of it. The generator itself adds vars.INSTALLATION and the apf:installation alias, so only what differs from the base belongs here.",
   "apf-gateway": {
-    "routes": [{ "pattern": "apf.maxferit.cz", "custom_domain": true }],
-    "vars": { "INSTALLATION": "farm-bass443" }
+    "routes": [{ "pattern": "apf.maxferit.cz", "custom_domain": true }]
   },
-  "apf-document-host": { "vars": { "INSTALLATION": "farm-bass443" } },
   "apf-email-executor": {
-    "vars": { "INSTALLATION": "farm-bass443", "EMAIL_FROM": "apf-notify@maxferit.cz", "EMAIL_FROM_NAME": "agent-platform-farm" }
+    "vars": { "EMAIL_FROM": "apf-notify@maxferit.cz", "EMAIL_FROM_NAME": "agent-platform-farm" }
   },
-  "apf-mail-ingest": { "vars": { "INSTALLATION": "farm-bass443", "INTAKE_ADDRESS": "apf-intake@maxferit.cz" } },
-  "apf-fakes": { "vars": { "INSTALLATION": "farm-bass443" } }
+  "apf-mail-ingest": { "vars": { "INTAKE_ADDRESS": "apf-intake@maxferit.cz" } }
 }

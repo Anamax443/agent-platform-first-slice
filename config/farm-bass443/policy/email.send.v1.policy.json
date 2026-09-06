@@ -1,5 +1,5 @@
 {
-  "$comment": "Platform policy (ADR-016): authority artefact. Grants scopes per tenant AND the recipient allowlist: the executor resolves recipientRef through this table, so no payload can name an address. The AI identity is deliberately absent (F1). Times UTC with Z.",
+  "$comment": "Platform policy (ADR-016): authority artefact. Grants scopes per tenant AND the recipient allowlist: the executor resolves recipientRef through this table, so no payload can name an address. The AI identity is deliberately absent (F1). Times UTC with Z. Recipients are Email Routing aliases on the installation zone (decided 2026-09-06, assistant on the owner's 'up to you'); where each alias forwards is set in the Cloudflare account, never in this repo.",
   "policyRef": "policy/email.send/v1",
   "capability": "email.send",
   "capabilityVersion": "1",
@@ -11,8 +11,8 @@
   ],
   "approval": { "required": false },
   "recipientAllowlist": {
-    "tenant-42": { "ops-mailbox": "ops@maxferit.example", "supervisor-mailbox": "supervisor@maxferit.example" },
-    "tenant-7": { "ops-mailbox": "ops@tenant7.example" }
+    "tenant-42": { "ops-mailbox": "apf-ops@maxferit.cz", "supervisor-mailbox": "apf-supervisor@maxferit.cz" },
+    "tenant-7": { "ops-mailbox": "apf-ops-t7@maxferit.cz" }
   },
   "isolation": { "acceptedIsolationClass": "PRINCIPAL", "isolationDecisionRef": "riskClass MEDIUM; own execution context email-executor with its own credential domain (cred:smtp only); in this slice simulated as a separate host + resolver in one process, real boundary = separate deployable (PLATFORM-NOTES §7)" },
   "failClosed": true

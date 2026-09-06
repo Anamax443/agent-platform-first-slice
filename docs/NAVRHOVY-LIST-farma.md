@@ -252,8 +252,10 @@ Co dnes pravidlo porušuje (audit 6. 9. 2026) a přesune se v kroku 1: konstanty
 
 ---
 
-## Otevřené otázky pro vlastníka (blokují krok 3, ne krok 1–2)
+## Otevřené otázky pro vlastníka (blokovaly krok 3, ne krok 1–2)
 
-1. Účet: bass443 (zóna maxferit.cz je tam). Potvrdit.
-2. Workers Paid kvůli Queues: ano / první verze bez front.
-3. Adresy: `apf.maxferit.cz` (API za Access), `apf-intake@maxferit.cz` (příjem), `apf-notify@maxferit.cz` (odesílání) a skutečná schránka za `ops-mailbox` v allowlistu.
+Rozhodnuto 6. 9. 2026 asistentem na pokyn vlastníka („up to you"), zapsáno v `config/farm-bass443/`:
+
+1. Účet: **bass443** (zóna maxferit.cz je tam; `wrangler whoami` ověřeno).
+2. Plán: **Workers Free** až do kroku 5; Durable Objects a Email Sending na Free jsou, Queues až podle skutečného počtu požadavků z kroku 4.
+3. Adresy: `apf.maxferit.cz` (API za Access), `apf-intake@maxferit.cz` (příjem), `apf-notify@maxferit.cz` (odesílání, jméno „agent-platform-farm"). Schránky v allowlistu jsou **aliasy Email Routing** na téže zóně: `apf-ops@`, `apf-supervisor@` (tenant-42) a `apf-ops-t7@maxferit.cz` (tenant-7); kam se přeposílají, nastaví vlastník jednou v účtu, repo skutečnou schránku nikdy nevidí. Otevřené jen: zda všechny tři míří do jedné schránky (nastaví se v kroku 4).

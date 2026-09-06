@@ -1,10 +1,14 @@
 // INST family: the installation profile and workflow definitions are loaded fail-closed; a wrong or missing
 // piece stops the wiring before any router or orchestrator exists (installation-profile rule, M4b step 1).
+import { readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { loadInstallationFromDir } from "../src/installation-node.js";
 import { assembleInstallation, credentialTable } from "../src/installation.js";
 import type { Policy } from "../src/platform/policy.js";
 import { parseWorkflowDef } from "../src/platform/workflow.js";
 import { createSlice, FAKE_SECRETS, LOCAL_FAKES, ORCHESTRATOR, TENANT_A, workflowDef } from "./harness/index.js";
+import { projectRoot } from "./harness/paths.js";
 
 const clone = <T>(x: T): T => structuredClone(x);
 const profile = () => clone(LOCAL_FAKES.profile);
@@ -86,5 +90,20 @@ describe("INST-003 workflow definitions are parsed fail-closed", () => {
     const forward = clone(def);
     (forward.steps[0] as { inputs: Record<string, unknown> }).inputs.later = "$steps.notify.payload.x";
     expect(() => parseWorkflowDef(forward)).toThrow(/refers to \$steps.notify, which is not an earlier step/);
+  });
+});
+
+describe("INST-004 every installation in the repo assembles", () => {
+  it("config/*/ each load fail-closed through the Node loader: the farm profile is a build input, not only a test fixture", () => {
+    const configDir = join(projectRoot, "config");
+    const names = readdirSync(configDir).filter((d) => statSync(join(configDir, d)).isDirectory());
+    expect(names).toContain(LOCAL_FAKES.profile.installation);
+    expect(names.length).toBeGreaterThanOrEqual(2);
+    for (const name of names) {
+      const inst = loadInstallationFromDir(join(configDir, name));
+      expect(inst.profile.installation).toBe(name);
+      expect(Object.keys(inst.policies).sort()).toEqual([...inst.profile.policyRefs].sort());
+      expect(inst.profile.identities.map((i) => i.actorId)).toContain(inst.profile.roles.orchestrator);
+    }
   });
 });

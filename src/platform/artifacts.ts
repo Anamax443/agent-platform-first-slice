@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { utf8ByteLength } from "./bytes.js";
 import type { Clock } from "./clock.js";
 import { iso } from "./clock.js";
 import { newId } from "./ids.js";
@@ -90,13 +91,13 @@ export class ArtifactStore implements ArtifactWriter {
 
   private ensureCapacity(bytes: string): void {
     const cap = this.opts.capacityBytes;
-    if (cap !== undefined && this.usedBytes + Buffer.byteLength(bytes, "utf8") > cap) throw new StorageFull(cap);
+    if (cap !== undefined && this.usedBytes + utf8ByteLength(bytes) > cap) throw new StorageFull(cap);
   }
 
   /** The only write path; a second write to an existing id is a programming error, not an update. */
   private store(a: Artifact): void {
     if (this.items.has(a.artifactId)) throw new Error(`artifact ${a.artifactId} already exists: artifacts are immutable`);
     this.items.set(a.artifactId, Object.freeze({ ...a }));
-    this.usedBytes += Buffer.byteLength(a.bytes, "utf8");
+    this.usedBytes += utf8ByteLength(a.bytes);
   }
 }

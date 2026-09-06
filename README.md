@@ -16,7 +16,7 @@ Nothing here is a shared runtime. Everything under `src/platform` is local to th
 
 ## Stack
 
-TypeScript, Node 20+, Vitest, Ajv. No framework, no cloud, no API key. Adapters (LLM, registry, DMS, archive, SMTP) have fakes so every test family runs deterministically and offline.
+TypeScript, Node 20+, Vitest, `@cfworker/json-schema` (an interpreting validator: the same platform code runs in a Worker, which forbids code generation). No framework, no cloud, no API key. Adapters (LLM, registry, DMS, archive, SMTP) have fakes so every test family runs deterministically and offline.
 
 ## Run
 

@@ -15,8 +15,7 @@
     "farm:check": "node scripts/farm-check.mjs && tsc -p deploy/cloudflare/tsconfig.json"
   },
   "dependencies": {
-    "ajv": "^8.17.1",
-    "ajv-formats": "^3.0.1"
+    "@cfworker/json-schema": "^4.1.1"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260906.1",

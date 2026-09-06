@@ -69,7 +69,7 @@
   </table>
 
   <div class="kpis">
-    <div class="kpi"><b>207</b><span>testů v 11 souborech</span></div>
+    <div class="kpi"><b>208</b><span>testů v 11 souborech</span></div>
     <div class="kpi"><b>46</b><span>Test ID z verifikačního kontraktu</span></div>
     <div class="kpi"><b>5</b><span>capability ve 2 tocích</span></div>
     <div class="kpi"><b>≈ 1 h 50 min</b><span>AI wall-clock M1–M4 · čas vlastníka nezměřen</span></div>
@@ -170,12 +170,13 @@ Orchestrátory: společný journal, review service, audit · každý jen svou de
         <li class="ok">CI zelené, README CZ/EN, HANDOFF, ARCHITECTURE, BUILD</li>
         <li class="ok">M4b farma na Cloudflare: návrhový list a skeleton pěti deployables (<code>deploy/cloudflare/</code>, <code>npm run farm:check</code> zelený), nic nenasazeno</li>
         <li class="ok">M4b krok 1: platforma bez čtení disku (kontrakty, schémata, workflow definice importované staticky), <code>DispatchTransport</code> (in-process + HTTP klient), <b>instalační profil</b> <code>config/&lt;instalace&gt;/</code> se schématem a fail-closed sestavením, žádná instalační hodnota v kódu (lint v <code>npm run arch</code>), wrangler configy generované per instalace (<code>farm:check</code> nad 10 configy)</li>
+        <li class="ok">M4b krok 2, celek 1: instalace navázaná do Workeru při buildu (<code>apf:installation</code>), validátor bez generování kódu (Ajv → interpret), platforma bez <code>Buffer</code>; gateway na <code>wrangler dev</code> hlásí instalaci pro <code>local-fakes</code> i <code>farm-bass443</code></li>
       </ul>
     </div>
     <div class="card todo-card">
       <strong>⏳ Zbývá · v pořadí priority</strong>
       <ul>
-        <li class="todo"><b>1 · M4b farma, krok 2:</b> gateway + document-host + fakes na <code>wrangler dev</code> lokálně, harness proti localhost přes <code>HttpDispatchTransport</code> (týchž 207 testů nad druhým runtime). Krok 1 hotový. Nezávisí na ničem.</li>
+        <li class="todo"><b>1 · M4b farma, krok 2:</b> gateway + document-host + fakes na <code>wrangler dev</code> lokálně, harness proti localhost přes <code>HttpDispatchTransport</code> (týchž 208 testů nad druhým runtime). Hotový celek 1 (instalace ve Workeru, validátor, <code>/version</code>); zbývá journal v DO + audit v D1, <code>/dispatch</code> s podpisem (ověřit <code>node:crypto</code> Ed25519 ve workerd, jinak WebCrypto), document-host, fakes, harness. Nezávisí na ničem.</li>
         <li class="todo"><b>2 · M4b farma, krok 3–5:</b> nasazení na bass443 za Access, e-mail (Routing + Sending), fronta, pád DO. Čeká na adresy od vlastníka.</li>
         <li class="todo"><b>3 · Pentest ADR-017</b> nad skutečnými deployables: tři otázky s očekávaným NE (SMTP z document hostu, DMS z email executoru, podpis obálky mimo gateway) plus eskalace práv nepřímými cestami. Jediný MAJOR z posudků.</li>
         <li class="todo"><b>4 · Reálný model</b> za <code>document.classify</code> s golden setem (10 faktur + 3 injection, <code>criticalFields: [documentType]</code>) a <code>AI-EVAL-REG-001</code>, <code>AI-EVAL-ADV-001</code>. Podmínka v1.0.</li>
@@ -193,7 +194,8 @@ Orchestrátory: společný journal, review service, audit · každý jen svou de
     <strong>❓ Rozhodnutí čekající na vlastníka</strong>
     <ul>
       <li class="ask">Čas vlastníka za M1–M4 (architektura / review / ladění / provoz), bez něj se limit 40 h nedá vyhodnotit.</li>
-      <li class="ask">Farma: adresy <code>apf.maxferit.cz</code>, <code>apf-intake@</code>, <code>apf-notify@maxferit.cz</code> a skutečná schránka za <code>ops-mailbox</code>. Plán Cloudflare: začít na Free, fronty jsou dostupné.</li>
+      <li class="ok">Farma rozhodnuto 6. 9. 2026 („up to you"): <code>apf.maxferit.cz</code>, <code>apf-intake@</code>, <code>apf-notify@maxferit.cz</code>; schránky v allowlistu jsou aliasy Email Routing (<code>apf-ops@</code>, <code>apf-supervisor@</code>, <code>apf-ops-t7@</code>), cíl přeposílání jen v účtu; plán Workers Free do kroku 5.</li>
+      <li class="ask">Aliasy: míří všechny tři do jedné schránky? Nastaví se v účtu v kroku 4, repo to neřeší.</li>
       <li class="ok">W4 rozhodnuto (posudek 1): CONDITIONAL pravidlo, ne univerzální invariant.</li>
     </ul>
   </div>

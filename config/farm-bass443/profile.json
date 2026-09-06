@@ -1,6 +1,6 @@
 {
   "installation": "farm-bass443",
-  "description": "DRAFT. Farm on the Cloudflare account bass443 (zone maxferit.cz). Addresses are the proposal from docs/NAVRHOVY-LIST-farma.md and wait for the owner's confirmation; recipient mailboxes in policy/email.send are still placeholders.",
+  "description": "Farm on the Cloudflare account bass443 (zone maxferit.cz). Addresses decided 2026-09-06 (assistant on the owner's 'up to you'): gateway apiHost behind Access, intake and notify addresses on the zone, recipients in policy/email.send are Email Routing aliases whose forwarding targets live only in the account. Plan: Workers Free until step 5 (queues) shows a need.",
   "tenants": ["tenant-42", "tenant-7"],
   "identities": [
     { "actorId": "svc-orchestrator", "actorType": "service", "tenantId": "tenant-42", "scopes": ["document.classify", "document.validate", "document.stamp", "document.archive", "mail.ingest", "email.send"], "authStrength": "client-credentials" },

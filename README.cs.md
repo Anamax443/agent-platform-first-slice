@@ -16,7 +16,7 @@ Nic z toho není sdílený runtime. Vše v `src/platform` je lokální pro tento
 
 ## Stack
 
-TypeScript, Node 20+, Vitest, Ajv. Bez frameworku, bez cloudu, bez API klíče. Adaptéry (LLM, registr, DMS, archiv, SMTP) mají fakes, takže každá testovací rodina běží deterministicky a offline.
+TypeScript, Node 20+, Vitest, `@cfworker/json-schema` (interpretační validátor: tentýž platformový kód běží i ve Workeru, který zakazuje generování kódu). Bez frameworku, bez cloudu, bez API klíče. Adaptéry (LLM, registr, DMS, archiv, SMTP) mají fakes, takže každá testovací rodina běží deterministicky a offline.
 
 ## Spuštění
 

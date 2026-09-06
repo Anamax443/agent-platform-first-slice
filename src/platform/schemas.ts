@@ -1,7 +1,6 @@
-// Contract schemas are bundled, never read from disk: the same module runs under Node (tests) and in a Worker (farm).
-import Ajv2020Exports from "ajv/dist/2020.js";
-import addFormatsExports from "ajv-formats";
-import type { ValidateFunction } from "ajv";
+// Contract schemas are bundled, never read from disk, and validated by an interpreter (no code generation): the same
+// module runs under Node (tests) and in a Worker, where `new Function` is forbidden, which rules out Ajv-style compilers.
+import { Validator, type Schema } from "@cfworker/json-schema";
 import contractsPin from "../../contracts/CONTRACTS-VERSION.json" with { type: "json" };
 import dispatchEnvelope from "../../contracts/dispatch-envelope.v1.schema.json" with { type: "json" };
 import messageEnvelope from "../../contracts/message-envelope.v1.schema.json" with { type: "json" };
@@ -9,13 +8,8 @@ import moduleDescriptor from "../../contracts/module-descriptor.v1.schema.json" 
 import resultEnvelope from "../../contracts/result-envelope.v1.schema.json" with { type: "json" };
 import trustedContext from "../../contracts/trusted-context.v1.schema.json" with { type: "json" };
 
-// ajv is CommonJS: under NodeNext the default import is the exports object, the class sits on `.default`.
-const Ajv2020 = Ajv2020Exports.default;
-const addFormats = addFormatsExports.default;
-
-const ajv = new Ajv2020({ strict: true, strictRequired: false, allErrors: true });
-addFormats(ajv);
-for (const schema of [messageEnvelope, trustedContext, dispatchEnvelope, resultEnvelope, moduleDescriptor]) ajv.addSchema(schema);
+const DRAFT = "2020-12";
+const CONTRACT_SCHEMAS = [messageEnvelope, trustedContext, dispatchEnvelope, resultEnvelope, moduleDescriptor] as unknown as Schema[];
 
 /** Pin of the frozen foundation contracts copied into contracts/ (source, version, commit). */
 export const CONTRACTS_PIN = contractsPin;
@@ -32,14 +26,29 @@ const schemaId = (n: SchemaName) => `https://contracts.agent-platform-foundation
 
 export type Validation = { ok: true } | { ok: false; errors: string };
 
+/** One validator per root schema; the other contract schemas are registered so that `$ref` between contracts resolves. */
+function validatorFor(root: Schema): Validator {
+  const v = new Validator(root, DRAFT, false);
+  for (const s of CONTRACT_SCHEMAS) if (s !== root) v.addSchema(s);
+  return v;
+}
+
+const contractValidators = new Map<string, Validator>(CONTRACT_SCHEMAS.map((s) => [s.$id as string, validatorFor(s)]));
+
+function run(v: Validator, data: unknown): Validation {
+  const r = v.validate(data);
+  if (r.valid) return { ok: true };
+  return { ok: false, errors: r.errors.map((e) => `${e.instanceLocation} ${e.error}`).join("; ") };
+}
+
 export function validateContract(name: SchemaName, data: unknown): Validation {
-  const v = ajv.getSchema(schemaId(name));
+  const v = contractValidators.get(schemaId(name));
   if (!v) throw new Error(`schema not loaded: ${name}`);
-  return v(data) ? { ok: true } : { ok: false, errors: ajv.errorsText(v.errors) };
+  return run(v, data);
 }
 
 /** Compile a capability-local schema (input/output). Kept separate from the contract schemas. */
 export function compileSchema(schema: object): (data: unknown) => Validation {
-  const v: ValidateFunction = ajv.compile(schema);
-  return (data) => (v(data) ? { ok: true } : { ok: false, errors: ajv.errorsText(v.errors) });
+  const v = new Validator(schema as Schema, DRAFT, false);
+  return (data) => run(v, data);
 }

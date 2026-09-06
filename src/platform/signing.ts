@@ -1,4 +1,5 @@
 import { generateKeyPairSync, sign, verify, type KeyObject } from "node:crypto";
+import { fromBase64Url, toBase64Url, utf8Bytes } from "./bytes.js";
 import { canonicalize } from "./canonical.js";
 import type { Binding, DispatchEnvelope, MessageEnvelope, TrustedContext } from "./types.js";
 
@@ -64,8 +65,8 @@ export class Signer {
   ) {}
 
   sign(message: MessageEnvelope, context: TrustedContext, signedAt: string): Binding {
-    const data = Buffer.from(canonicalize({ message, context }), "utf8");
-    const signature = sign(null, data, this.privateKey).toString("base64url");
+    const data = utf8Bytes(canonicalize({ message, context }));
+    const signature = toBase64Url(sign(null, data, this.privateKey));
     return { mechanism: "signed-envelope", algorithm: "Ed25519", keyId: this.keyId, signature, signedAt, canonicalization: "JCS" };
   }
 }
@@ -89,7 +90,7 @@ export function verifyBinding(env: DispatchEnvelope, registry: KeyRegistry, now:
     const graceEnd = new Date(Date.parse(record.validUntil) + registry.graceMs).toISOString();
     if (now > graceEnd) return { ok: false, reason: `key ${b.keyId} retired at ${record.validUntil}, grace period ended ${graceEnd}` };
   }
-  const data = Buffer.from(canonicalize({ message: env.message, context: env.context }), "utf8");
-  const ok = verify(null, data, key, Buffer.from(b.signature, "base64url"));
+  const data = utf8Bytes(canonicalize({ message: env.message, context: env.context }));
+  const ok = verify(null, data, key, fromBase64Url(b.signature));
   return ok ? { ok: true } : { ok: false, reason: "signature does not match message+context" };
 }

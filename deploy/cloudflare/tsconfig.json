@@ -8,7 +8,9 @@
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "types": ["@cloudflare/workers-types"]
+    // Workers run with nodejs_compat; src/platform uses node:crypto and friends, so both type sets are needed.
+    "types": ["@cloudflare/workers-types", "node"]
   },
-  "include": ["./*/src/**/*.ts"]
+  // types/: the build-time bound "apf:installation" module. .wrangler/generated: modules written by scripts/farm-config.mjs.
+  "include": ["./*/src/**/*.ts", "./types/*.d.ts", "../../.wrangler/generated/*/installation.ts"]
 }
