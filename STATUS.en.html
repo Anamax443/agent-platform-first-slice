@@ -61,7 +61,8 @@
     <tr><th>Repo</th><td><a href="https://github.com/Anamax443/agent-platform-first-slice"><code>Anamax443/agent-platform-first-slice</code></a> · public · created 5 Sep 2026 · norm: <a href="https://github.com/Anamax443/agent-platform-foundation"><code>agent-platform-foundation</code></a> (frozen at 1.0-rc2.1, contracts copied here and pinned)</td></tr>
     <tr><th>State</th><td><span class="pill live">M1–M4 done</span> <span class="pill prep">no cloud, no real model</span>
       <b>Two states on purpose.</b> <i>Done</i> — both flows run end to end, the norm's MUST set is green on three write executors, CI is green.
-      <i>No cloud</i> — everything runs locally with fakes (LLM, registry, DMS, archive, SMTP), no API key, PRINCIPAL isolation is simulated inside one process. Deployment to Workers is the next step.</td></tr>
+      <i>No cloud</i> — everything runs locally with fakes (LLM, registry, DMS, archive, SMTP), no API key. PRINCIPAL isolation is <b>design proven, not physically proven</b>: simulated inside one process, the proof comes with an own deployable on the farm (M4b).</td></tr>
+    <tr><th>Review</th><td>Review 1 of the implementation (6 Sep 2026): <b>9.1 / 10</b>. The norm was not refuted, tests found construction bugs, brick reuse is documented. Accepted: W4 as CONDITIONAL, order M4b → pentest → real model → third domain → M5, M6 limited to contracts and fixtures. Protocol: <code>docs/POSUDKY.md</code>.</td></tr>
     <tr><th>Checks</th><td>CI on every push (Node 24): typecheck, Vitest, <code>ARCH-DEP-001</code> + clock lint, <code>farm:check</code>, secret scan (gitleaks), link check (lychee). Last run <span class="pill live">green</span>.</td></tr>
     <tr><th>Flowchart</th><td><a href="VYVOJOVY-DIAGRAM.en.html">VYVOJOVY-DIAGRAM.en.html</a>: the path of one command through the security chain (gateway → router → executor host → result) and the run of a flow from e-mail to notification with every ending that may happen.</td></tr>
   </table>
@@ -175,12 +176,13 @@ Orchestrators: shared journal, review service, audit · each runs only its own d
         <li class="todo"><b>M4b farm</b>: platform portability (no disk reads at import, <code>DispatchTransport</code>), <code>wrangler dev</code> locally, deployment on bass443 behind Access, email, queue, ADR-017 pentest</li>
         <li class="todo"><b>Installation profile</b> (owner rule): identities, tenants, policy, domains and channel addresses move from <code>src/</code> and <code>contracts/policy/</code> to <code>config/&lt;installation&gt;/</code>, secrets by name only, lint for installation values in code; a new installation = a new profile, zero code changes</li>
         <li class="todo"><b>Owner time</b> in MEASUREMENT (M1–M4)</li>
+        <li class="todo">Isolation pentest per ADR-017 over real deployables: three questions with an expected NO (SMTP from the document host, DMS from the email executor, envelope signature outside the gateway)</li>
+        <li class="todo">A real model behind <code>document.classify</code> and with it <code>AI-EVAL</code> (injection, drift, second signal on a real model)</li>
+        <li class="todo">A third domain for the marginal cost: track "platform +lines" (M4 = 45)</li>
         <li class="todo">M5: refresh <code>EVIDENCE-MATRIX</code> in foundation, Core Admission <code>EXISTS × 2</code> (candidates: result envelope, error object, ClockFixture, CredentialResolverFixture, conformance runner)</li>
-        <li class="todo">M6: first shared contract package (schemas + conformance + fixtures)</li>
-        <li class="todo">Part XVII in foundation from N5–N12 and W1–W11</li>
-        <li class="todo">Host isolation pentest per ADR-017 over a real PRINCIPAL deployable</li>
+        <li class="todo">M6: first shared package = contracts, schemas, fixtures and the conformance runner only; the runtime stays duplicated</li>
+        <li class="todo">Part XVII in foundation from N1–N12, W1–W12 and review 1</li>
         <li class="todo">Backoff and circuit breaker for technical retry, alert on full storage (with a durable queue)</li>
-        <li class="todo">A real model behind <code>document.classify</code> and with it <code>AI-EVAL</code></li>
       </ul>
     </div>
   </div>
@@ -188,8 +190,9 @@ Orchestrators: shared journal, review service, audit · each runs only its own d
   <div class="card ask-card" style="margin-top:1rem">
     <strong>❓ Decisions waiting for the owner</strong>
     <ul>
-      <li class="ask">Does the second signal (W4) go into the norm as a CONDITIONAL rule, or stay an implementation choice of the slice?</li>
-      <li class="ask">Farm: Workers Paid for queues, or a first version without them? Addresses <code>apf-intake@</code>, <code>apf-notify@maxferit.cz</code> and the real mailbox behind <code>ops-mailbox</code>.</li>
+      <li class="ask">Owner time for M1–M4 (architecture / review / debugging / operations); without it the 40 h limit cannot be evaluated.</li>
+      <li class="ask">Farm: addresses <code>apf.maxferit.cz</code>, <code>apf-intake@</code>, <code>apf-notify@maxferit.cz</code> and the real mailbox behind <code>ops-mailbox</code>. Cloudflare plan: start on Free, queues are available.</li>
+      <li class="ok">W4 decided (review 1): a CONDITIONAL rule, not a universal invariant.</li>
     </ul>
   </div>
 

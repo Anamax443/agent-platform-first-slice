@@ -227,7 +227,7 @@ Co dnes pravidlo porušuje (audit 6. 9. 2026) a přesune se v kroku 1: konstanty
 3. **Nasazení D1, D2, D5** na bass443 za Access, custom doména `apf.maxferit.cz`. Golden mastery `document-intake` proti farmě.
 4. **D3 email-executor** s Email Sending, **D4 mail-ingest** s Email Routing na `apf-intake@maxferit.cz`. Golden mastery `mail-intake`.
 5. **Fronta** (Queues, Workers Paid) mezi gateway a hosty pro skutečné at-least-once; `RES-CRASH-001` přes evikci DO; měření hodin mezi Workery.
-6. **Pentest izolace podle ADR-017** nad D2 vs. D3 a zápis M4b do MEASUREMENT s cenou.
+6. **Pentest izolace podle ADR-017** nad D2 vs. D3 a zápis M4b do MEASUREMENT s cenou. Akceptační kritéria (posudek 1, doporučení 8), očekávaná odpověď u všech tří **NE**: (a) může `apf-document-host` získat SMTP oprávnění? (b) může `apf-email-executor` získat `DMS_SECRET` nebo `ARCHIVE_SECRET`? (c) může kterýkoli Worker mimo gateway vytvořit platnou podepsanou dispatch obálku? Každá odpověď s důkazem (pokus, odmítnutí, audit).
 
 **Svislé řezy po dokončení modulů:**
 

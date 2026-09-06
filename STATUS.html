@@ -61,7 +61,8 @@
     <tr><th>Repo</th><td><a href="https://github.com/Anamax443/agent-platform-first-slice"><code>Anamax443/agent-platform-first-slice</code></a> · public · založeno 5. 9. 2026 · norma: <a href="https://github.com/Anamax443/agent-platform-foundation"><code>agent-platform-foundation</code></a> (zmrazeno 1.0-rc2.1, kontrakty sem zkopírované a pinované)</td></tr>
     <tr><th>Stav</th><td><span class="pill live">M1–M4 hotové</span> <span class="pill prep">bez cloudu, bez reálného modelu</span>
       <b>Dvojí stav schválně.</b> <i>Hotové</i> — oba toky běží end-to-end, MUST sada normy je zelená na třech write executorech, CI zelené.
-      <i>Bez cloudu</i> — všechno běží lokálně s fakes (LLM, registr, DMS, archiv, SMTP), žádný API klíč, izolace PRINCIPAL je v jednom procesu simulovaná. Nasazení na Workers je až další krok.</td></tr>
+      <i>Bez cloudu</i> — všechno běží lokálně s fakes (LLM, registr, DMS, archiv, SMTP), žádný API klíč. Izolace PRINCIPAL je <b>návrhově prokázaná, fyzicky ne</b>: v jednom procesu je simulovaná, důkaz přinese až vlastní deployable na farmě (M4b).</td></tr>
+    <tr><th>Posudek</th><td>Posudek 1 nad implementací (6. 9. 2026): <b>9,1 / 10</b>. Norma nevyvrácena, testy našly konstrukční chyby, reuse kostek doložen. Přijato: W4 jako CONDITIONAL, pořadí M4b → pentest → reálný model → třetí doména → M5, M6 jen kontrakty a fixtures. Protokol: <code>docs/POSUDKY.md</code>.</td></tr>
     <tr><th>Kontrola</th><td>CI při každém pushi (Node 24): typecheck, Vitest, <code>ARCH-DEP-001</code> + lint hodin, <code>farm:check</code>, sken tajemství (gitleaks), kontrola odkazů (lychee). Poslední běh <span class="pill live">zelený</span>.</td></tr>
     <tr><th>Vývojový diagram</th><td><a href="VYVOJOVY-DIAGRAM.html">VYVOJOVY-DIAGRAM.html</a>: cesta jednoho příkazu bezpečnostním řetězcem (gateway → router → executor host → výsledek) a běh toku od e-mailu k notifikaci se všemi konci, které smí nastat.</td></tr>
   </table>
@@ -175,12 +176,13 @@ Orchestrátory: společný journal, review service, audit · každý jen svou de
         <li class="todo"><b>M4b farma</b>: portabilita platformy (bez čtení disku při importu, <code>DispatchTransport</code>), <code>wrangler dev</code> lokálně, nasazení na bass443 za Access, e-mail, fronta, pentest ADR-017</li>
         <li class="todo"><b>Instalační profil</b> (pravidlo vlastníka): identity, tenanty, policy, domény a adresy kanálů z <code>src/</code> a <code>contracts/policy/</code> do <code>config/&lt;instalace&gt;/</code>, secrets jen jménem, lint na instalační hodnoty v kódu; nová instalace = nový profil, nula změn kódu</li>
         <li class="todo"><b>Čas vlastníka</b> do MEASUREMENT (M1–M4)</li>
+        <li class="todo">Pentest izolace podle ADR-017 nad skutečnými deployables: tři otázky s očekávaným NE (SMTP z document hostu, DMS z email executoru, podpis obálky mimo gateway)</li>
+        <li class="todo">Reálný model za <code>document.classify</code> a s ním <code>AI-EVAL</code> (injection, drift, druhý signál na skutečném modelu)</li>
+        <li class="todo">Třetí doména kvůli mezní ceně: sledovat „platforma +řádků" (M4 = 45)</li>
         <li class="todo">M5: obnova <code>EVIDENCE-MATRIX</code> ve foundation, Core Admission <code>EXISTS × 2</code> (kandidáti: result envelope, error object, ClockFixture, CredentialResolverFixture, conformance runner)</li>
-        <li class="todo">M6: první sdílený balíček kontraktů (schémata + conformance + fixtures)</li>
-        <li class="todo">Část XVII ve foundation z N5–N12 a W1–W11</li>
-        <li class="todo">Pentest izolace hostu podle ADR-017 nad skutečným PRINCIPAL deployablem</li>
+        <li class="todo">M6: první sdílený balíček = jen kontrakty, schémata, fixtures a conformance runner; runtime zůstává duplikovaný</li>
+        <li class="todo">Část XVII ve foundation z N1–N12, W1–W12 a posudku 1</li>
         <li class="todo">Backoff a circuit breaker u technického retry, alert při plném úložišti (až s durable frontou)</li>
-        <li class="todo">Reálný model za <code>document.classify</code> a s ním <code>AI-EVAL</code></li>
       </ul>
     </div>
   </div>
@@ -188,8 +190,9 @@ Orchestrátory: společný journal, review service, audit · každý jen svou de
   <div class="card ask-card" style="margin-top:1rem">
     <strong>❓ Rozhodnutí čekající na vlastníka</strong>
     <ul>
-      <li class="ask">Půjde druhý signál (W4) do normy jako CONDITIONAL pravidlo, nebo zůstane implementační volbou řezu?</li>
-      <li class="ask">Farma: Workers Paid kvůli frontám, nebo první verze bez front? Adresy <code>apf-intake@</code>, <code>apf-notify@maxferit.cz</code> a skutečná schránka za <code>ops-mailbox</code>.</li>
+      <li class="ask">Čas vlastníka za M1–M4 (architektura / review / ladění / provoz), bez něj se limit 40 h nedá vyhodnotit.</li>
+      <li class="ask">Farma: adresy <code>apf.maxferit.cz</code>, <code>apf-intake@</code>, <code>apf-notify@maxferit.cz</code> a skutečná schránka za <code>ops-mailbox</code>. Plán Cloudflare: začít na Free, fronty jsou dostupné.</li>
+      <li class="ok">W4 rozhodnuto (posudek 1): CONDITIONAL pravidlo, ne univerzální invariant.</li>
     </ul>
   </div>
 

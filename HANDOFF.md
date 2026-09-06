@@ -2,6 +2,19 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-06 (6) — Posudek 1 nad implementací (9,1/10): W4 rozhodnuto jako CONDITIONAL, pořadí dalších kroků upraveno
+
+**Zdroj:** externí posudek nad `STATUS.html`, který vlastník postoupil. Protokol s dispozicí každého doporučení: `docs/POSUDKY.md`. Hlavní závěr: první implementace normu nevyvrátila, testy našly konstrukční chyby, druhý tok prokázal reuse za 45 řádků platformy.
+
+**Co se změnilo v plánu:**
+1. **W4 rozhodnuto:** CONDITIONAL pravidlo (AI výstup → state-changing krok s `riskClass ≥ MEDIUM` vyžaduje nezávislý signál nebo human gate), ne univerzální invariant. V řezu zůstává druhý signál ve validátoru. Návrh pro foundation část XVII.
+2. **Pořadí:** M4b farma → pentest credential izolace (tři otázky s očekávaným NE, kritéria v návrhovém listu krok 6) → reálný LLM + AI-EVAL → **třetí doména** kvůli mezní ceně → M5 `EXISTS × 2` → M6.
+3. **M6 zúženo:** první sdílený balíček = kontrakty, schémata, fixtures, conformance runner. Orchestrátor a executor runtime zůstávají duplikované déle (P2).
+4. **Měření:** čas vlastníka se člení (architektura / review / ladění / provoz); nová metrika „platforma +řádků na novou doménu" (M4 = 45).
+5. **Formulace PRINCIPAL:** „design proven, physical isolation not yet proven", dokud `email.send` neběží jako vlastní deployable.
+
+**Zbývá rozhodnout (Milan):** beze změny: čas vlastníka za M1–M4; adresy pro farmu (`apf.maxferit.cz`, `apf-intake@`, `apf-notify@`) a schránka za `ops-mailbox`. Cloudflare plán: začít na Free (fronty jsou dostupné, 10 000 operací/den), Paid až kdyby nestačil CPU limit 10 ms na požadavek.
+
 ## 2026-09-06 (5) — M4b zahájeno: farma na Cloudflare, návrhový list + skeleton pěti deployables
 
 **Rozhodnutí vlastníka:** postavit malou farmu na Cloudflare, aby se závěry řezu ověřily na skutečném runtime (izolace PRINCIPAL, transport, fronta, pád DO, reálný model, reálná pošta). Zařazeno jako **M4b před M5/M6**, protože vyrábí evidenci pro otevřená rozhodnutí (pentest ADR-017, cena PRINCIPAL deployables). Žije v tomto repu (`deploy/cloudflare/`), testy a golden mastery zůstávají sdílené.
