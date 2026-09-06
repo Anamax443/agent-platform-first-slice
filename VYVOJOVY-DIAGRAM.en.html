@@ -38,6 +38,7 @@
   .dgm .box  { fill:var(--sunk); stroke:var(--line); stroke-width:1.5; }
   .dgm .band { fill:none; stroke:var(--line); stroke-width:1.5; stroke-dasharray:6 5; }
   .dgm .dia  { fill:var(--card); stroke:var(--accent); stroke-width:1.5; }
+  .dgm .plan { fill:var(--card); stroke:var(--line); stroke-width:1.5; stroke-dasharray:5 4; }
   .dgm .flow { stroke:currentColor; stroke-width:1.6; fill:none; }
   .dgm .warn { stroke:var(--warn); stroke-width:1.7; fill:none; }
   .dgm .ok   { stroke:var(--ok); stroke-width:1.7; fill:none; }
@@ -186,15 +187,37 @@
     <p class="prose">The orchestrator holds a workflow as a closed list of steps and states. Every diamond is a decision by code, not by the model. On the right are all the endings that may happen: there is no other.</p>
     <figure>
       <div class="board">
-        <svg class="dgm" viewBox="0 0 960 1090" role="img" aria-label="Run of the mail-intake flow: mail ingest, classification by a model checked against the allowlist with quality retry, validation with a second signal and the registry, stamp with reconciliation of an unknown outcome, notification through an executor in its own credential domain; endings SUCCEEDED, WAITING REVIEW, FAILED.">
+        <svg class="dgm" viewBox="0 0 960 1330" role="img" aria-label="Run of the mail-intake flow: mail ingest, classification by a model checked against the allowlist with quality retry, validation with a second signal and the registry, stamp with reconciliation of an unknown outcome, notification through an executor in its own credential domain; endings SUCCEEDED, WAITING REVIEW, FAILED.">
           <defs>
             <marker id="b-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-ink" d="M0,0 L10,5 L0,10 z"/></marker>
             <marker id="b-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-warn" d="M0,0 L10,5 L0,10 z"/></marker>
             <marker id="b-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-ok" d="M0,0 L10,5 L0,10 z"/></marker>
           </defs>
+          <text class="ts" x="40" y="12">Input variants · every channel = its own small component</text>
+          <rect class="box" x="40" y="18" width="160" height="48" rx="6"/>
+          <text class="t2" x="120" y="38" text-anchor="middle">E-mail</text>
+          <text class="ts" x="120" y="55" text-anchor="middle">done · Email Routing</text>
+          <line class="flow" x1="120" y1="66" x2="120" y2="116" marker-end="url(#b-ink)"/>
+          <rect class="box" x="220" y="18" width="160" height="48" rx="6"/>
+          <text class="t2" x="300" y="38" text-anchor="middle">API / harness</text>
+          <text class="ts" x="300" y="55" text-anchor="middle">done · Access token</text>
+          <line class="flow" x1="300" y1="66" x2="300" y2="116" marker-end="url(#b-ink)"/>
+          <rect class="plan" x="400" y="18" width="160" height="48" rx="6"/>
+          <text class="t2" x="480" y="38" text-anchor="middle">GUI drag & drop</text>
+          <text class="ts" x="480" y="55" text-anchor="middle">planned · identity from Access</text>
+          <line class="flow" x1="480" y1="66" x2="480" y2="116" marker-end="url(#b-ink)"/>
+          <rect class="plan" x="580" y="18" width="160" height="48" rx="6"/>
+          <text class="t2" x="660" y="38" text-anchor="middle">Telegram photo</text>
+          <text class="ts" x="660" y="55" text-anchor="middle">planned · + OCR component</text>
+          <line class="flow" x1="660" y1="66" x2="660" y2="116" marker-end="url(#b-ink)"/>
+          <rect class="plan" x="760" y="18" width="160" height="48" rx="6"/>
+          <text class="t2" x="840" y="38" text-anchor="middle">Slack and others</text>
+          <text class="ts" x="840" y="55" text-anchor="middle">planned · channel identity</text>
+          <line class="flow" x1="840" y1="66" x2="840" y2="116" marker-end="url(#b-ink)"/>
+          <g transform="translate(0,100)">
 
-          <rect class="box" x="20" y="20" width="360" height="44" rx="22"/>
-          <text class="t" x="200" y="46" text-anchor="middle">E-mail to apf-intake@ · or a document via API</text>
+          <rect class="box" x="40" y="20" width="880" height="44" rx="22"/>
+          <text class="t" x="480" y="46" text-anchor="middle">Ingest component · identity from the channel · original under sha256 · start workflow · content never interpreted</text>
           <line class="flow" x1="200" y1="64" x2="200" y2="92" marker-end="url(#b-ink)"/>
 
           <rect class="box" x="20" y="96" width="360" height="60" rx="6"/>
@@ -291,17 +314,43 @@
           <text class="ts" x="805" y="1019" text-anchor="middle">explicit, with an error object</text>
           <text class="ts" x="805" y="1033" text-anchor="middle">review expiry → escalation → FAILED</text>
           <text class="ts" x="440" y="1070">No ending is silent: each one is in the journal and in the audit under one correlationId.</text>
+          </g>
+          <line class="flow" x1="200" y1="1140" x2="200" y2="1191" marker-end="url(#b-ink)"/>
+          <rect class="box" x="40" y="1195" width="880" height="44" rx="22"/>
+          <text class="ts" x="480" y="1222" text-anchor="middle">Output components = write executors · each with a target allowlist, idempotency key, deadline and reconciliation · journal and audit always</text>
+          <text class="ts" x="40" y="1262">Output variants · every channel = its own executor, risk decides isolation</text>
+          <line class="flow" x1="120" y1="1239" x2="120" y2="1266" marker-end="url(#b-ink)"/>
+          <rect class="box" x="40" y="1270" width="160" height="48" rx="6"/>
+          <text class="t2" x="120" y="1290" text-anchor="middle">Stamped derivation</text>
+          <text class="ts" x="120" y="1307" text-anchor="middle">done · store, DMS (fake)</text>
+          <line class="flow" x1="300" y1="1239" x2="300" y2="1266" marker-end="url(#b-ink)"/>
+          <rect class="box" x="220" y="1270" width="160" height="48" rx="6"/>
+          <text class="t2" x="300" y="1290" text-anchor="middle">E-mail notification</text>
+          <text class="ts" x="300" y="1307" text-anchor="middle">done · policy allowlist only</text>
+          <line class="flow" x1="480" y1="1239" x2="480" y2="1266" marker-end="url(#b-ink)"/>
+          <rect class="box" x="400" y="1270" width="160" height="48" rx="6"/>
+          <text class="t2" x="480" y="1290" text-anchor="middle">Review for a human</text>
+          <text class="ts" x="480" y="1307" text-anchor="middle">done · role, deadline, escalation</text>
+          <line class="flow" x1="660" y1="1239" x2="660" y2="1266" marker-end="url(#b-ink)"/>
+          <rect class="plan" x="580" y="1270" width="160" height="48" rx="6"/>
+          <text class="t2" x="660" y="1290" text-anchor="middle">Slack / Telegram message</text>
+          <text class="ts" x="660" y="1307" text-anchor="middle">planned · executor with allowlist</text>
+          <line class="flow" x1="840" y1="1239" x2="840" y2="1266" marker-end="url(#b-ink)"/>
+          <rect class="plan" x="760" y="1270" width="160" height="48" rx="6"/>
+          <text class="t2" x="840" y="1290" text-anchor="middle">Accounting · DMS · payment</text>
+          <text class="ts" x="840" y="1307" text-anchor="middle">planned · HIGH, own deployable</text>
         </svg>
       </div>
       <figcaption>Flow definitions: <code>workflows/mail-intake.v1.json</code>, <code>workflows/document-intake.v1.json</code>. Golden master of every scenario: <code>conformance/workflows/</code>. Dashed green = return into the flow without a new write.</figcaption>
     </figure>
     <ol class="keyed">
-      <li><span class="num">1</span><p><b>Ingest stores, it does not interpret.</b> The whole mail is one immutable original with a hash; sender address and subject are stored as untrusted data. A full store is an explicit, retryable failure, never a silent acceptance. Tests <code>EVD-001</code>, <code>RES-STOR-001</code>.</p></li>
+      <li><span class="num">1</span><p><b>Many inputs, one duty.</b> E-mail and API exist; GUI, Telegram and Slack are planned. Every channel is its own small component with the same duty: identity from the channel (never from the content), the original under a hash, start the workflow. The router and the later steps never see the channel; they get an artifact and a trusted context. <b>Ingest stores, it does not interpret.</b> The whole mail is one immutable original with a hash; sender address and subject are stored as untrusted data. A full store is an explicit, retryable failure, never a silent acceptance. Tests <code>EVD-001</code>, <code>RES-STOR-001</code>.</p></li>
       <li><span class="num">2</span><p><b>The model proposes, code approves.</b> An answer outside the allowed set is not a security error but a quality one: the orchestrator tries another strategy (rules) under a new key. An instruction hidden in the text causes at most a second attempt. Tests <code>SEC-INJ-001</code>, <code>IDM-STRAT-001</code>.</p></li>
       <li><span class="num">3</span><p><b>Second signal and registry.</b> The validator recomputes the document type by rules over the text with instruction-like lines removed; disagreement goes to a human. The registry answer is untrusted until it passes the range and semantic checks. Tests <code>INT-FAIL-001..004</code>, scenario <code>disputed-classification</code>.</p></li>
       <li><span class="num">4</span><p><b>The stamp is a derivation.</b> The original is never overwritten. When the DMS does not answer clearly, the host returns an unknown outcome, the orchestrator asks three times by client reference and only then calls the operator. Meanwhile the published state is "unclear, being resolved", never a premature "done" or "failed". Tests <code>WF-UNK-001..003</code>, <code>RES-CRASH-001</code>.</p></li>
       <li><span class="num">5</span><p><b>Mail leaves from its own credential domain.</b> The mail executor is a separate host with a single permission: send. The recipient is never named by the payload or the mail, only by a key into the allowlist in platform policy. The irreversible action carries a business identity at the provider, so even a lost answer never produces a second e-mail. Tests <code>SEC-HOST-001</code>, <code>IDM-RET-002</code>, <code>SEC-CTX-002</code> between flows.</p></li>
       <li><span class="num">6</span><p><b>Three endings and no fourth.</b> Success, waiting for a human with a deadline and escalation, or an explicit failure with a code. A reviewer decides only with a verified role, tenant and binding to the specific task. Tests <code>WF-REV-003..004</code>, <code>EVD-003</code>.</p></li>
+      <li><span class="num">7</span><p><b>At the end there is no hub, there are executors.</b> Every output channel is its own write executor with the same discipline: target only from an allowlist, one idempotency key = one side effect, deadline, reconciliation of an unknown outcome, audit before and after. Stamp, e-mail and review exist; a Slack or Telegram message is the same component as e-mail with another adapter; accounting, DMS and payment are HIGH, so an own deployable, human approval and semantic validators per SEC-SEM-001. Journal and audit accompany every ending, not only success.</p></li>
     </ol>
   </section>
 

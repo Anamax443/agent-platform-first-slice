@@ -38,6 +38,7 @@
   .dgm .box  { fill:var(--sunk); stroke:var(--line); stroke-width:1.5; }
   .dgm .band { fill:none; stroke:var(--line); stroke-width:1.5; stroke-dasharray:6 5; }
   .dgm .dia  { fill:var(--card); stroke:var(--accent); stroke-width:1.5; }
+  .dgm .plan { fill:var(--card); stroke:var(--line); stroke-width:1.5; stroke-dasharray:5 4; }
   .dgm .flow { stroke:currentColor; stroke-width:1.6; fill:none; }
   .dgm .warn { stroke:var(--warn); stroke-width:1.7; fill:none; }
   .dgm .ok   { stroke:var(--ok); stroke-width:1.7; fill:none; }
@@ -186,15 +187,37 @@
     <p class="prose">Orchestrátor drží workflow jako uzavřený seznam kroků a stavů. Každý kosočtverec je rozhodnutí kódu, ne modelu. Vpravo jsou všechny konce, které smí nastat: jiný neexistuje.</p>
     <figure>
       <div class="board">
-        <svg class="dgm" viewBox="0 0 960 1090" role="img" aria-label="Běh toku mail-intake: příjem mailu, klasifikace modelem s kontrolou proti allowlistu a quality retry, validace s druhým signálem a registrem, razítko s reconciliací neznámého výsledku, notifikace přes executor s vlastní credential doménou; konce SUCCEEDED, WAITING REVIEW, FAILED.">
+        <svg class="dgm" viewBox="0 0 960 1330" role="img" aria-label="Běh toku mail-intake: příjem mailu, klasifikace modelem s kontrolou proti allowlistu a quality retry, validace s druhým signálem a registrem, razítko s reconciliací neznámého výsledku, notifikace přes executor s vlastní credential doménou; konce SUCCEEDED, WAITING REVIEW, FAILED.">
           <defs>
             <marker id="b-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-ink" d="M0,0 L10,5 L0,10 z"/></marker>
             <marker id="b-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-warn" d="M0,0 L10,5 L0,10 z"/></marker>
             <marker id="b-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-ok" d="M0,0 L10,5 L0,10 z"/></marker>
           </defs>
+          <text class="ts" x="40" y="12">Vstupní varianty · každý kanál = vlastní malá kostka</text>
+          <rect class="box" x="40" y="18" width="160" height="48" rx="6"/>
+          <text class="t2" x="120" y="38" text-anchor="middle">E-mail</text>
+          <text class="ts" x="120" y="55" text-anchor="middle">hotové · Email Routing</text>
+          <line class="flow" x1="120" y1="66" x2="120" y2="116" marker-end="url(#b-ink)"/>
+          <rect class="box" x="220" y="18" width="160" height="48" rx="6"/>
+          <text class="t2" x="300" y="38" text-anchor="middle">API / harness</text>
+          <text class="ts" x="300" y="55" text-anchor="middle">hotové · Access token</text>
+          <line class="flow" x1="300" y1="66" x2="300" y2="116" marker-end="url(#b-ink)"/>
+          <rect class="plan" x="400" y="18" width="160" height="48" rx="6"/>
+          <text class="t2" x="480" y="38" text-anchor="middle">GUI drag & drop</text>
+          <text class="ts" x="480" y="55" text-anchor="middle">plán · identita z Accessu</text>
+          <line class="flow" x1="480" y1="66" x2="480" y2="116" marker-end="url(#b-ink)"/>
+          <rect class="plan" x="580" y="18" width="160" height="48" rx="6"/>
+          <text class="t2" x="660" y="38" text-anchor="middle">Telegram foto</text>
+          <text class="ts" x="660" y="55" text-anchor="middle">plán · + kostka OCR</text>
+          <line class="flow" x1="660" y1="66" x2="660" y2="116" marker-end="url(#b-ink)"/>
+          <rect class="plan" x="760" y="18" width="160" height="48" rx="6"/>
+          <text class="t2" x="840" y="38" text-anchor="middle">Slack a další</text>
+          <text class="ts" x="840" y="55" text-anchor="middle">plán · identita kanálu</text>
+          <line class="flow" x1="840" y1="66" x2="840" y2="116" marker-end="url(#b-ink)"/>
+          <g transform="translate(0,100)">
 
-          <rect class="box" x="20" y="20" width="360" height="44" rx="22"/>
-          <text class="t" x="200" y="46" text-anchor="middle">E-mail na apf-intake@ · nebo dokument přes API</text>
+          <rect class="box" x="40" y="20" width="880" height="44" rx="22"/>
+          <text class="t" x="480" y="46" text-anchor="middle">Vstupní kostka · identita z kanálu · originál pod sha256 · start workflow · obsah se neinterpretuje</text>
           <line class="flow" x1="200" y1="64" x2="200" y2="92" marker-end="url(#b-ink)"/>
 
           <rect class="box" x="20" y="96" width="360" height="60" rx="6"/>
@@ -291,17 +314,43 @@
           <text class="ts" x="805" y="1019" text-anchor="middle">explicitně, s error objektem</text>
           <text class="ts" x="805" y="1033" text-anchor="middle">expirace review → eskalace → FAILED</text>
           <text class="ts" x="440" y="1070">Žádný konec není tichý: každý je v journalu a v auditu pod jedním correlationId.</text>
+          </g>
+          <line class="flow" x1="200" y1="1140" x2="200" y2="1191" marker-end="url(#b-ink)"/>
+          <rect class="box" x="40" y="1195" width="880" height="44" rx="22"/>
+          <text class="ts" x="480" y="1222" text-anchor="middle">Výstupní kostky = write executory · každý s allowlistem cílů, idempotency klíčem, deadline a reconciliací · journal a audit vždy</text>
+          <text class="ts" x="40" y="1262">Výstupní varianty · každý kanál = vlastní executor, riziko určuje izolaci</text>
+          <line class="flow" x1="120" y1="1239" x2="120" y2="1266" marker-end="url(#b-ink)"/>
+          <rect class="box" x="40" y="1270" width="160" height="48" rx="6"/>
+          <text class="t2" x="120" y="1290" text-anchor="middle">Odvozenina s razítkem</text>
+          <text class="ts" x="120" y="1307" text-anchor="middle">hotové · úložiště, DMS (fake)</text>
+          <line class="flow" x1="300" y1="1239" x2="300" y2="1266" marker-end="url(#b-ink)"/>
+          <rect class="box" x="220" y="1270" width="160" height="48" rx="6"/>
+          <text class="t2" x="300" y="1290" text-anchor="middle">E-mail notifikace</text>
+          <text class="ts" x="300" y="1307" text-anchor="middle">hotové · jen allowlist z policy</text>
+          <line class="flow" x1="480" y1="1239" x2="480" y2="1266" marker-end="url(#b-ink)"/>
+          <rect class="box" x="400" y="1270" width="160" height="48" rx="6"/>
+          <text class="t2" x="480" y="1290" text-anchor="middle">Review pro člověka</text>
+          <text class="ts" x="480" y="1307" text-anchor="middle">hotové · role, deadline, eskalace</text>
+          <line class="flow" x1="660" y1="1239" x2="660" y2="1266" marker-end="url(#b-ink)"/>
+          <rect class="plan" x="580" y="1270" width="160" height="48" rx="6"/>
+          <text class="t2" x="660" y="1290" text-anchor="middle">Slack / Telegram zpráva</text>
+          <text class="ts" x="660" y="1307" text-anchor="middle">plán · executor s allowlistem</text>
+          <line class="flow" x1="840" y1="1239" x2="840" y2="1266" marker-end="url(#b-ink)"/>
+          <rect class="plan" x="760" y="1270" width="160" height="48" rx="6"/>
+          <text class="t2" x="840" y="1290" text-anchor="middle">Účetnictví · DMS · platba</text>
+          <text class="ts" x="840" y="1307" text-anchor="middle">plán · HIGH, vlastní deployable</text>
         </svg>
       </div>
       <figcaption>Definice toků: <code>workflows/mail-intake.v1.json</code>, <code>workflows/document-intake.v1.json</code>. Zlatý otisk každého scénáře: <code>conformance/workflows/</code>. Zelená přerušovaná = návrat do toku bez nového zápisu.</figcaption>
     </figure>
     <ol class="keyed">
-      <li><span class="num">1</span><p><b>Příjem uloží, neinterpretuje.</b> Celý mail je jeden neměnný originál s hashem; adresa odesílatele i předmět jsou uložené jako nedůvěryhodná data. Plné úložiště je výslovné selhání s možností opakování, nikdy tiché přijetí. Testy <code>EVD-001</code>, <code>RES-STOR-001</code>.</p></li>
+      <li><span class="num">1</span><p><b>Vstupů je víc, povinnost jedna.</b> E-mail a API existují; GUI, Telegram a Slack jsou plán. Každý kanál je vlastní malá kostka s touž povinností: identita z kanálu (ne z obsahu), originál pod hashem, start workflow. Router ani další kroky kanál nevidí, dostanou artefakt a důvěryhodný kontext. <b>Příjem uloží, neinterpretuje.</b> Celý mail je jeden neměnný originál s hashem; adresa odesílatele i předmět jsou uložené jako nedůvěryhodná data. Plné úložiště je výslovné selhání s možností opakování, nikdy tiché přijetí. Testy <code>EVD-001</code>, <code>RES-STOR-001</code>.</p></li>
       <li><span class="num">2</span><p><b>Model navrhuje, kód schvaluje.</b> Odpověď mimo povolený výčet není chyba zabezpečení, ale kvalita: orchestrátor zkusí jinou strategii (pravidla) pod novým klíčem. Instrukce schovaná v textu tak nejvýš způsobí druhý pokus. Testy <code>SEC-INJ-001</code>, <code>IDM-STRAT-001</code>.</p></li>
       <li><span class="num">3</span><p><b>Druhý signál a registr.</b> Validátor přepočítá typ dokumentu pravidly nad textem bez řádků, které vypadají jako instrukce; neshoda jde k člověku. Odpověď registru je nedůvěryhodná, dokud neprojde rozsahovou a sémantickou kontrolou. Testy <code>INT-FAIL-001..004</code>, scénář <code>disputed-classification</code>.</p></li>
       <li><span class="num">4</span><p><b>Razítko je odvozenina.</b> Originál se nikdy nepřepíše. Když DMS neodpoví jasně, host vrátí neznámý výsledek, orchestrátor se třikrát zeptá podle klientské reference a teprve pak volá operátora. Během toho je navenek vidět stav „nejasné, řeší se", nikdy předčasné „hotovo" ani „selhalo". Testy <code>WF-UNK-001..003</code>, <code>RES-CRASH-001</code>.</p></li>
       <li><span class="num">5</span><p><b>E-mail odchází z vlastní credential domény.</b> Executor pro poštu je oddělený host s jediným oprávněním: odeslat. Příjemce nikdy nejmenuje payload ani mail, ale klíč do allowlistu v platform policy. Nevratná akce má u providera business identitu, takže ani ztracená odpověď nevede k druhému e-mailu. Testy <code>SEC-HOST-001</code>, <code>IDM-RET-002</code>, <code>SEC-CTX-002</code> mezi toky.</p></li>
       <li><span class="num">6</span><p><b>Tři konce a žádný čtvrtý.</b> Úspěch, čekání na člověka s deadlinem a eskalací, nebo výslovné selhání s kódem. Reviewer rozhoduje jen s ověřenou rolí, tenantem a vazbou na konkrétní úkol. Testy <code>WF-REV-003..004</code>, <code>EVD-003</code>.</p></li>
+      <li><span class="num">7</span><p><b>Na konci není rozbočovač, ale executory.</b> Každý výstupní kanál je vlastní write executor se stejnou disciplínou: cíl jen z allowlistu, jeden idempotency klíč = jeden side effect, deadline, reconciliace neznámého výsledku, audit před i po. Razítko, e-mail a review existují; Slack nebo Telegram zpráva je tatáž kostka jako e-mail s jiným adaptérem; účetnictví, DMS a platba jsou HIGH, tedy vlastní deployable, lidské schválení a sémantické validátory podle SEC-SEM-001. Journal a audit jsou u každého konce, ne jen u úspěchu.</p></li>
     </ol>
   </section>
 
