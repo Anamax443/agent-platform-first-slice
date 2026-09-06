@@ -2,6 +2,14 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-06 (18) — Návrh vstupní vrstvy faktur potvrzen vlastníkem: „Universal Invoice Intake Gateway"
+
+**Vlastník („Ano. Přesně takhle bych to navrhl."):** cílový obraz pro faxx-dox i farmu = Universal Invoice Intake Gateway s adaptéry (Email, GRID/EDI = OpenText Trading Grid, Peppol, parsery ISDOC/UBL/CII/Factur-X, PDF/Image AI extractor) → jediný kanonický Invoice JSON → validace → kontrola duplicity → business rules → ERP (NAV / Business Central). **Pravidlo přednosti:** na fakturu se strojovými daty se AI nepouští (mail s PDF + ISDOC → zpracuje se ISDOC s XSD validací proti DIA 6.0.2, PDF jen vizuální originál). Zapsáno do návrhového listu (krok 8, odstavec „Potvrzeno") a do paměti projektu faxx-dox.
+
+**Vazby na normu, které z toho plynou:** kontrola duplicity = idempotence podle identity faktury (DIČ dodavatele + číslo) jako `idempotencyKey` write executora; business rules = deterministický `validate` s druhým signálem (součty, IČ/DIČ/IBAN, ARES); zápis do NAV/BC = write executor `erp.post` (PRINCIPAL, reconciliace přes BC API) = **třetí doména** pro měření mezní ceny podle posudků.
+
+**Pořadí zůstává:** C (`apf-fakes` přes service binding) → D (document-host, razítko, DO jurisdikce EU) → retence → krok 8 (ISDOC → Factur-X → UBL/Peppol → CII, `invoice.normalize`) → krok 4 e-mail s přílohami → harness proti farmě. Kód se v tomto záznamu nemění.
+
 ## 2026-09-06 (17) — Krok 2, celek B: podepsaný dispatch, classify se skutečným modelem a výběrem modelů z profilu, validate; NIS2 / ISO 27001 jako požadavek
 
 **Pokyny vlastníka:** „chci výběr modelů AI jako u jiných projektů, placený i free, nikdy bez modelu AI"; „vše musí splňovat NIS2, ISO 27000 atd." (zapsáno i do paměti jako trvalé pravidlo; mapování kontrol v `docs/SHODA-NIS2-ISO27001.md`).
