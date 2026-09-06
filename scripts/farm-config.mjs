@@ -85,9 +85,16 @@ export function generateFarmConfigs(installation, root = repoRoot) {
     const base = parseJsonc(readFileSync(baseFile, "utf8"));
     const targetDir = join(root, ".wrangler", "generated", installation, d);
     mkdirSync(targetDir, { recursive: true });
+    // $signingPublicKeys is metadata, not a per-deployable overlay (skipped above): any deployable whose base config
+    // already declares SIGNING_PUBLIC_KEYS gets it verbatim, so the key lives in exactly one place (farm.json), never
+    // copy-pasted per deployable. A deployable that does not declare the var (it never verifies a signature) is untouched.
+    const signingPublicKeys =
+      base.vars && "SIGNING_PUBLIC_KEYS" in base.vars && overlay.$signingPublicKeys
+        ? JSON.stringify(Object.fromEntries(Object.entries(overlay.$signingPublicKeys).filter(([k]) => !k.startsWith("$"))))
+        : undefined;
     const bound = {
       ...base,
-      vars: { ...(base.vars ?? {}), INSTALLATION: installation },
+      vars: { ...(base.vars ?? {}), INSTALLATION: installation, ...(signingPublicKeys ? { SIGNING_PUBLIC_KEYS: signingPublicKeys } : {}) },
       alias: { ...(base.alias ?? {}), [ALIAS]: relFrom(targetDir, moduleFile) },
     };
     const merged = merge(bound, overlay[d] ?? {});

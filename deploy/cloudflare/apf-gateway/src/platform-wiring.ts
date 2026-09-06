@@ -16,12 +16,15 @@ import { Gateway, IdentityProvider } from "../../../../src/platform/gateway.js";
 import { policyFor } from "../../../../src/platform/policy.js";
 import { Router } from "../../../../src/platform/router.js";
 import { KeyRegistry, Signer } from "../../../../src/platform/signing.js";
-import { InProcessTransport, type DispatchTransport } from "../../../../src/platform/transport.js";
+import { InProcessTransport, RemoteHostTransport, type DispatchTransport, type ServiceBindingLike } from "../../../../src/platform/transport.js";
 import type { MessageEnvelope, ResultEnvelope } from "../../../../src/platform/types.js";
 
 export const CLASSIFY = "document.classify";
 /** Capabilities the gateway itself provides; everything else is a host and stays "not wired" until its unit lands. */
 export const GATEWAY_CAPABILITIES: readonly string[] = [CLASSIFY, "document.validate"];
+/** Capabilities apf-document-host serves over a signed dispatch across a service binding (celek D). */
+export const DOCUMENT_HOST_CAPABILITIES: readonly string[] = ["document.stamp", "document.archive"];
+export const DOCUMENT_HOST_ORIGIN = "https://apf-document-host.internal";
 
 export interface ModelChoice {
   key: string;
@@ -84,6 +87,8 @@ export interface WiringOptions {
   signingKeyPem: string | undefined;
   /** The document-type registry behind document.validate: on the farm the apf-fakes double over a service binding (unit C). */
   registry: RegistryAdapter;
+  /** apf-document-host's service binding (celek D2). Absent = document.stamp/archive fall through to notWired, same as today. */
+  documentHost?: ServiceBindingLike;
   /** Result for a capability no deployable serves yet. */
   notWired: (message: MessageEnvelope, actorId: string) => Promise<ResultEnvelope>;
   modelTimeoutMs?: number;
@@ -141,8 +146,20 @@ export function wirePlatform(o: WiringOptions): Wiring {
   });
 
   const inProcess = new InProcessTransport(gateway, router);
+  const documentHost = o.documentHost ? new RemoteHostTransport(gateway, o.documentHost, DOCUMENT_HOST_ORIGIN) : undefined;
   const transport: DispatchTransport = {
-    dispatch: (message, actorId) => (GATEWAY_CAPABILITIES.includes(message.capability) ? inProcess.dispatch(message, actorId) : o.notWired(message, actorId)),
+    dispatch: (message, actorId) => {
+      if (GATEWAY_CAPABILITIES.includes(message.capability)) {
+        console.log(`[apf-gateway] route ${message.capability} -> in-process correlationId=${message.correlationId}`);
+        return inProcess.dispatch(message, actorId);
+      }
+      if (documentHost && DOCUMENT_HOST_CAPABILITIES.includes(message.capability)) {
+        console.log(`[apf-gateway] route ${message.capability} -> apf-document-host correlationId=${message.correlationId}`);
+        return documentHost.dispatch(message, actorId);
+      }
+      console.log(`[apf-gateway] route ${message.capability} -> notWired correlationId=${message.correlationId}`);
+      return o.notWired(message, actorId);
+    },
   };
   return { transport, signing, keyId: o.keyId };
 }

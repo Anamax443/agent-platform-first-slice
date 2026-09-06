@@ -13,6 +13,7 @@ import { INSTALLATION, installation } from "apf:installation";
 import { FAKES_ORIGIN, HttpRegistryAdapter } from "../../../../src/adapters/registry.js";
 import type { WorkersAiBinding } from "../../../../src/adapters/workers-ai.js";
 import type { SecretsSource } from "../../../../src/installation.js";
+import type { AuditRecord } from "../../../../src/platform/audit.js";
 import { sha256Bytes } from "../../../../src/platform/artifacts.js";
 import { iso, SystemClock } from "../../../../src/platform/clock.js";
 import { platformError } from "../../../../src/platform/errors.js";
@@ -184,6 +185,7 @@ export class WorkflowInstance extends DurableObject<Env> {
       secrets: secretsOf(this.env),
       ai: this.env.AI as unknown as WorkersAiBinding,
       registry: new HttpRegistryAdapter(this.env.FAKES),
+      documentHost: this.env.DOCUMENT_HOST,
       artifacts: this.artifacts,
       audit: this.audit,
       clock: this.clock,
@@ -249,6 +251,16 @@ export class WorkflowInstance extends DurableObject<Env> {
     const inst = this.journal.list()[0];
     if (!inst) return null;
     return { workflowId: inst.workflowId, installation: INSTALLATION, instance: inst, artifacts: this.artifacts.list(), audit: [...this.audit.all()] };
+  }
+
+  /**
+   * Read-only artifact access for a remote executor host (celek D2): the instance object is the only place that has the
+   * bytes, so a host pre-fetches this over the GATEWAY service binding before it runs its own synchronous Router.
+   * No tenant check beyond "found in this instance": the instance object itself is already scoped to one tenant.
+   */
+  artifact(artifactId: string): { artifactId: string; tenantId: string; sha256: string; bytes: string; contentType?: string } | null {
+    const a = this.artifacts.get(artifactId);
+    return a ? { artifactId: a.artifactId, tenantId: a.tenantId, sha256: a.sha256, bytes: a.bytes, ...(a.contentType ? { contentType: a.contentType } : {}) } : null;
   }
 
   /**
@@ -457,7 +469,9 @@ export default {
       if (extraction && extraction.text.length > MAX_TEXT_CHARS) extraction = { ...extraction, text: extraction.text.slice(0, MAX_TEXT_CHARS) };
 
       const workflowId = newId("wf");
+      console.log(`[apf-gateway] intake start workflowId=${workflowId} workflow=${workflow} tenantId=${tenantId} from=${from} model=${modelKey || "(default)"}`);
       const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(workflowId));
+      const t0 = Date.now();
       try {
         await stub.intake({
           workflowId,
@@ -470,8 +484,10 @@ export default {
           ...(stampText ? { stampText } : {}),
         });
       } catch (e) {
+        console.error(`[apf-gateway] intake wiring threw workflowId=${workflowId} (${Date.now() - t0}ms): ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
         return html(renderError("Tok se nespustil", "Zapojení platformy v objektu instance selhalo (fail-closed); originál zůstal uložený.", { workflowId, error: String(e) }), 500);
       }
+      console.log(`[apf-gateway] intake done workflowId=${workflowId} (${Date.now() - t0}ms)`);
       return Response.redirect(new URL(`/workflow/${workflowId}`, url).toString(), 303);
     }
 
@@ -483,6 +499,15 @@ export default {
       if (!(await stub.view())) return Response.json({ error: "NOT_FOUND", workflowId: purge[1] }, { status: 404 });
       const result = await stub.purge(receivedFrom(request), reason);
       return html(renderError("Instance smazána", "Originál, derivace i obsah objektu instance jsou pryč; ve společném auditu (D1) zůstal záznam PURGED.", { ...result }), 200);
+    }
+
+    // Read-only artifact access for apf-document-host (celek D2), reached only through the DOCUMENT_HOST service binding.
+    const artifactRoute = /^\/workflow\/(wf-[A-Za-z0-9]+)\/artifact\/(art-[A-Za-z0-9]+)$/.exec(url.pathname);
+    if (artifactRoute && request.method === "GET") {
+      const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(artifactRoute[1] as string));
+      const artifact = await stub.artifact(artifactRoute[2] as string);
+      if (!artifact) return Response.json({ error: "NOT_FOUND", artifactId: artifactRoute[2] }, { status: 404 });
+      return Response.json(artifact);
     }
 
     const m = /^\/workflow\/(wf-[A-Za-z0-9]+)(\.json)?$/.exec(url.pathname);
@@ -498,6 +523,19 @@ export default {
       const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 50) || 50, 1), 500);
       const rows = await env.AUDIT.prepare("SELECT json FROM audit ORDER BY at DESC LIMIT ?").bind(limit).all<{ json: string }>();
       return Response.json(rows.results.map((r) => JSON.parse(r.json) as unknown));
+    }
+
+    // Shared append-only trail for remote hosts (celek D2, docs/NAVRHOVY-LIST-farma.md "žádný Worker nesahá do cizí DB"):
+    // reached only through a service binding, no host's own config ever routes it to the public internet.
+    if (url.pathname === "/audit" && request.method === "POST") {
+      const body = (await request.json().catch(() => undefined)) as Partial<AuditRecord> | undefined;
+      if (!body?.kind) return Response.json({ error: "BAD_REQUEST", message: "kind required" }, { status: 400 });
+      await ensureD1Audit(env.AUDIT);
+      const record: AuditRecord = { ...body, auditId: newId("aud"), at: iso(new Date()), kind: body.kind };
+      await env.AUDIT.prepare("INSERT OR IGNORE INTO audit (audit_id, at, kind, correlation_id, workflow_id, tenant_id, actor_id, capability, json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(record.auditId, record.at, record.kind, record.correlationId ?? null, record.workflowId ?? null, record.tenantId ?? null, record.actorId ?? null, record.capability ?? null, JSON.stringify(record))
+        .run();
+      return Response.json({ ok: true, auditId: record.auditId });
     }
 
     if (url.pathname === "/dispatch") {

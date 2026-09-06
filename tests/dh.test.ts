@@ -17,6 +17,7 @@ import { newId } from "../src/platform/ids.js";
 import type { Policy } from "../src/platform/policy.js";
 import { Router } from "../src/platform/router.js";
 import { generateKeyPair, KeyRegistry, Signer } from "../src/platform/signing.js";
+import { RemoteHostTransport } from "../src/platform/transport.js";
 import type { MessageEnvelope } from "../src/platform/types.js";
 import * as archiveHandler from "../src/components/document-executor-host/archive-handler.js";
 import * as host from "../src/components/document-executor-host/stamp-handler.js";
@@ -230,5 +231,43 @@ describe("DH-SIGN-001 the gateway signs, a completely separate Router verifies a
     const result = await receiver.router.route(gateway.dispatch(message, "svc-test"));
     expect(result.status).toBe("FAILED");
     expect(result.error?.code).toBe("CAPABILITY_NOT_ALLOWED");
+  });
+});
+
+describe("DH-TRANSPORT-001 RemoteHostTransport never throws (found running celek D2 locally: the orchestrator calls transport.dispatch() with no try/catch)", () => {
+  it("an unreachable binding, a non-2xx response and an invalid body all resolve to a FAILED result, never a rejection", async () => {
+    const gatewayClock = new FakeClock(START);
+    const keyPair = generateKeyPair();
+    const identities = new IdentityProvider([{ actorId: "svc-test", actorType: "service", tenantId: "t1", scopes: ["document.stamp"], authStrength: "client-credentials" }]);
+    const message: MessageEnvelope = {
+      messageId: newId("msg"),
+      correlationId: newId("cor"),
+      type: "command",
+      capability: "document.stamp",
+      capabilityVersion: "1",
+      schemaVersion: "1",
+      idempotencyKey: newId("key"),
+      createdAt: iso(gatewayClock.now()),
+      notValidAfter: iso(plus(gatewayClock.now(), 30 * MINUTE)),
+      payload: { artifactId: "art-x", sha256: "ab".repeat(32) },
+    };
+
+    const unreachable = new RemoteHostTransport(new Gateway({ identities, signer: new Signer("k1", keyPair.privateKey), clock: gatewayClock }), { fetch: () => { throw new Error("connection refused"); } });
+    const r1 = await unreachable.dispatch(message, "svc-test");
+    expect(r1.status).toBe("FAILED");
+    expect(r1.error?.code).toBe("DEPENDENCY_UNAVAILABLE");
+
+    // Exactly the bug found live: a remote host's own uncaught wiring error surfaces as a bare HTTP 500, no ResultEnvelope body.
+    const serverError = new RemoteHostTransport(new Gateway({ identities, signer: new Signer("k1", keyPair.privateKey), clock: gatewayClock }), { fetch: async () => new Response("Internal Server Error", { status: 500 }) });
+    const r2 = await serverError.dispatch(message, "svc-test");
+    expect(r2.status).toBe("FAILED");
+    expect(r2.error?.code).toBe("DEPENDENCY_UNAVAILABLE");
+    expect(r2.inReplyTo).toBe(message.messageId);
+    expect(r2.correlationId).toBe(message.correlationId);
+
+    const garbage = new RemoteHostTransport(new Gateway({ identities, signer: new Signer("k1", keyPair.privateKey), clock: gatewayClock }), { fetch: async () => Response.json({ not: "a result envelope" }) });
+    const r3 = await garbage.dispatch(message, "svc-test");
+    expect(r3.status).toBe("FAILED");
+    expect(r3.error?.code).toBe("DEPENDENCY_UNAVAILABLE");
   });
 });

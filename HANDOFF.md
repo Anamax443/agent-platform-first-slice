@@ -2,6 +2,34 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-07 (25) — Celek D2: apf-document-host doopravdy funguje na farmě; transportní chyba nalezena a opravená; logování
+
+**Celek D2 hotový:** `apf-document-host` už není skeleton. Skládá se stejně jako gateway (`Router` + `ExecutorHost` + `CredentialResolver`), ale jako samostatný Worker. Vyřešeny oba problémy z W21:
+
+- **Přenos artefaktu:** nová RPC metoda `WorkflowInstance.artifact(artifactId)` + route `GET /workflow/:id/artifact/:artifactId` na gateway. Document-host si obsah dokumentu natáhne asynchronně přes `GATEWAY` binding **před** spuštěním synchronního routeru (`SingleArtifactStore` — čte přednačtený originál, `derive()` počítá nový artefakt synchronně v paměti a kopíruje do R2 na pozadí přes `waitUntil`).
+- **Distribuce veřejného klíče:** `scripts/farm-config.mjs` rozšířen — `$signingPublicKeys` z `farm.json` se automaticky vloží do `SIGNING_PUBLIC_KEYS` var kteréhokoli deployables, který tu proměnnou deklaruje (dnes jen document-host). Pro `local-fakes` zůstává `{}` (ephemerální klíč nejde distribuovat, viz W21) — plný důkaz jde jen na `farm-bass443`.
+- Nové HTTP klienty `HttpDmsAdapter`/`HttpArchiveAdapter` (z celku D1) zapojeny do skutečných handlerů; audit z document-hostu se přes `POST /audit` na gateway přelévá do sdíleného D1 (nová route).
+
+**Nalezená a opravená chyba (ne kosmetická):** `RemoteHostTransport.dispatch()` při prvním živém běhu **hodil výjimku** místo vrácení `FAILED` výsledku, protože `orchestrator.ts` volá `transport.dispatch()` bez try/catch — přesně stejná (dosud nikdy neprojevená) chyba už byla v `HttpDispatchTransport`. Opraveno: nová sdílená `transportFailure()` v `src/platform/transport.ts`, žádný transport už nehodí. Nový regresní test `DH-TRANSPORT-001`. Zapojeno i do `apf-document-host`'s vlastního `/dispatch` (chybějící secret při wiringu teď vrací čistý `DEPENDENCY_UNAVAILABLE`, ne syrové HTTP 500).
+
+**Živý důkaz na farmě (ne jen `wrangler dev`):** vygenerována dvě sdílená hesla (`DMS_SECRET`, `ARCHIVE_SECRET` — libovolné řetězce mezi dvěma vlastními Workery, ne cizí přístupový klíč) a nastavena přes `wrangler secret put` na `apf-document-host` i `apf-fakes`. Po nasazení: **`document.stamp` poprvé uspělo end-to-end na skutečné farmě** — reálný podpis, reálné ověření na jiném Workeru, reálný přenos artefaktu, reálný zápis do DMS dvojníka (`dmsRef` vráceno). Testovací instance smazány po ověření.
+
+**Na žádost vlastníka („chci logovat každej prd"):** přidáno `console.log`/`console.error` na klíčová místa — `SqliteAudit.append()` (gateway) a `RelayAudit.append()` (document-host) teď narativně vypisují každou auditní událost, `platform-wiring.ts` loguje, na který transport se capability routuje, `/intake` a `/dispatch` mají log na začátku i konci s časováním, `transportFailure()` loguje každé selhání transportu centrálně. Ověřeno živě přes `wrangler tail` na obou Workerech současně: jeden test s nejednoznačným textem ukázal přesně proč `document.stamp` nikdy neproběhlo (klasifikace skončila v `CLASSIFICATION_DISPUTED` → review, W4 živě), druhý čistý test ukázal celý řetězec gateway → document-host → DMS krok po kroku s časováním.
+
+**Otevřené, nedořešeno (přerušeno na pokyn vlastníka):** poslední pozorování před přerušením — `wrangler tail` u gateway ukázal `POST https://apf-gateway.internal/audit - Canceled` (třikrát) pro relay auditu z document-hostu, ale `/audit.json` **obsahoval** všechny očekávané záznamy (`dispatch`, `write-intent`, `write-done` pro `document.stamp`) se správnými časy. Nejasné, jestli „Canceled" je jen kosmetika `wrangler tail` (request byl ve skutečnosti dokončen jinou cestou, nebo šlo o duplicitní/soutěžící pokus) nebo skutečné riziko ztráty auditního záznamu při `waitUntil` napříč Workery. **Nedokončeno — příští session ověřit, jestli `waitUntil` v `RelayAudit` skutečně drží spojení mezi document-hostem a gateway spolehlivě, nebo jestli potřebuje jistější mechanismus.**
+
+**Brány zelené před nasazením:** typecheck, **231 testů / 13 souborů**, `npm run arch`, `npm run farm:check`. Farma nasazena (`node scripts/farm-deploy.mjs farm-bass443`), oba nové secrets nastaveny.
+
+## 2026-09-06 (24) — Celek C nasazen na farmu (vlastník: „1 a potom 2")
+
+**Zjištění před nasazením:** farma `farm-bass443` běžela pořád na `6c63b16` (stav před celkem C) — `/version` hlásil `"document.validate (registr = fake v procesu do celku C)"`. Dnešní ruční test vlastníkovy reálné faktury tedy ověřoval typ dokumentu proti staré, v procesu běžící náhradě, ne proti skutečné síťové cestě z celku C.
+
+**Nasazeno:** `node scripts/farm-deploy.mjs farm-bass443` (dry-run napřed, čistý). `/version` teď hlásí `"document.validate (registr přes service binding apf-fakes)"` a pole `fakes` s živou odpovědí dvojníka (8 endpointů, `secrets: {dms:false, archive:false}` — čeká na celek D2). Ověřeno smoke testem přes `curl` se service tokenem `apf-harness` (žádná ruční interakce v prohlížeči): syntetický text → `classify:SUCCEEDED` → `validate:SUCCEEDED` (přes skutečnou síť) → `stamp:FAILED:DEPENDENCY_UNAVAILABLE` (nezměněno, čeká na D2). Instance po ověření smazána (`/purge`).
+
+**Vedlejší úklid:** vlastníkova reálná faktura z předchozího ručního testu (na staré verzi) smazána na jeho pokyn stejným service tokenem — `/purge` potvrdil 2 artefakty a 2 R2 objekty smazané, záznam v auditu.
+
+**Beze změny kódu tento krok.** Žádný nový secret nebyl potřeba (D2 teprve `DMS_SECRET`/`ARCHIVE_SECRET` bude vyžadovat). Další: celek D2.
+
 ## 2026-09-06 (23) — Celek D rozdělen na D1/D2; D1 hotový: klienti DMS/archiv + kryptografická hranice se skutečným párem klíčů
 
 **Než padl první řádek kódu celku D**, prozkoumal jsem přesně, jak dnešní podpis a ověření fungují (`Gateway.dispatch` → `DispatchEnvelope {message, context, binding}` podepsaný Ed25519 nad JCS `{message, context}`; `Router.route` ověřuje `verifyBinding` přes `KeyRegistry`, jen veřejný klíč). Narazil jsem na dva problémy, o kterých plán nevěděl:

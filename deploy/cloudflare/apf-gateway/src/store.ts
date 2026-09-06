@@ -64,6 +64,9 @@ export class SqliteAudit implements AuditTrail {
       full.workflowId ?? null,
       JSON.stringify(full),
     );
+    // Console output too, not just the DO's own storage: every audit-worthy event narrated live in wrangler
+    // tail / Workers Logs, so a run can be followed step by step without querying the instance afterward.
+    console.log(`[apf-gateway] ${full.kind} ${full.capability ?? ""} workflowId=${full.workflowId ?? "-"} correlationId=${full.correlationId ?? "-"} :: ${JSON.stringify(full.details ?? {})}`);
     return structuredClone(full);
   }
 
