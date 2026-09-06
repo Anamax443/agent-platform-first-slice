@@ -39,7 +39,7 @@ Požadavek vlastníka (6. 9. 2026): „vše musí splňovat NIS2, ISO 27000 atd.
 
 1. Durable Object v jurisdikci EU (jedno volání, celek D).
 2. Automatická retence podle profilu (DO alarm + D1), včetně osobních údajů v auditu.
-3. Ověření Access JWT ve Workeru a mapování lidských identit do profilu.
+3. Ověření Access JWT ve Workeru a mapování lidských identit do profilu — týká se i `/workflow/:id/purge`, který na farmě už běží (ne jen budoucího `/review`); dokud JWT neověřuje sám Worker, spoléhá se výhradně na to, že perimetr Cloudflare Access nejde obejít (Posudek 6, bod 8).
 4. Alerting (bezpečnostní události, `STORAGE_FULL`, selhání modelů) a postup pro incidenty s lhůtami NIS2.
 5. Zálohy R2/D1 mimo účet a test obnovy; `RES-CRASH-001` přes evikci DO.
 6. Pentest izolace podle ADR-017 (krok 6) a `npm audit` v CI.

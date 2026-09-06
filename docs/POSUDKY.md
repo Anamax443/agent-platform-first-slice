@@ -136,3 +136,32 @@ Pořadí celků (D dál, pak retence, krok 8, krok 4, harness proti farmě) zůs
 ## Souhrn po pěti posudcích
 
 Shoda všech pěti: norma nevyvrácena, testy chytají konstrukční chyby, reuse doložen. Posudek 5 je první, který četl skutečný kód místo STATUS, a našel jednu skutečnou konstrukční mezeru (idempotency scope, bod 1) — cenu si tedy definitivně vydělal (srov. posudek 1, bod 9). Jediný MAJOR ze všech posudků dohromady zůstává fyzická izolace (plánováno na M4b, teď za D). Nic nevede k otevření rc3 normy; vše jde do části XVII jako evidence.
+
+## Posudek 6 — druhé kolo od stejného čtenáře, jeden bod na zastaralém snapshotu (6. 9. 2026 pozdní večer)
+
+**Zdroj:** stejný externí čtenář jako Posudek 5, druhé kolo „nad aktuálním `main`" po oznámení, že W19 je opravené a pushnuté (commit `50c2cc0`). Nová srovnávací tabulka (12 řádků, minulý stav vs. teď) a přehodnocení skóre na **8,9/10** (+0,1 proti 8,8).
+
+**Klíčové zjištění před dispozicemi: bod 1 posudku cituje kód, který na `main` neexistuje.** Posudek tvrdí „🔴 Neopraveno — stále `Map<string, HandlerOutcome>`" a cituje přesně předopravný tvar `execute()` (`const key = message.idempotencyKey; if (key && this.idempotency.has(key))`). Ověřeno přímo: `git cat-file -p origin/main:src/platform/executor-host.ts` (dotaz na objekt, který GitHub skutečně drží pro `main`, ne na lokální soubor) obsahuje `dedupKey(capability, idempotencyKey)` a `execute()` používá `dedupKey`, ne holý `key` — přesně oprava z commitu `0c65fb9`, pushnutého jako součást `50c2cc0` (22:48 SELČ). Posudek tedy pracoval se snapshotem starším než tato oprava — nejpravděpodobněji CDN/cache zpoždění GitHubu těsně po pushi (oprava i posudek padly do stejného okna ~20 minut), ne chyba v kódu. Scénář, který posudek popisuje jako stále platný (`document.stamp` klíč `abc` → `document.archive` stejný klíč `abc` dostane výsledek stampu), je přesně scénář, který dokazuje test `IDM-HOST-SCOPE-001` (Posudek 5) — a ten dokázatelně bez opravy padá (ověřeno `git stash`), se opravou prochází.
+
+**Co v posudku zůstává platné i po opravě tohoto nedorozumění:** posudek chtěl víc než minimální opravu — `tenantId + capability + handlerId + idempotencyKey` a `requestFingerprint = SHA256(canonical payload)` s `IDEMPOTENCY_CONFLICT` při shodě klíče a jiném payloadu. To je přesně to, co Posudek 5 v dispozici bodu 1 označil jako „druhou, oddělitelnou změnu" a nechal otevřené. Bod 2 (durable ledger) je přesně W20, dosud beze změny (podmínka celku D). Body 3–9 (`resourceTenant` fail-open, `ReviewService` bez trusted principal, `/dispatch` 501, hosty připravené v `Env` ale `hosts:false`, Access JWT, multi-tenant intake) jsou beze změny přesně to, co zapsal Posudek 5 — žádné nové zjištění, jen potvrzení, že dispozice (P/PÚ/Z, většinou „před celkem D" nebo „precondition") pořád platí.
+
+**Jedna skutečně nová a užitečná poznámka (bod 8):** posudek rozlišil `/review` (zatím neexistuje, nulové riziko) od `/purge` (**existuje a běží na farmě už od kroku 2 celku A**), a upozornil, že `/purge` čeká na Access JWT verifikaci se stejnou naléhavostí jako budoucí `/review`, ne až s ním. Posudek 5 měl Access JWT jen jako obecnou mezeru 3 v `docs/SHODA-NIS2-ISO27001.md` bez rozlišení which endpoint. Přijato jako upřesnění.
+
+### Dispozice
+
+| # | Bod posudku | Dispozice | Poznámka |
+|---|---|---|---|
+| 1 | Idempotency „stále neopraveno" | **O, na základě chybného snímku** | ověřeno `git cat-file -p origin/main`; oprava (W19, commit `0c65fb9`) je na `main` od 22:37 SELČ, pushnutá v `50c2cc0`; posudek pravděpodobně narazil na krátké CDN zpoždění GitHubu po pushi |
+| 1b | Rozšíření na `tenantId + handlerId + requestFingerprint` + `IDEMPOTENCY_CONFLICT` | **Z, zůstává otevřené** | přesně „druhá, oddělitelná změna" z Posudku 5; kandidát na příští celek, ne oprava dnešního kódu |
+| 2 | Durable executor effect ledger | **Z** | = W20, beze změny, podmínka celku D |
+| 3 | `resourceTenant()` fail-open | **Z** | beze změny, debt pro budoucí executory (Posudek 5, bod 3) |
+| 4 | `ReviewService` bez trusted principal | **Z** | beze změny, precondition pro `/review` (Posudek 5, bod 4) |
+| 5–7 | `/dispatch` 501, hosty připravené v `Env` ale nezapojené | **Z** | plán celku D beze změny |
+| 8 | `/purge` by měl mít Access JWT se stejnou prioritou jako budoucí `/review`, protože už běží na farmě | **P** — upřesnění přijato | `docs/SHODA-NIS2-ISO27001.md` mezera 3 rozšířena o explicitní zmínku `/purge` |
+| 9 | Multi-tenant intake beze změny | **Z** | potvrzeno jako známé omezení first slice, ne chyba (Posudek 5, bod 7) |
+
+**Přehodnocené skóre posudku (8,9/10, +0,1):** stojí na chybné premise u bodu 1 („žádná ze čtyř základních slabin nebyla řešena"), protože jedna z nich (přesně demonstrovaný scénář stamp/archive kolize) řešená byla. Nový verdikt by měl vzejít z opětovného čtení `main` po tomto vyjasnění, ne z asistentova přepočtu — asistent svoje vlastní skóre nenabízí.
+
+### Co posudek nezměnil
+
+Pořadí (D dál, W20 jako jeho podmínka) zůstává. Doplněno: `docs/SHODA-NIS2-ISO27001.md` mezera 3 teď jmenuje `/purge` vedle budoucího `/review`.

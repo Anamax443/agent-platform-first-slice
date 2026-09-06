@@ -2,6 +2,18 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-06 (22) — Posudek 6: stejný čtenář podruhé, bod 1 na zastaralém snapshotu
+
+**Co se stalo:** vlastník poslal druhé kolo od stejného externího čtenáře jako Posudek 5, tentokrát s tvrzením, že hlavní nález (W19, dedup klíč sdílený mezi capability) je „stále neopravený", a citoval přesně předopravný kód `ExecutorHost.execute()`.
+
+**Ověřeno přímo, ne převzato:** `git cat-file -p origin/main:src/platform/executor-host.ts` (dotaz na objekt, který GitHub skutečně drží) obsahuje opravu (`dedupKey(capability, idempotencyKey)`) beze změny od commitu `0c65fb9` (22:37 SELČ), pushnutého v `50c2cc0` (22:48 SELČ). Posudek tedy pracoval se snapshotem starším než tato oprava, nejpravděpodobněji krátké zpoždění GitHub CDN po pushi (oprava i posudek padly do stejného ~20minutového okna) — ne chyba v kódu.
+
+**Co v posudku zůstává platné:** hlubší varianta opravy (`tenantId + handlerId + requestFingerprint` + `IDEMPOTENCY_CONFLICT`) je pořád otevřená — přesně „druhá, oddělitelná změna" z Posudku 5, ne oprava dnešního nálezu. Body o durable ledgeru (W20), `resourceTenant()` fail-open, `ReviewService` bez trusted principal, `/dispatch` 501 a nezapojených hostech jsou beze změny přesně to, co má Posudek 5 — žádné nové zjištění.
+
+**Jedna nová, přijatá poznámka (bod 8):** `/purge` už běží na farmě (od kroku 2 celku A), takže potřebuje Access JWT verifikaci se stejnou naléhavostí jako budoucí `/review`, ne až s ním. Zapsáno do `docs/SHODA-NIS2-ISO27001.md` mezery 3.
+
+**Zapsáno jako Posudek 6 do `docs/POSUDKY.md`** s dispozicemi (bod 1 = O na základě chybného snímku, s důkazem; zbytek Z/P beze změny plánu). Žádná změna kódu tento krok — čeká se na rozhodnutí vlastníka, zda se composite idempotency identita + fingerprint + `IDEMPOTENCY_CONFLICT` dělá jako další celek před D, nebo se nechá otevřené.
+
 ## 2026-09-06 (21) — Posudek 5 a oprava W19: `ExecutorHost` dedup scoped na capability
 
 **Co se stalo:** vlastník poslal čtvrtý externí posudek, tentokrát nad skutečným TypeScript kódem (ne jen STATUS). Každé tvrzení jsem ověřil přímo v kódu před zápisem dispozice — zapsáno jako Posudek 5 do `docs/POSUDKY.md` (8,8/10, deset bodů s dispozicí P/PÚ/Z). Dva body posudku (reálný registry adapter, chaos přes service binding) už vyřešil stejný den celek C, po commitu `a5310fc`, který posudek viděl a nemohl proto vědět o HANDOFF (19) ani o celku C (oba lokální, nepushnuté).
