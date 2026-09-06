@@ -2,6 +2,27 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-06 (23) — Celek D rozdělen na D1/D2; D1 hotový: klienti DMS/archiv + kryptografická hranice se skutečným párem klíčů
+
+**Než padl první řádek kódu celku D**, prozkoumal jsem přesně, jak dnešní podpis a ověření fungují (`Gateway.dispatch` → `DispatchEnvelope {message, context, binding}` podepsaný Ed25519 nad JCS `{message, context}`; `Router.route` ověřuje `verifyBinding` přes `KeyRegistry`, jen veřejný klíč). Narazil jsem na dva problémy, o kterých plán nevěděl:
+
+1. **Artefakt.** `document.stamp`/`document.archive` čtou obsah dokumentu synchronně ze sdílené paměti gateway. Na vlastním Workeru `apf-document-host` žádná taková paměť není — jen `R2Bucket` (async) a service bindingy. Bajty musí dorazit asynchronně **před** spuštěním synchronního `Router`/`ExecutorHost` řetězce, ne uprostřed něj.
+2. **Podpisový klíč.** Instalace bez `apiHost` (`local-fakes`) generuje klíč nanovo při každém restartu Workeru, navíc zvlášť pro každou Durable Object instanci — vzdálený příjemce nemá stabilní veřejný klíč, ke kterému by se mohl vázat. Funguje to jen s trvalým `GATEWAY_SIGNING_KEY` (`farm-bass443`).
+
+Zapsáno jako **W21** do MEASUREMENT. Vlastníkovi jsem položil otázku, jak rozdělit; **zvolil „jeden menší krok teď"**. Celek D je proto rozdělen na **D1** (hotovo dnes) a **D2** (Worker, přenos artefaktu, farma — zbývá).
+
+**D1 hotovo:** `HttpDmsAdapter` a `HttpArchiveAdapter` (`src/adapters/dms.ts`, `archive.ts`) — skuteční síťoví klienti k `apf-fakes` podle stejného vzoru jako `HttpRegistryAdapter` z celku C, se správným rozlišením: `stamp()` je jediná metoda, která smí hodit `UnknownOutcomeError` (síťová chyba = osud zápisu neznámý); `status()`/`read()` nikdy nesmí hodit výjimku, protože `stamp-handler.ts`'s `reconcile()` je volá bez try/catch — degradují na `"UNKNOWN"`/`undefined`.
+
+**Nález W22 při psaní klienta:** `apf-fakes` (celek C) vyžadoval bearer i na `GET /dms/status`/`/dms/read`, ale `FakeDmsAdapter` (M1) tuhle kontrolu na čtecích metodách nikdy neměl. Neprojevilo se to dřív, protože testy vždy posílaly platný token i tam, kde nebyl potřeba. Opraveno sladěním dvojníka s fake adaptérem (bearer jen na `POST /dms/stamp`).
+
+**Kryptografický důkaz (`tests/dh.test.ts`, 11 testů, `DH-DMS-*`/`DH-ARCHIVE-*`/`DH-SIGN-*`):** nejdůležitější část. `DH-SIGN-*` staví gateway se **skutečným, čerstvě vygenerovaným** párem klíčů Ed25519 a **zcela oddělený** `Router` se svým vlastním `KeyRegistry`, který drží jen veřejný klíč — přesně to, co bude `apf-document-host` jako samostatný Worker. Přes tuhle hranici běží skutečné handlery `document.stamp`/`document.archive` proti skutečným HTTP adaptérům. Ověřeno: platný podpis projde až do zápisu do `apf-fakes`; pozměněný payload po podpisu skončí `CONTEXT_BINDING_INVALID`; podpis cizím párem klíčů skončí stejně; chybějící scope skončí `CAPABILITY_NOT_ALLOWED` dřív, než se handler vůbec spustí. Artefakt je v obyčejném `ArtifactStore` (Node, synchronní) — problém č. 1 výše je vědomě mimo tenhle krok.
+
+Menší refactor: sdílený `world()` helper (dvojník `apf-fakes` bez Workeru) přesunut z `tests/fakes.test.ts` do `tests/harness/fakes-world.ts`, teď používaný dvěma test rodinami.
+
+**Brány zelené:** typecheck, **230 testů / 13 souborů**, `npm run arch`, `npm run farm:check`.
+
+**D2 zbývá:** skutečný `apf-document-host` Worker (dnes pořád skeleton, `501`), přenos artefaktu (návrh: gateway ho dodá přes vlastní čtecí endpoint na `WorkflowInstance` DO, document-host ho stáhne asynchronně před voláním routeru), veřejný klíč do `SIGNING_PUBLIC_KEYS` (var z `farm.json` `$signingPublicKeys`, dnes nikam nezapojený), `reconcile()` pro oba handlery na skutečném Workeru (podmínka W20), DO jurisdikce EU (mezera 1 shody, samostatně malá, nezávislá), secrets `DMS_SECRET`/`ARCHIVE_SECRET`, ověření na farmě.
+
 ## 2026-09-06 (22) — Posudek 6: stejný čtenář podruhé, bod 1 na zastaralém snapshotu
 
 **Co se stalo:** vlastník poslal druhé kolo od stejného externího čtenáře jako Posudek 5, tentokrát s tvrzením, že hlavní nález (W19, dedup klíč sdílený mezi capability) je „stále neopravený", a citoval přesně předopravný kód `ExecutorHost.execute()`.

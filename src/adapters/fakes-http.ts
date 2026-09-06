@@ -132,10 +132,11 @@ export async function handleFakes(request: Request, deps: FakesDeps): Promise<Re
   if (path.startsWith("/dms/")) {
     const chaos = await readChaos(deps);
     if (chaos.invalid.length) return json({ error: "CHAOS_MODE_UNKNOWN", invalid: chaos.invalid }, 500);
-    if (!deps.secrets.dms) return json({ error: "AUTH_FAILED", message: "the DMS double has no DMS_SECRET; nothing can authenticate" }, 401);
-    if (bearer(request) !== deps.secrets.dms || chaos.dms === "auth-fail") return json({ error: "AUTH_FAILED" }, 401);
 
+    // Only the write (stamp) checks the bearer credential, matching FakeDmsAdapter: status/read never did (MEASUREMENT W22).
     if (path === "/dms/stamp" && method === "POST") {
+      if (!deps.secrets.dms) return json({ error: "AUTH_FAILED", message: "the DMS double has no DMS_SECRET; nothing can authenticate" }, 401);
+      if (bearer(request) !== deps.secrets.dms || chaos.dms === "auth-fail") return json({ error: "AUTH_FAILED" }, 401);
       const input = strings(await readJson(request), ["bytes", "stampText", "clientRef"]);
       if (!input) return json({ error: "BAD_REQUEST", message: "bytes, stampText, clientRef (strings) required" }, 400);
       const clientRef = input.clientRef as string;

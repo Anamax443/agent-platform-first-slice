@@ -3,39 +3,9 @@
 // without a rebuild, a protocol violation ends fail-closed, and the DMS / archive doubles keep the protocol the document
 // host will use (unit D). The handler under test is the one apf-fakes runs; here it is called in process over Request.
 import { describe, expect, it } from "vitest";
-import { handleFakes, type FakesDeps } from "../src/adapters/fakes-http.js";
 import { HttpRegistryAdapter, type HttpClient } from "../src/adapters/registry.js";
 import { createSlice, INVOICE_CZ, runIntake } from "./harness/index.js";
-
-interface WorldOptions {
-  chaos?: Record<string, string>;
-  secrets?: FakesDeps["secrets"];
-}
-
-/** The fakes Worker without the Worker: chaos in a Map, state in a Map, the same handler, a client that calls it directly. */
-function world(o: WorldOptions = {}) {
-  const chaos = new Map<string, string>(Object.entries(o.chaos ?? {}));
-  const store = new Map<string, string>();
-  const deps: FakesDeps = {
-    chaos: { get: async (k) => chaos.get(k) ?? null },
-    store: {
-      get: async (k) => store.get(k) ?? null,
-      put: async (k, v) => {
-        store.set(k, v);
-      },
-    },
-    secrets: o.secrets ?? { dms: "dms-secret", archive: "archive-secret" },
-  };
-  const client: HttpClient = { fetch: (url, init) => handleFakes(new Request(url, init), deps) };
-  const call = (path: string, init?: RequestInit) => handleFakes(new Request(`https://fakes.test${path}`, init), deps);
-  return { chaos, store, deps, client, call, registry: new HttpRegistryAdapter(client) };
-}
-
-const postJson = (body: unknown, token?: string): RequestInit => ({
-  method: "POST",
-  headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
-  body: JSON.stringify(body),
-});
+import { postJson, world } from "./harness/fakes-world.js";
 
 describe("INT-HTTP registry over the fakes protocol (same error classes as INT-FAIL, now across a network hop)", () => {
   it("INT-HTTP-001 ok -> validate SUCCEEDED, stamp written once, one registry call", async () => {
@@ -131,13 +101,14 @@ describe("INT-HTTP registry over the fakes protocol (same error classes as INT-F
 });
 
 describe("INT-HTTP DMS and archive doubles keep the protocol the document host will use (unit D)", () => {
-  it("INT-HTTP-007 DMS: bearer required, stamp is idempotent per clientRef, status and read reflect the write, unknown-once loses the answer but not the write", async () => {
+  it("INT-HTTP-007 DMS: bearer required only for the write, status and read are open reads (W22), stamp is idempotent per clientRef, unknown-once loses the answer but not the write", async () => {
     const w = world();
     const stamp = { bytes: "faktura", stampText: "PRIJATO", clientRef: "key-1" };
     expect((await w.call("/dms/stamp", postJson(stamp))).status).toBe(401);
     expect((await w.call("/dms/stamp", postJson(stamp, "wrong"))).status).toBe(401);
-    expect((await w.call("/dms/status?clientRef=key-1", { headers: { authorization: "Bearer dms-secret" } })).status).toBe(200);
-    expect(await (await w.call("/dms/status?clientRef=key-1", { headers: { authorization: "Bearer dms-secret" } })).json()).toEqual({ status: "NOT_FOUND" });
+    // status/read never checked a bearer, matching FakeDmsAdapter (MEASUREMENT W22): no Authorization header at all still works.
+    expect((await w.call("/dms/status?clientRef=key-1")).status).toBe(200);
+    expect(await (await w.call("/dms/status?clientRef=key-1")).json()).toEqual({ status: "NOT_FOUND" });
 
     const first = await w.call("/dms/stamp", postJson(stamp, "dms-secret"));
     expect(first.status).toBe(200);
