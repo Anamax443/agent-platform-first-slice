@@ -90,6 +90,49 @@ Hodnoticí list: **0 BLOCKER · 1 MAJOR** (PRINCIPAL je simulace, pentest neprob
 
 **Dispozice: Z.** Pořadí je rozhodnuté posudkem 1 a potvrzené posudkem 2: M4b → pentest → reálný model → třetí doména → M5/M6. Dopad na normu (část XVII) se píše průběžně do MEASUREMENT a sem; do zmrazených dokumentů až s evidencí z farmy.
 
-## Souhrn po čtyřech posudcích
+## Posudek 5 — čtvrtý čtenář, tentokrát nad skutečným kódem, ne jen STATUS (6. 9. 2026 pozdní večer)
 
-Shoda všech čtyř: norma nevyvrácena, testy chytají konstrukční chyby, reuse doložen. Jediný MAJOR (fyzická izolace) je plánovaný na M4b. Tři MINOR (AI-EVAL, čas vlastníka, provozní realita) jsou důsledkem lokální první iterace. Nic z posudků nevede k otevření rc3 normy; vše jde do části XVII jako evidence.
+**Zdroj:** externí posudek nad `agent-platform-first-slice`, výslovně nad TypeScript kódem (platform core, executory, workflow engine, security testy, mutation testy) a nad CI během `a5310fc` (`GET /actions/runs/34052742804`), ne jen nad `STATUS.html`. Celkové skóre **8,8 / 10**; deset dílčích skóre od architektury (9,2) po aktuální farm runtime (6,8).
+
+**Důležité upřesnění, které posudek nemohl vědět:** `a5310fc` je commit **před** HANDOFF (19) a před celkem C. V okamžiku posudku byl lokální `main` už 2 commity napřed (`80b2f32` HANDOFF (19), `0979b97` celek C), oba jen commitnuté, ne pushnuté — GitHub je zdroj pravdy jen pro to, co tam skutečně je. Dva z deseti bodů posudku jsou proto na `a5310fc` pravdivé, ale na `HEAD` už vyřešené (viz body 9 a 10 níže).
+
+Každé tvrzení bylo ověřeno přímo v aktuálním kódu (čtení konkrétních souborů), ne jen převzato z textu posudku.
+
+| Oblast | Skóre posudku | Poznámka |
+|---|---:|---|
+| Architektura | 9,2 | — |
+| Security design | 9,1 | — |
+| Security enforcement v kódu | 8,8 | — |
+| Tenant isolation | 8,4 | shoduje se s bodem 7 (jeden globální tenant na intake) |
+| AI → deterministic → executor separation | 9,6 | — |
+| Idempotence / retry / crash recovery | 8,1 | shoduje se s body 1–2 |
+| Testovací strategie | 9,4 | — |
+| Produkční připravenost core | 8,5 | — |
+| Aktuální Cloudflare farm runtime | 6,8 | na `a5310fc`; po celku C (registr přes skutečnou síť) by bylo vyšší |
+
+### Doporučení a dispozice (ověřeno v kódu, ne jen v textu posudku)
+
+| # | Doporučení posudku | Ověření v kódu | Dispozice | Kde se to projeví |
+|---|---|---|---|---|
+| 1 | **P0.** `ExecutorHost.idempotency` je jedna `Map<string, HandlerOutcome>` klíčovaná jen `idempotencyKey`, bez tenant/handler/capability. Napříč capabilities sdílejícími host (`document.stamp` + `document.archive` v `documentHost`) může stejný klíč vrátit výsledek jiné capability. | **POTVRZENO.** `src/platform/executor-host.ts:48,148` — jedna mapa pro celý host; `execute()` na řádku 148 hledá jen podle `key`, ne podle `capability`. `src/slice.ts:94-97` registruje `document.stamp` i `document.archive` do téhož `documentHost`. Orchestrátor dnes generuje klíč `workflowId:stepId:strategy:logicalAttempt` (`orchestrator.ts:245`), takže `stepId` (ne capability) kolizi v běžném toku brání — ale `ExecutorHost` jako znovupoužitelné primitivum to nezaručuje sám; test na tento konkrétní scénář (dvě capability, stejný klíč) neexistuje. | **P** — přijato, doporučen jako další malý celek: rozšířit klíč mapy nejméně o `capability` (minimum, řeší konkrétní nález), zvážit i `handlerId`; `IDEMPOTENCY_CONFLICT` při stejném klíči a jiném fingerprintu payloadu je hodnotné, ale je to druhá, oddělitelná změna. Nový test IDM na přesně tento scénář. | nový W-nález + `src/platform/executor-host.ts` + `tests/idm.test.ts`; navrhováno **před** nebo **v rámci** celku D, protože D dělá ze sdíleného `document-executor-host` živý produkční povrch |
+| 2 | **P0/P1.** Idempotency store hostu je jen `Map` v paměti procesu, po restartu prázdná; pro produkci chybí durable ledger. | **ČÁSTEČNĚ POTVRZENO, s upřesněním.** Norma i tento řez už mají durable recovery cestu: `reconcile()` (§3.3 krok 10) se ptá **vnějšího systému** (`dms.status(clientRef)`), ne lokální mapy — to je přesně `RES-CRASH-001` (`tests/res.test.ts:12`, ověřeno: pád po zápisu → `UNKNOWN_OUTCOME` → reconciliace → `dms.stampCalls` zůstává 1). Na farmě je ale `apf-document-host` samostatný Worker: mezi dvěma požadavky téměř jistě běží jiný isolát, takže lokální `Map` tam prakticky nikdy nededupuje — durabilita dnes stojí **celá** na `reconcile()` a na tom, že DMS/archiv umí `status(clientRef)`. To ještě nikde neověřeno na skutečném DMS (jen fake). | **PÚ** — durable ledger navíc není nutný, pokud `reconcile()` bude opravdu zapojený a testovaný pro **oba** handlery (stamp i archive) na farmě v celku D; bez toho je „exactly-once" na farmě jen teoretické. Zapsat jako podmínku celku D, ne jako samostatný úkol. | nový W-nález, `docs/NAVRHOVY-LIST-farma.md` krok D akceptační kritéria |
+| 3 | **P1.** `resourceTenant()` vracející `undefined` znamená „kontrola přeskočena" — nebezpečný vzor pro nové executory. | **POTVRZENO jako design smell, dnes NEEXPLOATOVATELNÉ.** `stamp-handler.ts:35`, `archive-handler.ts:22`, `email-executor/handler.ts:44` vrací `artifacts.get(id)?.tenantId` — `undefined` nastane jen když artefakt neexistuje, a `run()` v tom případě sám vrátí `ARTIFACT_NOT_FOUND` dřív, než by na chybějící kontrolu záleželo. Skutečné riziko je v **budoucích** executorech (`invoice.normalize`, `erp.post` z kroku 8), ne v dnešních třech handlerech. | **P** — přijato jako debt pro nové executory, ne jako oprava dnešního kódu. Explicitní `{status: "FOUND"|"NOT_FOUND"|"GLOBAL_RESOURCE"}` až při psaní první nové write capability po D. | `PLATFORM-NOTES` / část XVII; připomenout u kroku 8 |
+| 4 | **P1.** `ReviewService.decide()` bere `role`/`tenantId` z argumentu volajícího, ne z `TrustedContext`; nebezpečné, pokud se obalí HTTP endpointem. | **POTVRZENO, dnes BEZ ŽIVÉHO ENDPOINTU.** `src/platform/review.ts:107` — `by: {actorId, role, tenantId, ...}` jsou prostá tvrzení volajícího. Gateway na farmě dnes **nemá** `/review` vůbec (jen `/`, `/intake`, `/workflow/*`, `/audit.json`, `/chaos`, `/dispatch` 501) — posudek to sám správně odhaduje jako „netvrdím, že je dnes exploitable". | **P** — přijato jako tvrdá podmínka **před** implementací `/review` na farmě: rozhodnutí musí jít přes `IdentityProvider(actor)` → tenant/role z profilu, nikdy z těla requestu. | `docs/NAVRHOVY-LIST-farma.md`, precondition pro budoucí `/review` |
+| 5 | **P1.** Dokončit skutečné remote executor hosty + `/dispatch`. | Beze změny od HANDOFF (17)/(19): `hosts: false`, `/dispatch` stále 501. | **Z** — už je to plán (celek D a dál), nic nového. | HANDOFF, `NAVRHOVY-LIST-farma.md` |
+| 6 | **P1.** Access JWT verifikace před produkčním `/review`, `/purge`, API. | `accessJwtVerified: false` potvrzeno beze změny; `/purge` dnes existuje a je za Access politikou „Jen Ja" (jediný lidský účet), takže riziko okna je dnes malé, ale roste s každým dalším lidským identity. | **P** — potvrzuje mezeru 3 v `docs/SHODA-NIS2-ISO27001.md` (beze změny priority); tvrdý blok před druhou lidskou identitou nebo `/review`. | `SHODA-NIS2-ISO27001.md` mezera 3 |
+| 7 | **P2.** Tenant má jít z authenticated principal / membership, ne z form pole nebo globálního tenanta orchestrátoru. | **POTVRZENO.** `intakeTenant()` v gateway vrací vždy tenant identity `installation.profile.roles.orchestrator` — každý upload dnes patří jednomu tenantovi bez ohledu na to, kdo se přihlásil přes Access. | **Z** pro první instalaci jednoho zákazníka (`farm-bass443` = provozovatel sám); **P** jako tvrdý předpoklad, než tento řez poslouží druhému zákazníkovi — navazuje na W12 (instalační profil), potřebuje navíc mapování Access identity → tenant. | rozšíření W12 v MEASUREMENT, až bude druhý zákazník na obzoru |
+| 8 | **P2.** Vlastní minimalistická JCS implementace bez oficiálních RFC 8785 test vektorů. | **POTVRZENO.** `src/platform/canonical.ts` — vlastní rekurzivní `canonicalize()`, žádné testy proti oficiálním test vektorům. Dnes podepisuje a ověřuje jen tento repo sám sobě (žádný cizí jazyk na druhé straně). | **Z** — reálné riziko vzniká, až bude ověřovat podpis systém mimo tento TypeScript kód (např. pentest tooling, nebo hostitel v jiném jazyce). | poznámka do PLATFORM-NOTES, revisit před tím |
+| 9 | **P2.** Reálný registry adapter místo fake. | **JIŽ HOTOVO** — vyřešeno **stejný den** celkem C (commit `0979b97`, po `a5310fc`, který posudek viděl). `document.validate` dnes volá `HttpRegistryAdapter` přes service binding na `apf-fakes`. | **Vyřešeno** | HANDOFF (20) |
+| 10 | **P2.** Chaos/conformance testy přes skutečné Worker service boundaries. | **ČÁSTEČNĚ HOTOVO.** Celek C ověřil `wrangler dev` se dvěma Workery najednou (service binding `[connected]`, ruční ověření mimo CI); automatizované testy (`tests/fakes.test.ts`, `INT-HTTP-001..008`) volají `handleFakes()` přímo (in-process), ne přes skutečnou síťovou hranici v CI. | **PÚ** — ruční ověření splňuje bránu celku C; automatizovaný test přes skutečnou hranici zůstává otevřený, spadá pod již plánovaný „harness proti farmě přes `HttpDispatchTransport`". | HANDOFF, beze změny pořadí |
+
+### Co posudek nezměnil
+
+Pořadí celků (D dál, pak retence, krok 8, krok 4, harness proti farmě) zůstává. Žádný z nálezů nevede k otevření rc3 normy — body 1–4 jsou vlastnosti tohoto řezu (`ExecutorHost`, `ReviewService`), ne normy samotné; norma o nich mlčí stejně jako mlčela o instalačním profilu (W12), než ho řez vyřešil.
+
+### Co z toho jde do MEASUREMENT jako nové nálezy
+
+**W19** (idempotency store bez scope na capability — bod 1) a **W20** (durable dedup na farmě stojí celá na `reconcile()`, ne na lokální mapě — bod 2) zapsány do `docs/MEASUREMENT.md`. Zůstává otevřené, kdy se bod 1 opraví (samostatný celek, nebo součást D) — to rozhodne vlastník.
+
+## Souhrn po pěti posudcích
+
+Shoda všech pěti: norma nevyvrácena, testy chytají konstrukční chyby, reuse doložen. Posudek 5 je první, který četl skutečný kód místo STATUS, a našel jednu skutečnou konstrukční mezeru (idempotency scope, bod 1) — cenu si tedy definitivně vydělal (srov. posudek 1, bod 9). Jediný MAJOR ze všech posudků dohromady zůstává fyzická izolace (plánováno na M4b, teď za D). Nic nevede k otevření rc3 normy; vše jde do části XVII jako evidence.
