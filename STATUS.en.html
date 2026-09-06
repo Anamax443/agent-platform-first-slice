@@ -173,6 +173,7 @@ Orchestrators: shared journal, review service, audit · each runs only its own d
       <strong>⏳ Remaining</strong>
       <ul>
         <li class="todo"><b>M4b farm</b>: platform portability (no disk reads at import, <code>DispatchTransport</code>), <code>wrangler dev</code> locally, deployment on bass443 behind Access, email, queue, ADR-017 pentest</li>
+        <li class="todo"><b>Installation profile</b> (owner rule): identities, tenants, policy, domains and channel addresses move from <code>src/</code> and <code>contracts/policy/</code> to <code>config/&lt;installation&gt;/</code>, secrets by name only, lint for installation values in code; a new installation = a new profile, zero code changes</li>
         <li class="todo"><b>Owner time</b> in MEASUREMENT (M1–M4)</li>
         <li class="todo">M5: refresh <code>EVIDENCE-MATRIX</code> in foundation, Core Admission <code>EXISTS × 2</code> (candidates: result envelope, error object, ClockFixture, CredentialResolverFixture, conformance runner)</li>
         <li class="todo">M6: first shared contract package (schemas + conformance + fixtures)</li>

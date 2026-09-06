@@ -12,7 +12,9 @@ Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného p
 - `scripts/farm-check.mjs` + `npm run farm:check`: `wrangler deploy --dry-run` pro všech pět configů bez přihlášení. **Prošlo** (wrangler 4.129.0, workers-types nainstalované jako devDependency).
 - Ověřeno `wrangler whoami`: účet **bass443** (`a37a36270aa2db7382f62912ba5a0130`), kde je zóna maxferit.cz, Access i Email Sending.
 
-**Další krok = krok 1 návrhového listu (bez cloudu):** portabilita platformy. `src/platform/schemas.ts` a `policy.ts` čtou disk při importu (`readFileSync`, `projectRoot`), což ve Workeru neexistuje. Kontrakty a policy se budou importovat staticky jako JSON; testy musí zůstat zelené. Pak rozhraní `DispatchTransport` (`in-process` = dnešní `slice.ts`, `http` = klient na farmu), aby týchž 198 testů běželo proti oběma.
+**Pravidlo vlastníka (6. 9. 2026): instalační profil.** Doména, adresy kanálů, identity, tenanty, granty, allowlisty a klíče jsou vázané na konkrétního zákazníka a prostředí; kód musí být pro každou instalaci stejný a nová instalace nesmí vyžadovat zásah do `src/`. Tři vrstvy (kód / instalační profil `config/<instalace>/` / secrets) a lint na instalační hodnoty v kódu jsou popsané v `docs/NAVRHOVY-LIST-farma.md` (sekce „Instalační profil"). Audit ukázal dnešní porušení: konstanty v `src/slice.ts`, `recipientAllowlist` a granty v `contracts/policy/`, doména a `EMAIL_FROM` ve `wrangler.jsonc`.
+
+**Další krok = krok 1 návrhového listu (bez cloudu):** portabilita platformy **a instalační profil**. `src/platform/schemas.ts` a `policy.ts` čtou disk při importu (`readFileSync`, `projectRoot`), což ve Workeru neexistuje. Kontrakty se budou importovat staticky jako JSON; identity, tenanty a policy se přesunou do `config/local-fakes/` (testy) a `config/farm-bass443/` (farma), načítané přes schéma fail-closed; testy musí zůstat zelené. Pak rozhraní `DispatchTransport` (`in-process` = dnešní `slice.ts`, `http` = klient na farmu), aby týchž 198 testů běželo proti oběma.
 
 **Rozpracované / chybí:**
 1. Krok 1 (portabilita) a krok 2 (gateway + document-host + fakes na `wrangler dev`, harness proti localhost).

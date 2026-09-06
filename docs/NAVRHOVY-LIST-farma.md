@@ -206,9 +206,23 @@ Kontrakty jsou už zafixované (schémata, descriptory, policy). Žádný Worker
 
 ---
 
+## Instalační profil (pravidlo vlastníka, 6. 9. 2026)
+
+Kód je pro každou instalaci stejný. Vše, co je vázané na zákazníka nebo prostředí, žije mimo kód, ve třech vrstvách:
+
+| Vrstva | Co obsahuje | Kde žije | Kdo mění |
+|---|---|---|---|
+| **Kód** (stabilní) | platforma, komponenty, descriptory (claim), schémata, workflow definice, šablony e-mailů | `src/`, `contracts/*.schema.json`, `workflows/` | vývoj, přes CI |
+| **Instalační profil** (per zákazník / prostředí) | identity a jejich scopes, tenanty, platform policy (granty, allowlisty příjemců, limity), domény a adresy kanálů (`apf.maxferit.cz`, `apf-intake@`, `apf-notify@`), retence, chaos přepínače pro testy | `config/<instalace>/profile.json` + `config/<instalace>/policy/*.json`, výběr přes `INSTALLATION`; testy používají profil `local-fakes`, farma `farm-bass443` | vlastník instalace, bez zásahu do kódu |
+| **Secrets** | podpisový klíč, DMS / archiv / API klíče | nikdy v souborech: `wrangler secret`, Secrets Store, lokálně `.dev.vars`; profil nese jen **jména** referencí (`cred:dms-stamp`), ne hodnoty | vlastník instalace |
+
+Pravidla: profil má JSON schéma a načítá se **fail-closed** (chybějící nebo neplatný profil = nic nestartuje); v `src/` a `deploy/*/src` nesmí být doména, e-mailová adresa, tenant id ani actor id (lint jako rozšíření `arch-dep`, CI padne); test hotovosti = nová instalace znamená nový adresář v `config/` plus secrets a **nula změn v `src/`**.
+
+Co dnes pravidlo porušuje (audit 6. 9. 2026) a přesune se v kroku 1: konstanty tenantů a identit v `src/slice.ts`; granty a `recipientAllowlist` v `contracts/policy/*.json` (soubor policy je autorita instalace, ne kontrakt normy; do `contracts/` patří jen schéma policy); doména, route a `EMAIL_FROM` ve `wrangler.jsonc` (přes `env.<instalace>` bloky nebo `vars` odvozené z profilu).
+
 ## Pořadí stavby
 
-1. **Portabilita platformy** (bez cloudu, jde ověřit testy): `src/platform/schemas.ts` a `policy.ts` přestanou číst disk při importu, kontrakty a policy se importují staticky jako JSON. Testy zůstanou zelené. Pak `DispatchTransport` rozhraní: `in-process` (dnešní) a `http` (Worker klient).
+1. **Portabilita platformy a instalační profil** (bez cloudu, jde ověřit testy): `src/platform/schemas.ts` a `policy.ts` přestanou číst disk při importu, kontrakty se importují staticky jako JSON; identity, tenanty a policy se načítají z `config/<instalace>/` přes schéma, `src/slice.ts` dostane profil jako parametr. Lint na instalační hodnoty v `src/`. Testy zůstanou zelené s profilem `local-fakes`. Pak `DispatchTransport` rozhraní: `in-process` (dnešní) a `http` (Worker klient).
 2. **D1 gateway + D2 document-host + D5 fakes** na `wrangler dev` lokálně (miniflare umí DO, R2, KV, service bindings), harness proti `http://localhost`. Tady se ukáže první rozdíl mezi „funguje v procesu" a „funguje přes hranici".
 3. **Nasazení D1, D2, D5** na bass443 za Access, custom doména `apf.maxferit.cz`. Golden mastery `document-intake` proti farmě.
 4. **D3 email-executor** s Email Sending, **D4 mail-ingest** s Email Routing na `apf-intake@maxferit.cz`. Golden mastery `mail-intake`.
