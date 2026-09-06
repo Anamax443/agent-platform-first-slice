@@ -2,6 +2,22 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-06 (13) — Krok 3 „lite": skeleton NASAZEN na bass443 za Access, ověřeno z internetu přihlášením i service tokenem
+
+**Stav:** farma existuje. `https://apf.maxferit.cz/version` vrací `{"installation":"farm-bass443","tenants":2,"identities":3,"policies":6,"contracts":"agent-platform-foundation 1.0-rc2.1 12a3c32","killSwitch":false,"wired":false}` přes Access login (Jen Ja) i přes service token `apf-harness` (politika `harness`, Service Auth); bez tokenu 302 na Access login; `/dispatch` 501 (obchodní tok ještě není zapojený). Kód a testy beze změny (208), lokální brána zelená.
+
+**Co vzniklo v účtu bass443 (6. 9. 2026 ~13:45):** D1 `apf-audit` (id `ee8b714e-…`, region EEUR), R2 `apf-artifacts` (jurisdiction eu), KV `apf-chaos` a `apf-fakes-store`; Workers `apf-fakes`, `apf-document-host`, `apf-email-executor`, `apf-mail-ingest`, `apf-gateway` (custom doména `apf.maxferit.cz`, DNS vytvořil deploy); Access aplikace `apf-gateway` (naklikal vlastník) s politikami `Jen Ja` (Allow) a `harness` (Service Auth, service token `apf-harness`, platnost 1 rok). Žádné secrets zatím nasazené (skeleton je nepotřebuje).
+
+**Kód / config:** `config/farm-bass443/farm.json` má id D1 a KV (overlay; base configy drží nuly). `scripts/farm-deploy.mjs <instalace> [--bootstrap] [--dry-run]`: nasazení z generovaných configů v pořadí fakes → document-host → email-executor → mail-ingest → gateway; `--bootstrap` = první průchod bez `services` (gateway a hosty se navzájem odkazují). `.env.example` (v repu) + `.env` (lokálně, gitignore) s `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`, `APF_BASE_URL=apf.maxferit.cz`; harness je zatím nečte, to je celek „harness proti farmě".
+
+**Dvě provozní zjištění (MEASUREMENT řádek krok 3 lite):** (a) cyklus service bindingů vyžaduje dvoufázové první nasazení; (b) znovupoužitelná Access politika musí být k aplikaci výslovně připojená („Used by applications: 0" = token dostane 302).
+
+**Ověření z druhého PC:** `.env` tam není (gitignore); service token je v Zero Trust → Service credentials (secret už nejde zobrazit, případně vytvořit nový a přepsat politiku). Přihlášení wrangleru: `npx wrangler login` na bass443.
+
+**Další celek (krok 2, celek 2): journal v DO SQLite + audit v D1** pod stávajícími rozhraními `Journal`/`Audit`, implementace v `apf-gateway/src/`, ověřit `wrangler dev` a pak rovnou nasadit `farm-deploy farm-bass443`. Potom celek 3 `/dispatch` (Ed25519 ve workerd ověřit první, jinak WebCrypto) + secrets `wrangler secret put GATEWAY_SIGNING_KEY -c .wrangler/generated/farm-bass443/apf-gateway/wrangler.jsonc`.
+
+**Zbývá rozhodnout (Milan):** zda aliasy `apf-ops@`/`apf-supervisor@`/`apf-ops-t7@` míří do jedné schránky (krok 4).
+
 ## 2026-09-06 (12) — Čas vlastníka doplněn, limit 40 h vyhodnocen; vlastník chce ověření v provozu
 
 **Čas vlastníka (odhad vlastníka, potvrzeno „sedí"):** architektura a rozhodování 1,5 h · posudky a review 2 h · ladění 0,25 h · provoz a účty 0,5 h = **4,25 h za M0–M4b**. Zapsáno do MEASUREMENT (tabulka + vyhodnocení: s AI wall-clock ≈ 3 h 45 min celkem ≈ 8 h, limit 40 h na MUST sadu splněn s velkou rezervou; lidský čas se s asistentem přesouvá do rozhodování a review), STATUS CZ/EN (kpi, tabulka měření včetně řádků M4b, warnbox, Zbývá 5 hotové, rozhodnutí), POSUDKY (otevřené položky uzavřeny). Kód beze změny.

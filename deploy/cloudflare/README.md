@@ -2,7 +2,7 @@
 
 Návrh a rozhodnutí: [`docs/NAVRHOVY-LIST-farma.md`](../../docs/NAVRHOVY-LIST-farma.md). Tady je jen to, co je v adresáři a jak se s tím zachází.
 
-**Stav: krok 1 návrhového listu hotový, krok 2 zahájen.** Pět `wrangler.jsonc` s bindingy a pět Workerů, které odpovídají `501 NOT_WIRED` na všechno kromě `/health` a `/version`. `apf-gateway` má navázanou instalaci (`apf:installation`, sestavená fail-closed při importu) a `/version` ji hlásí; ověřeno na `wrangler dev` pro `local-fakes` i `farm-bass443`. Nic není nasazené. Napojení routeru, orchestrátoru a hostů je zbytek kroku 2.
+**Stav (6. 9. 2026): nasazeno na bass443, krok 1 hotový, krok 2 zahájen, krok 3 „lite" hotový.** Pět Workerů běží z generovaných configů instalace `farm-bass443`; gateway je na `apf.maxferit.cz` za Cloudflare Access a `/version` z internetu vrací `{"installation":"farm-bass443","tenants":2,"identities":3,"policies":6,…,"wired":false}`. Hosty nemají routu, jsou dostupné jen přes service bindingy. Všechno mimo `/health` a `/version` odpovídá `501 NOT_WIRED`: obchodní tok přes farmu ještě neprojde, každý další celek kroku 2 se nasazuje rovnou sem. `apf-gateway` má navázanou instalaci (`apf:installation`, sestavená fail-closed při importu); ověřeno i na `wrangler dev` pro `local-fakes`.
 
 Configy jsou dvouvrstvé: base `wrangler.jsonc` v tomto adresáři je **kód** (žádná doména, adresa, účet ani `routes`; hlídá `npm run arch`) a sám o sobě se nedá zabundlovat, protože Worker importuje modul `apf:installation`, který neexistuje jako soubor. `scripts/farm-config.mjs` pro každou `config/<instalace>/` vygeneruje ten modul (`.wrangler/generated/<instalace>/installation.ts`, statické importy profilu a policy) a configy všech deployables = base + alias `apf:installation` + `vars.INSTALLATION` + overlay `config/<instalace>/farm.json` (nepovinný: routes, `EMAIL_FROM`, `INTAKE_ADDRESS`). Z `.wrangler/generated/<instalace>/<deployable>/wrangler.jsonc` (git-ignored) se dry-runuje, spouští `wrangler dev` i nasazuje. Identity, tenanty, policy a adresy farmy jsou v `config/farm-bass443/` (rozhodnuto 6. 9. 2026).
 
@@ -35,18 +35,21 @@ node scripts/farm-config.mjs                         # jen vygenerovat .wrangler
 npx wrangler dev -c .wrangler/generated/local-fakes/apf-gateway/wrangler.jsonc     # lokálně s instalací local-fakes (miniflare: DO, R2, KV, service bindings)
 curl http://127.0.0.1:8787/version                   # {"installation":"local-fakes","tenants":2,"identities":3,"policies":6,...}
 npx wrangler whoami                                  # musí říct bass443 (a37a3627…), viz níže
-npx wrangler deploy -c .wrangler/generated/farm-bass443/apf-fakes/wrangler.jsonc   # vždy z vygenerovaného configu; pořadí: fakes → document-host → email-executor → mail-ingest → gateway
+node scripts/farm-deploy.mjs farm-bass443            # nasadí všech pět z generovaných configů v pořadí fakes → document-host → email-executor → mail-ingest → gateway
+node scripts/farm-deploy.mjs farm-bass443 --bootstrap   # jen při prvním nasazení instalace (cyklus service bindingů: první průchod bez services)
+curl -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" https://apf.maxferit.cz/version   # přes Access service tokenem z .env
 ```
 
 Service bindingy míří na jména Workerů, takže cíl musí existovat dřív než ten, kdo na něj ukazuje. Gateway jde poslední.
 
-## Před prvním nasazením (krok 3 návrhového listu)
+## Krok 3 návrhového listu: co je provedeno (6. 9. 2026) a co zbývá
 
-1. `wrangler whoami` = účet **bass443** (`a37a36270aa2db7382f62912ba5a0130`). Ověřeno 6. 9. 2026. Zóna `maxferit.cz`, Access, Email Sending jsou tam. Druhý účet `maxferit` sem nepatří.
-2. Prostředky: `wrangler d1 create apf-audit`, `wrangler r2 bucket create apf-artifacts --jurisdiction eu`, `wrangler kv namespace create apf-chaos`, `wrangler kv namespace create apf-fakes-store`; doplnit id do configů.
-3. Secrets přes `wrangler secret put` (nikdy do souboru): `GATEWAY_SIGNING_KEY` (Ed25519 PKCS8 PEM, `< key.pem`), `DMS_SECRET`, `ARCHIVE_SECRET`. Veřejný klíč do `SIGNING_PUBLIC_KEYS` každého hostu.
-4. Access aplikace pro `apf.maxferit.cz` se service tokenem pro harness (Access musí vzniknout v účtu, kde je zóna: bass443).
-5. Email Routing rule `apf-intake@maxferit.cz → apf-mail-ingest`; Email Sending pro `apf-notify@maxferit.cz` (doména je onboardovaná).
+1. ✅ `wrangler whoami` = účet **bass443** (`a37a36270aa2db7382f62912ba5a0130`). Zóna `maxferit.cz`, Access, Email Sending jsou tam. Druhý účet `maxferit` sem nepatří.
+2. ✅ Prostředky vytvořeny: D1 `apf-audit` (EEUR), R2 `apf-artifacts` (jurisdiction eu), KV `apf-chaos` a `apf-fakes-store`; jejich id jsou v `config/farm-bass443/farm.json` (overlay), base configy drží nuly. Nová instalace = nové prostředky + nový overlay.
+3. ✅ Nasazeno `node scripts/farm-deploy.mjs farm-bass443 --bootstrap`: gateway a hosty se navzájem odkazují service bindingy, proto první průchod bez `services`, druhý plný. Custom doména `apf.maxferit.cz` vznikla při deployi gateway.
+4. ✅ Access aplikace `apf-gateway` pro `apf.maxferit.cz` s politikou `Jen Ja` (naklikal vlastník); `/version` přes přihlášení funguje. Service token `apf-harness` + politika `harness` (Service Auth) připojená k aplikaci: ověřeno, `/version` a `/health` vrací 200 s hlavičkami `CF-Access-Client-Id/Secret`, `/dispatch` 501, bez tokenu 302. Hodnoty tokenu jsou v lokálním `.env` (vzor `.env.example`); nepřipojená politika („Used by applications: 0") znamená 302 i s tokenem.
+5. ⏳ Secrets přes `wrangler secret put` (nikdy do souboru): `GATEWAY_SIGNING_KEY` (Ed25519 PKCS8 PEM), `DMS_SECRET`, `ARCHIVE_SECRET`; veřejný klíč do `SIGNING_PUBLIC_KEYS` hostů. Skeleton je nepotřebuje, přijdou s celkem `/dispatch`.
+6. ⏳ Email Routing rule `apf-intake@maxferit.cz → apf-mail-ingest`, aliasy `apf-ops@`/`apf-supervisor@`/`apf-ops-t7@` a Email Sending pro `apf-notify@maxferit.cz` (krok 4).
 
 ## Rozhodnuto 6. 9. 2026 (asistent na „up to you" vlastníka)
 

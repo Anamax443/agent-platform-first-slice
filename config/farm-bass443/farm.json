@@ -1,10 +1,17 @@
 {
-  "$comment": "Per-deployable overlay merged onto deploy/cloudflare/<deployable>/wrangler.jsonc by scripts/farm-config.mjs. Everything here is installation-specific (routes, addresses); the base configs stay free of it. The generator itself adds vars.INSTALLATION and the apf:installation alias, so only what differs from the base belongs here.",
+  "$comment": "Per-deployable overlay merged onto deploy/cloudflare/<deployable>/wrangler.jsonc by scripts/farm-config.mjs. Everything here is installation-specific (routes, addresses, ids of resources created in the account bass443 on 2026-09-06); the base configs stay free of it and keep placeholder ids. The generator itself adds vars.INSTALLATION and the apf:installation alias, so only what differs from the base belongs here. Arrays replace the base array whole, so a binding list must be complete.",
   "apf-gateway": {
-    "routes": [{ "pattern": "apf.maxferit.cz", "custom_domain": true }]
+    "routes": [{ "pattern": "apf.maxferit.cz", "custom_domain": true }],
+    "d1_databases": [{ "binding": "AUDIT", "database_name": "apf-audit", "database_id": "ee8b714e-1574-406a-99ce-f5c0bb83055d" }]
   },
   "apf-email-executor": {
     "vars": { "EMAIL_FROM": "apf-notify@maxferit.cz", "EMAIL_FROM_NAME": "agent-platform-farm" }
   },
-  "apf-mail-ingest": { "vars": { "INTAKE_ADDRESS": "apf-intake@maxferit.cz" } }
+  "apf-mail-ingest": { "vars": { "INTAKE_ADDRESS": "apf-intake@maxferit.cz" } },
+  "apf-fakes": {
+    "kv_namespaces": [
+      { "binding": "CHAOS", "id": "1a8340c1ec8140728bd99472c87c875f" },
+      { "binding": "STORE", "id": "8917035b337540b3acd78607db03ff57" }
+    ]
+  }
 }
