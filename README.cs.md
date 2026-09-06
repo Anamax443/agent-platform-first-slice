@@ -43,7 +43,9 @@ npm run arch      # ARCH-DEP-001: komponenta neimportuje jinou komponentu ani vn
 
 ## Stav
 
-Viz [HANDOFF.md](HANDOFF.md) a [docs/MEASUREMENT.md](docs/MEASUREMENT.md).
+- [STATUS.html](STATUS.html) — stavový list ke čtení v prohlížeči (přehled, toky, měření, nálezy, rozhodnutí); anglicky: [STATUS.en.html](STATUS.en.html)
+- [HANDOFF.md](HANDOFF.md) — deník stavu, nejnovější nahoře
+- [docs/MEASUREMENT.md](docs/MEASUREMENT.md) — co norma stála a co zachytila
 
 ## Licence
 

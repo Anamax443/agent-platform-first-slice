@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AGENT-PLATFORM-FIRST-SLICE — Status</title>
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="88">🧩</text></svg>'>
+<style>
+  :root{--bg:#0c0f15;--panel:#141925;--panel2:#1b2233;--line:#2a3346;--fg:#e9edf5;--mut:#8b97ad;--acc:#4f9cf9;--good:#3ecf8e;--warn:#f0b35b;--danger:#e5766b}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15.5px/1.65 system-ui,'Segoe UI',Roboto,sans-serif}
+  .wrap{max-width:960px;margin:0 auto;padding:0 22px 80px}
+  header{border-bottom:1px solid var(--line);background:linear-gradient(180deg,#111725,#0c0f15)}
+  header .wrap{padding:26px 22px}
+  h1{margin:0;font-size:1.9rem;letter-spacing:.01em}
+  .sub{color:var(--mut);font-size:.95rem;margin-top:.3rem}
+  h2{font-size:1.25rem;margin:2rem 0 .7rem;padding-top:.6rem;border-top:1px solid var(--line)}
+  .pill{display:inline-block;padding:.15rem .7rem;border-radius:999px;font-size:.78rem;font-weight:700;margin-right:.3rem}
+  .prep{background:#4a3a1f;color:#f0d6a8;border:1px solid #6b5324}
+  .live{background:#12351f;color:#8ff0b8;border:1px solid #276b45}
+  .neutral{background:#1b2233;color:#c7d0e0;border:1px solid #2a3346}
+  a{color:var(--acc)}
+  code{background:var(--panel2);border:1px solid var(--line);padding:.1rem .4rem;border-radius:5px;font-size:.88em}
+  table{border-collapse:collapse;width:100%;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  th,td{text-align:left;padding:.62rem .9rem;border-bottom:1px solid var(--line);vertical-align:top;font-size:.95rem}
+  th{width:30%;color:var(--mut);font-weight:600}
+  table.cols th{width:auto;color:var(--fg);background:var(--panel2)}
+  tr:last-child th,tr:last-child td{border-bottom:0}
+  ul{margin:.4rem 0 0;padding-left:1.2rem}li{margin:.28rem 0}
+  .ok::before{content:"✅ "}.todo::before{content:"⏳ "}.ask::before{content:"❓ "}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:1rem 1.2rem}
+  .card.todo-card{border-left:4px solid var(--warn)}
+  .card.ask-card{border-left:4px solid var(--acc)}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:.8rem;margin:.8rem 0}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:.8rem 1rem}
+  .kpi b{display:block;font-size:1.6rem;line-height:1.2}
+  .kpi span{color:var(--mut);font-size:.85rem}
+  .note{background:#13241d;border:1px solid #27543f;border-radius:10px;padding:.7rem 1rem;color:#bfe8d4;margin:.8rem 0}
+  .note.warnbox{background:#2a2115;border-color:#6b5324;color:#f0d6a8}
+  .quote{border-left:3px solid var(--acc);padding:.2rem 0 .2rem 1rem;color:var(--mut);margin:.9rem 0}
+  pre{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:.9rem 1rem;overflow-x:auto;font-size:.85rem;line-height:1.5}
+  footer{color:var(--mut);font-size:.85rem;margin-top:2.5rem;border-top:1px solid var(--line);padding-top:1rem}
+  @media(max-width:700px){.grid,.kpis{grid-template-columns:1fr 1fr}th{width:40%}}
+  @media(max-width:480px){.grid,.kpis{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <h1>🧩 AGENT-PLATFORM-FIRST-SLICE — Status</h1>
+  <div class="sub">First implementation of the <code>agent-platform-foundation</code> 1.0-rc2.1 norm · snapshot as of 6 Sep 2026</div>
+  <div class="sub" style="margin-top:.5rem">Language: <a href="STATUS.html">Čeština</a> · <b>English</b></div>
+</div></header>
+
+<div class="wrap">
+
+  <h2>Overview</h2>
+  <table>
+    <tr><th>What it is</th><td>The first code written against the norm for a "LEGO" farm of AI agents, deterministic modules and single-purpose write executors. Two vertical slices over five capabilities, built to <b>measure what the norm costs and what its tests catch</b>. Not a product, not a shared runtime.</td></tr>
+    <tr><th>Core in one sentence</th><td><b>The model recognises; deterministic code decides and writes.</b> Every write passes the executor's ten-step decision chain, the AI identity holds no write scope, and every ending of a flow is explicit and discoverable by one key.</td></tr>
+    <tr><th>Repo</th><td><a href="https://github.com/Anamax443/agent-platform-first-slice"><code>Anamax443/agent-platform-first-slice</code></a> · public · created 5 Sep 2026 · norm: <a href="https://github.com/Anamax443/agent-platform-foundation"><code>agent-platform-foundation</code></a> (frozen at 1.0-rc2.1, contracts copied here and pinned)</td></tr>
+    <tr><th>State</th><td><span class="pill live">M1–M4 done</span> <span class="pill prep">no cloud, no real model</span>
+      <b>Two states on purpose.</b> <i>Done</i> — both flows run end to end, the norm's MUST set is green on three write executors, CI is green.
+      <i>No cloud</i> — everything runs locally with fakes (LLM, registry, DMS, archive, SMTP), no API key, PRINCIPAL isolation is simulated inside one process. Deployment to Workers is the next step.</td></tr>
+    <tr><th>Checks</th><td>CI on every push (Node 24): typecheck, Vitest, <code>ARCH-DEP-001</code> + clock lint, secret scan (gitleaks), link check (lychee). Last run <span class="pill live">green</span> for commit <code>208ae0d</code>.</td></tr>
+  </table>
+
+  <div class="kpis">
+    <div class="kpi"><b>198</b><span>tests in 10 files</span></div>
+    <div class="kpi"><b>46</b><span>Test IDs from the verification contract</span></div>
+    <div class="kpi"><b>5</b><span>capabilities in 2 flows</span></div>
+    <div class="kpi"><b>≈ 1 h 50 min</b><span>AI wall-clock M1–M4 · owner time not measured</span></div>
+  </div>
+
+  <h2>Two flows</h2>
+  <table class="cols">
+    <tr><th>Workflow</th><th>Steps</th><th>What it proves</th></tr>
+    <tr><td><code>document-intake.v1</code></td><td><code>document.classify</code> (AI) → <code>document.validate</code> (deterministic + second signal) → <code>document.stamp</code> (executor LOW, LOGICAL)</td><td>The recommended first slice of XII.G. Immutable original, enum allowlist over model output, the stamp as a derivation.</td></tr>
+    <tr><td><code>mail-intake.v1</code></td><td><code>mail.ingest</code> (own host) → <b>the same three document capabilities</b> → <code>email.send</code> (executor MEDIUM, <b>PRINCIPAL</b>)</td><td>A second domain consumes the first without touching its providers. Only platform policy may name the mail recipient, never the mail body.</td></tr>
+  </table>
+  <div class="note">
+    <b>First hard evidence of the LEGO principle:</b> the second flow added <b>45 lines</b> to the platform. A new component from another domain cost a descriptor + handler + fixtures + MUST set, no infrastructure. Exactly what the norm promises (VC §7).
+  </div>
+  <pre>Gateway ──Ed25519──► Router: schema → mechanism → binding → context → scope → version → policy → input schema → handler
+   ├─ document.classify   AI, enum allowlist from the output schema                              sideEffects: none
+   ├─ document.validate   registry + second signal by rules (CLASSIFICATION_DISPUTED → review)   sideEffects: none
+   ├─ document-executor-host   LOGICAL · cred:dms-stamp, cred:archive-store
+   │     ├─ document.stamp  ·  reconcile via clientRef = idempotencyKey                           internal-write
+   │     └─ document.archive                                                                      internal-write
+   ├─ mail-ingest          own host, no credentials · immutable original                         internal-write
+   └─ email-executor       PRINCIPAL · own credential domain (cred:smtp only)
+         └─ email.send     ·  recipient only from the policy allowlist · IRREVERSIBLE             external-write
+Orchestrators: shared journal, review service, audit · each runs only its own definition</pre>
+
+  <h2>What the repo contains</h2>
+  <table>
+    <tr><th><code>contracts/</code></th><td>Frozen schemas pinned in <code>CONTRACTS-VERSION</code> (never edited here) and <b>platform policies per capability</b> (ADR-016): who may call what for which tenant; for <code>email.send</code> also the recipient allowlist.</td></tr>
+    <tr><th><code>src/platform/</code></th><td>Injected clock, ids, JCS, Ed25519 signing with validity windows and grace period, gateway, router, policy, executor host with the decision chain and reconciliation hook, credential resolver (strict/mutant), journal, orchestrator, review service, append-only audit, artifacts with capacity. Local to this project, not a package (P2).</td></tr>
+    <tr><th><code>src/components/</code></th><td>Five components: <code>document-classifier</code>, <code>document-validator</code>, <code>document-executor-host</code> (stamp + archive), <code>mail-ingest</code>, <code>email-executor</code>. Each has a descriptor, input and output schema and a handler; each imports only <code>platform/api</code>.</td></tr>
+    <tr><th><code>src/adapters/</code></th><td>Contracts of external systems (LLM, registry, DMS, archive, SMTP) with fakes and failure modes: timeout, 5xx, business error, schema-valid nonsense, unknown outcome, crash after write, full storage.</td></tr>
+    <tr><th><code>workflows/</code></th><td>Two versioned, immutable flow definitions; running instances pin their version.</td></tr>
+    <tr><th><code>conformance/</code></th><td>Per capability: fixtures (canonical, damaged, injection, boundary, error), golden outputs with MUST/DON'T CARE, <code>errors.md</code>, <code>compat.md</code>. Per workflow: scenarios and golden master.</td></tr>
+    <tr><th><code>tests/</code></th><td>One file per family (<code>ctr</code>, <code>sec</code>, <code>mut</code>, <code>idm</code>, <code>wf</code>, <code>res</code>, <code>int</code>, <code>evd</code>, <code>arch</code>) plus <code>mail</code> for the second flow. Test names carry Test IDs, so the run log is evidence.</td></tr>
+    <tr><th><code>docs/MEASUREMENT.md</code></th><td><b>The main thing.</b> Hours, lines, findings caught by tests, waste by lean category, what had to be worked around and what is proposed back to the norm.</td></tr>
+    <tr><th><code>HANDOFF.md</code></th><td>State diary, append-only, newest first. Source of truth for continuing from another machine.</td></tr>
+  </table>
+
+  <h2>Where the norm shows in the code</h2>
+  <table>
+    <tr><th>F1 privilege boundary</th><td>The AI identity holds a single scope (<code>document.classify</code>); the router refuses everything else; writes only through an executor host with an allowlist; <code>email.send</code> takes a reference, only policy supplies the address.</td></tr>
+    <tr><th>F2 untrusted data</th><td>Document text inside delimiters, model output only through an enum; the validator recomputes the value by rules over the text with instruction-like lines removed; a stamp only with validation evidence; the mail template only from an enum and an id.</td></tr>
+    <tr><th>F4 trusted context</th><td>Context derived from identity, signature over <code>{message, context}</code>; a forged tenant, scope, payload or an unsigned envelope ends in <code>CONTEXT_BINDING_INVALID</code>; key rotation without losing messages.</td></tr>
+    <tr><th>F5 / F6 states and writes</th><td><code>UNKNOWN_OUTCOME</code> with bounded reconciliation and then review, never a blind resend; deadline with clock tolerance; one idempotency key = one side effect, for IRREVERSIBLE also dedup at the provider.</td></tr>
+    <tr><th>F7 evidence</th><td>Immutable original, derivation with <code>derivedFrom</code>, provenance on every value, append-only audit, the whole flow discoverable by <code>correlationId</code>.</td></tr>
+    <tr><th>P1 verifiable</th><td>Five MUST mutants with a negative branch on both hosts: the tests provably can fail.</td></tr>
+  </table>
+
+  <h2>Measurement</h2>
+  <table class="cols">
+    <tr><th>Milestone</th><th>AI wall-clock</th><th>Lines</th><th>Findings</th></tr>
+    <tr><td>M1–M3 first flow (3 components, conformance, tests)</td><td>≈ 1 h 15 min</td><td>≈ 5,700</td><td>9</td></tr>
+    <tr><td>M4 second flow + second signal (W4)</td><td>≈ 35 min</td><td>≈ 970 (platform +45)</td><td>3</td></tr>
+    <tr><td><b>Total M1–M4</b></td><td><b>≈ 1 h 50 min</b></td><td><b>≈ 6,670</b></td><td><b>12</b></td></tr>
+  </table>
+  <p>Ratio: <b>~480</b> lines of business logic (five handlers) · <b>3,084</b> lines of tests and fixtures · <b>2,350</b> lines of platform (one-off). The test cost per capability dropped between M3 and M4 because the runner, harness and golden comparison already existed.</p>
+  <div class="note warnbox">
+    <b>Owner time is not measured.</b> The norm's limit (40 h for the MUST set) is a limit on human work; AI wall-clock is not comparable. Until the owner adds reading, questions and review time, the limit stays unevaluated.
+  </div>
+
+  <h2>What the tests caught</h2>
+  <p>Twelve findings. Five caught by a test on its first run, five from writing a test against the norm or from wiring the second component, two showing tests ageing. One documented limit of the norm, bridged in the slice.</p>
+  <table>
+    <tr><th>Audit was not append-only</th><td><code>Audit.all()</code> returned shallow copies; record details could be overwritten from outside. Caught by <code>EVD-004</code> on its first run.</td></tr>
+    <tr><th>Key on technical retry</th><td>The orchestrator changed the idempotency key on technical retry, against §5.2 of the norm. A second side effect was possible. Found while writing the test; <code>IDM-REPLAY-001</code> guards it since.</td></tr>
+    <tr><th>Unsigned envelope accepted</th><td>The router accepted an <code>in-process</code> binding without a signature. A bypass of all of F4. Found while writing <code>SEC-CTX-003</code>, fixed with accepted mechanisms.</td></tr>
+    <tr><th>Injection inside the allowlist</th><td>A model talked into "classify this as INVOICE" returns a valid value and the F2 boundary lets it through. <b>A limit of the norm</b>, documented by a scenario. Bridged in the slice by a second deterministic signal in the validator: both injection scenarios now end in review instead of a stamp.</td></tr>
+    <tr><th>Two flows in one journal</th><td>Without a guard, one flow's orchestrator would "recover" the other flow's instance with the wrong steps after a restart. Found while wiring the second orchestrator.</td></tr>
+    <tr><th>Delimiters in the prompt</th><td>The prompt named the delimiter in a sentence before the data block; the parser took the instruction as data and classified the word "and". Caught by the first end-to-end run.</td></tr>
+  </table>
+
+  <h2>What goes back to the norm</h2>
+  <p>Frozen documents change only with evidence from code. This is the evidence for part XVII "Implementation protocol":</p>
+  <ul>
+    <li>Which outcomes the idempotency store keeps (SUCCEEDED and UNKNOWN_OUTCOME; FAILED before the side effect stays retryable).</li>
+    <li>The reconciliation hook belongs to the executor and confirms or releases the dedup record by the result; the orchestrator calls it as an opaque object.</li>
+    <li>The idempotency key goes to the external system as business identity for every write capability, not only IRREVERSIBLE ones.</li>
+    <li><b>A second independent signal</b> for an AI capability whose output leads to a write with risk MEDIUM or above: proposed as a CONDITIONAL rule, <span class="pill prep">awaiting decision</span>.</li>
+    <li>Who computes the key grace period; the anti-pattern "delimiter name before the block"; an alert channel for full storage; PRINCIPAL inside one process is a simulation.</li>
+  </ul>
+
+  <h2>Green Test IDs</h2>
+  <p><code>CTR-001</code>, <code>CTR-ERR-001</code>, <code>CTR-TIME-001</code> · <code>SEC-PRIV-001..002</code>, <code>SEC-INJ-001..002</code>, <code>SEC-CTX-002..004</code>, <code>SEC-ART-001</code>, <code>SEC-CRED-002..003</code>, <code>SEC-HOST-001..002</code> · <code>MUT-PRIV-001</code>, <code>MUT-CTX-001</code>, <code>MUT-IDM-001..002</code>, <code>MUT-HOST-001</code> · <code>IDM-REPLAY-001</code>, <code>IDM-DEADLINE-001..002</code>, <code>IDM-RET-002</code>, <code>IDM-STRAT-001</code> · <code>WF-UNK-001..003</code>, <code>WF-REV-003..004</code>, <code>WF-VER-001</code> · <code>RES-CRASH-001</code>, <code>RES-DEP-001</code>, <code>RES-STOR-001</code> · <code>INT-FAIL-001..004</code>, <code>INT-E2E-001</code>, <code>INT-REPLACE-001</code> · <code>EVD-001..005</code> · <code>ARCH-DEP-001</code>.</p>
+  <p>Not running (and why): <code>TEN-*</code>, <code>CDC-*</code>, <code>COMP-*</code> are not activated by any profile; <code>WF-VER-002..004</code>, <code>RES-QUEUE-001</code>, <code>SEC-CRED-001</code>, <code>SEC-TOOL-001</code> have no mechanism in the slice; <code>AI-EVAL-*</code> needs a real model. Nothing is skipped silently.</p>
+
+  <h2>Done vs. remaining</h2>
+  <div class="grid">
+    <div class="card">
+      <strong>✅ Done</strong>
+      <ul>
+        <li class="ok">M0 skeleton, contracts pinned to the norm</li>
+        <li class="ok">M1 platform + five components with descriptors and schemas</li>
+        <li class="ok">M2 conformance packages for five capabilities, golden masters of two flows</li>
+        <li class="ok">M3 MUST set + mutants, INT, RES, EVD, ARCH</li>
+        <li class="ok">M4 second flow, PRINCIPAL executor, SEC-CTX-002 between flows</li>
+        <li class="ok">W4 second signal in the validator</li>
+        <li class="ok">MEASUREMENT with 12 findings and 11 proposals for the norm</li>
+        <li class="ok">CI green, README CS/EN, HANDOFF, ARCHITECTURE, BUILD</li>
+      </ul>
+    </div>
+    <div class="card todo-card">
+      <strong>⏳ Remaining</strong>
+      <ul>
+        <li class="todo"><b>Owner time</b> in MEASUREMENT (M1–M4)</li>
+        <li class="todo">M5: refresh <code>EVIDENCE-MATRIX</code> in foundation, Core Admission <code>EXISTS × 2</code> (candidates: result envelope, error object, ClockFixture, CredentialResolverFixture, conformance runner)</li>
+        <li class="todo">M6: first shared contract package (schemas + conformance + fixtures)</li>
+        <li class="todo">Part XVII in foundation from N5–N12 and W1–W11</li>
+        <li class="todo">Host isolation pentest per ADR-017 over a real PRINCIPAL deployable</li>
+        <li class="todo">Backoff and circuit breaker for technical retry, alert on full storage (with a durable queue)</li>
+        <li class="todo">A real model behind <code>document.classify</code> and with it <code>AI-EVAL</code></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card ask-card" style="margin-top:1rem">
+    <strong>❓ Decisions waiting for the owner</strong>
+    <ul>
+      <li class="ask">Does the second signal (W4) go into the norm as a CONDITIONAL rule, or stay an implementation choice of the slice?</li>
+      <li class="ask">Order: M5/M6 now, or the isolation pentest per ADR-017 first?</li>
+    </ul>
+  </div>
+
+  <footer>
+    Part of the rolling documentation of AGENT-PLATFORM-FIRST-SLICE. Measurement: <code>docs/MEASUREMENT.md</code>, architecture: <code>docs/ARCHITECTURE.md</code>, state diary: <code>HANDOFF.md</code>.
+    Repo: <a href="https://github.com/Anamax443/agent-platform-first-slice">github.com/Anamax443/agent-platform-first-slice</a> · norm: <a href="https://github.com/Anamax443/agent-platform-foundation">agent-platform-foundation</a>
+  </footer>
+
+</div>
+</body>
+</html>

@@ -43,7 +43,9 @@ npm run arch      # ARCH-DEP-001: no component imports another component or plat
 
 ## Status
 
-See [HANDOFF.md](HANDOFF.md) and [docs/MEASUREMENT.md](docs/MEASUREMENT.md).
+- [STATUS.en.html](STATUS.en.html) — status page for the browser (overview, flows, measurement, findings, decisions); Czech: [STATUS.html](STATUS.html)
+- [HANDOFF.md](HANDOFF.md) — state diary, newest first
+- [docs/MEASUREMENT.md](docs/MEASUREMENT.md) — what the norm cost and what it caught
 
 ## License
 
