@@ -115,6 +115,41 @@ const artifactCard = (a: Artifact): string => {
   return `<div class="card"><b>${esc(a.artifactId)}</b> <span class="muted">${kind}</span><br><small>${meta}</small>${body}</div>`;
 };
 
+const pick = (o: unknown, ...path: string[]): unknown => path.reduce<unknown>((cur, k) => (cur && typeof cur === "object" ? (cur as Record<string, unknown>)[k] : undefined), o);
+
+/** What the flow produced so far, in the owner's words: input, text, type, validation, stamp, notification, state. */
+const renderOutput = (v: InstanceView): string => {
+  const i = v.instance;
+  const original = v.artifacts.find((a) => !a.derivedFrom);
+  const derived = v.artifacts.find((a) => a.derivedFrom);
+  const subject = v.artifacts.find((a) => a.artifactId === i.input.artifactId) ?? derived ?? original;
+  const lastOf = (capability: string) => [...i.steps].reverse().find((s) => s.capability === capability);
+  const planned = new Set(i.steps.map((s) => s.capability));
+  const stepCell = (capability: string, ok: (payload: Record<string, unknown>) => string): string => {
+    const s = lastOf(capability);
+    if (!s) return planned.size === 0 ? '<span class="muted">tok ještě nezačal</span>' : '<span class="muted">nedosaženo, tok skončil dřív</span>';
+    if (s.status === "SUCCEEDED" && s.result?.payload) return ok(s.result.payload);
+    if (s.status === "FAILED") return `<span class="badge FAILED">FAILED</span> <code>${esc(s.result?.error?.code ?? "")}</code> <small>${esc(s.result?.error?.message ?? "")}</small>`;
+    if (s.status === "WAITING") return `<span class="badge WAITING">WAITING</span> ${esc(s.result?.waitReason ?? "")}`;
+    return `<span class="badge ${esc(s.status)}">${esc(s.status)}</span>`;
+  };
+  const rows = [
+    ["Vstup", original ? `${esc(original.contentType ?? "text/plain")} · ${kb(original.byteLength ?? original.bytes.length)} · od <code>${esc(original.receivedFrom)}</code>` : '<span class="muted">žádný</span>'],
+    [
+      "Text dokumentu",
+      subject
+        ? `${derived ? `vytěžen z originálu (<code>${esc(derived.producer)}</code>)` : "vložený text"}, ${subject.bytes.length} znaků<details><summary>zobrazit</summary><pre>${esc(subject.bytes.slice(0, 6000))}${subject.bytes.length > 6000 ? "\n…" : ""}</pre></details>`
+        : '<span class="muted">žádný</span>',
+    ],
+    ["Typ dokumentu (classify)", stepCell("document.classify", (p) => `<b>${esc(pick(p, "documentType", "value"))}</b> <small>zdroj ${esc(pick(p, "documentType", "source"))}, jistota ${esc(pick(p, "documentType", "confidence"))}</small>`)],
+    ["Validace (validate)", stepCell("document.validate", (p) => `<b>${esc(pick(p, "documentType", "validation", "status"))}</b> <small>${esc(pick(p, "documentType", "validation", "provider"))}, razítko ${pick(p, "stampAllowed") ? "povoleno" : "zamítnuto"}</small>`)],
+    ["Razítko (stamp)", stepCell("document.stamp", (p) => `<b>${esc(pick(p, "stampText"))}</b> <small>DMS <code>${esc(pick(p, "dmsRef"))}</code>, orazítkovaný artefakt <code>${esc(pick(p, "stampedArtifactId"))}</code></small>`)],
+    ...(i.workflow === "mail-intake" ? [["Notifikace (email.send)", stepCell("email.send", (p) => `<b>odesláno</b> <small>příjemce <code>${esc(pick(p, "recipientRef"))}</code>, id <code>${esc(pick(p, "smtpMessageId"))}</code></small>`)]] : []),
+    ["Stav toku", `<span class="badge ${esc(i.status)}">${esc(i.status)}</span> <small>${i.status === "SUCCEEDED" ? "všechny kroky proběhly" : i.status === "WAITING" ? `čeká na ${esc(i.waiting?.reason)}` : i.status === "FAILED" ? "tok skončil explicitně, viz kroky níže" : ""}</small>`],
+  ];
+  return `<h2>Výstup</h2><div class="card"><table>${rows.map(([k, val]) => `<tr><th style="width:14rem">${k}</th><td>${val}</td></tr>`).join("")}</table></div>`;
+};
+
 export function renderInstance(v: InstanceView): string {
   const i = v.instance;
   const steps = i.steps
@@ -130,10 +165,12 @@ export function renderInstance(v: InstanceView): string {
     `${i.workflow} ${v.workflowId}`,
     `<header><h1>Instance toku <code>${esc(i.workflow)}/v${esc(i.workflowVersion)}</code></h1><span class="badge ${esc(i.status)}">${esc(i.status)}</span></header>
 <div class="card"><small>id <code>${esc(v.workflowId)}</code> · korelace <code>${esc(i.correlationId)}</code> · tenant <code>${esc(i.tenantId)}</code> · aktér <code>${esc(i.actorId)}</code> · založeno ${esc(i.createdAt)} · změněno ${esc(i.updatedAt)} · publikovaný stav <code>${esc(JSON.stringify(i.published))}</code>${i.waiting ? ` · čeká na <code>${esc(i.waiting.reason)}</code> do ${esc(i.waiting.deadline)}` : ""}</small></div>
+${renderOutput(v)}
 <h2>Kroky</h2><div class="card"><table><tr><th>Krok</th><th>Stav</th><th>Pokus / logický</th><th>Výsledek</th></tr>${steps}</table>
 <small class="muted">Krok, který skončil <code>DEPENDENCY_UNAVAILABLE</code>, narazil na část farmy, která ještě není zapojená; orchestrátor ho zkusil tolikrát, kolik dovoluje definice toku, a pak instanci explicitně ukončil.</small></div>
 <h2>Artefakty</h2>${v.artifacts.map(artifactCard).join("") || '<div class="card muted">žádné</div>'}
 <h2>Audit této instance</h2><div class="card"><table><tr><th>Čas</th><th>Druh</th><th>Capability</th><th>Detail</th></tr>${audit}</table></div>
-<nav><a href="/">Nový dokument</a><a href="/workflow/${esc(v.workflowId)}.json">JSON</a><a href="/audit.json">Společný audit (D1)</a></nav>`,
+<nav><a href="/">Nový dokument</a><a href="/workflow/${esc(v.workflowId)}.json">JSON</a><a href="/audit.json">Společný audit (D1)</a></nav>
+<form method="post" action="/workflow/${esc(v.workflowId)}/purge" onsubmit="return confirm('Smazat instanci včetně originálu a derivací? Ve společném auditu zůstane záznam PURGED.')"><input type="hidden" name="reason" value="owner request from instance page"><button type="submit" style="background:#991b1b;margin-top:1.5rem">Smazat instanci (originál, derivace, objekt)</button></form>`,
   );
 }

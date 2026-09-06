@@ -171,6 +171,42 @@ export class WorkflowInstance extends DurableObject<Env> {
     return { workflowId: inst.workflowId, installation: INSTALLATION, instance: inst, artifacts: this.artifacts.list(), audit: [...this.audit.all()] };
   }
 
+  /**
+   * Remove the instance and every artifact it holds (retention, or test data on the owner's request): R2 objects,
+   * then the object's whole storage. The shared D1 trail keeps its append-only records and gets one more: PURGED.
+   */
+  async purge(by: string, reason: string): Promise<{ workflowId: string; artifacts: number; r2Deleted: number }> {
+    const inst = this.journal.list()[0];
+    if (!inst) throw new Error("no instance in this object");
+    const artifacts = this.artifacts.list();
+    let r2Deleted = 0;
+    for (const a of artifacts) {
+      const key = a.location ?? `${a.derivedFrom ? "derived" : "originals"}/${a.tenantId}/${a.sha256}`;
+      if (await this.env.ARTIFACTS.head(key)) {
+        await this.env.ARTIFACTS.delete(key);
+        r2Deleted += 1;
+      }
+    }
+    await ensureD1Audit(this.env.AUDIT);
+    const record = {
+      auditId: newId("aud"),
+      at: iso(this.clock.now()),
+      kind: "state",
+      workflowId: inst.workflowId,
+      correlationId: inst.correlationId,
+      tenantId: inst.tenantId,
+      actorId: by,
+      details: { status: "PURGED", reason, artifacts: artifacts.length, r2Deleted, previousStatus: inst.status },
+    };
+    await this.env.AUDIT.prepare("INSERT OR IGNORE INTO audit (audit_id, at, kind, correlation_id, workflow_id, tenant_id, actor_id, capability, json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(record.auditId, record.at, record.kind, record.correlationId, record.workflowId, record.tenantId, record.actorId, null, JSON.stringify(record))
+      .run();
+    await this.ctx.storage.deleteAll();
+    // deleteAll drops the tables too; the object may stay alive, so bring the (empty) schema back for the next call.
+    for (const stmt of DDL) this.ctx.storage.sql.exec(stmt);
+    return { workflowId: inst.workflowId, artifacts: artifacts.length, r2Deleted };
+  }
+
   private orchestratorFor(def: WorkflowDef): Orchestrator {
     return new Orchestrator({
       workflow: def,
@@ -322,6 +358,16 @@ export default {
       const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(workflowId));
       await stub.intake({ workflowId, workflow, tenantId, receivedFrom: from, original, ...(extraction ? { extraction } : {}), ...(stampText ? { stampText } : {}) });
       return Response.redirect(new URL(`/workflow/${workflowId}`, url).toString(), 303);
+    }
+
+    const purge = /^\/workflow\/(wf-[A-Za-z0-9]+)\/purge$/.exec(url.pathname);
+    if (purge && request.method === "POST") {
+      const form = await request.formData().catch(() => new FormData());
+      const reason = String(form.get("reason") ?? "owner request").slice(0, 200);
+      const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(purge[1] as string));
+      if (!(await stub.view())) return Response.json({ error: "NOT_FOUND", workflowId: purge[1] }, { status: 404 });
+      const result = await stub.purge(receivedFrom(request), reason);
+      return html(renderError("Instance smazána", "Originál, derivace i obsah objektu instance jsou pryč; ve společném auditu (D1) zůstal záznam PURGED.", { ...result }), 200);
     }
 
     const m = /^\/workflow\/(wf-[A-Za-z0-9]+)(\.json)?$/.exec(url.pathname);

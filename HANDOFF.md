@@ -2,6 +2,20 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-06 (16) — Smazání instance (purge) a blok „Výstup" na stránce instance
+
+**Pokyny vlastníka:** „klidně ji smaž, je to test" (reálná faktura) a „dej mi na druhé straně i něco, kde uvidím, co je výstup"; otázka „nemáš tam AI na vytahování textu a posuzování?" → odpověď: vytěžení textu AI dělá (toMarkdown), posouzení = classify přijde v celku B, a to rovnou s Workers AI jako strategií „llm", pravidla jako druhá strategie, křížový signál ve validate.
+
+**Hotové (nasazeno ~20:10, ověřeno tokenem):**
+- `WorkflowInstance.purge(by, reason)`: smaže R2 objekty všech artefaktů instance (originály i derivace), zapíše do D1 záznam `state {status: PURGED, reason, artifacts, r2Deleted, previousStatus}` pod aktérem `access:<e-mail>`, pak `storage.deleteAll()` a znovu DDL (objekt může zůstat živý; bez toho další volání padalo na „no such table" → 500 místo 404). Auditní řádky instance v D1 zůstávají (append-only; nesou id, otisky, e-mail odesílatele, ne obsah).
+- Route `POST /workflow/:id/purge` (form `reason`), tlačítko „Smazat instanci" na stránce instance s `confirm` (jediný inline skript stránky). Reálná faktura vlastníka (`wf-mtq3z8d8…`) smazána: R2 „key does not exist", `.json` → 404, D1 má PURGED.
+- Stránka instance má nahoře blok **Výstup**: vstup (typ, velikost, od koho), text dokumentu (vytěžený / vložený, počet znaků, rozbalovací náhled), typ dokumentu (classify: hodnota, zdroj, jistota | FAILED kód | nedosaženo), validace (status, provider, razítko povoleno), razítko (text, DMS ref, orazítkovaný artefakt), u mail-intake notifikace, stav toku. Plní se z payloadů posledního kroku dané capability podle output schémat komponent.
+- Oprava typu: RPC návrat je `& Disposable`, do `Record<string, unknown>` jde jen přes spread.
+
+**Poznámka k retenci:** `purge` je zatím ruční; automatická retence podle `profile.retentionDays` (originály 30 d, journal 30 d, audit 90 d) = samostatný celek (DO alarm per instance + D1 mazání podle `at`).
+
+**Další celek B:** beze změny: `/dispatch` + classify (Workers AI jako `llm`, keyword jako druhá strategie), Ed25519 ve workerd ověřit první, DO `jurisdiction("eu")`.
+
 ## 2026-09-06 (15) — Krok 2, celek A2: PDF / fotka / docx jako vstup (binární originál v R2, Workers AI toMarkdown, derivace s provenancí)
 
 **Pokyn vlastníka:** „faktury jsou nejvíce v PDF a jako příloha e-mailu." Odpověď: celek A2 hned (soubory přes formulář), přílohy e-mailu v kroku 4 (mail-ingest: MIME → každá příloha = originál → táž extrakce).
