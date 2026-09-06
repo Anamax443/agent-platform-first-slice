@@ -1,9 +1,9 @@
-import { join } from "node:path";
-import { existsSync } from "node:fs";
-import { loadJson, projectRoot } from "./schemas.js";
 import type { TrustedContext } from "./types.js";
 
-/** Platform policy: authority artefact (ADR-016). Descriptor is the claim; this decides who may call what. */
+/**
+ * Platform policy: authority artefact (ADR-016). Descriptor is the claim; this decides who may call what.
+ * Policies are part of the installation profile (config/<installation>/policy/*.json), never of the code.
+ */
 export interface Grant {
   actorId: string;
   actorType?: string;
@@ -28,16 +28,15 @@ export interface Policy {
   failClosed: boolean;
 }
 
-export function policyPath(capability: string, version: string): string {
-  return join(projectRoot, "contracts", "policy", `${capability}.v${version}.policy.json`);
-}
+/** capability -> policy, assembled and cross-checked by the installation loader. */
+export type PolicySet = Record<string, Policy>;
 
-export function loadPolicy(capability: string, version: string): Policy {
-  const p = policyPath(capability, version);
-  if (!existsSync(p)) throw new Error(`policy missing for ${capability}/v${version}: ${p} (fail-closed)`);
-  const pol = loadJson<Policy>(p);
+/** Fail-closed lookup: a capability without a policy for the requested version cannot be registered. */
+export function policyFor(set: PolicySet, capability: string, version: string): Policy {
+  const pol = set[capability];
+  if (!pol) throw new Error(`policy missing for ${capability}/v${version} (fail-closed)`);
   if (pol.capability !== capability || pol.capabilityVersion !== version) {
-    throw new Error(`policy ${p} does not match ${capability}/v${version}`);
+    throw new Error(`policy ${pol.policyRef} does not match ${capability}/v${version}`);
   }
   return pol;
 }

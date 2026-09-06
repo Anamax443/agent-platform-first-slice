@@ -1,14 +1,11 @@
 // mail.ingest/1: durable ingest. Stores the raw mail as an immutable original (F7) and derives untrusted metadata by rules (F2).
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { capabilityError, loadJson, StorageFull } from "../../platform/api.js";
+import { capabilityError, StorageFull } from "../../platform/api.js";
 import type { ArtifactWriter, Clock, FieldValue, HandlerOutcome, HostHandlerSpec } from "../../platform/api.js";
+import descriptor from "./descriptor.json" with { type: "json" };
+import inputSchema from "./input.schema.json" with { type: "json" };
+import outputSchema from "./output.schema.json" with { type: "json" };
 
-const here = dirname(fileURLToPath(import.meta.url));
-
-export const descriptor = loadJson<{ module: string; componentVersion: string }>(join(here, "descriptor.json"));
-export const inputSchema = loadJson<object>(join(here, "input.schema.json"));
-export const outputSchema = loadJson<{ properties: { subject: { maxLength: number } } }>(join(here, "output.schema.json"));
+export { descriptor, inputSchema, outputSchema };
 
 export const INGEST_HANDLER_ID = "mail-ingest-handler";
 const SUBJECT_MAX = outputSchema.properties.subject.maxLength;

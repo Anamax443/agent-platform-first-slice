@@ -1,15 +1,12 @@
 // email.send/1: single-purpose write executor (MEDIUM, PRINCIPAL). Accepts a recipient reference from the platform
 // allowlist and a template id; never an address, never free text (FOUNDATION-core §3.4, example 6.3).
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { SmtpAdapter } from "../../adapters/smtp.js";
-import { capabilityError, loadJson, UnknownOutcomeError } from "../../platform/api.js";
+import { capabilityError, UnknownOutcomeError } from "../../platform/api.js";
 import type { ArtifactReader, Clock, CredentialAccess, HandlerOutcome, HostHandlerSpec, ReconcileResult } from "../../platform/api.js";
+import descriptor from "./descriptor.json" with { type: "json" };
+import inputSchema from "./input.schema.json" with { type: "json" };
 
-const here = dirname(fileURLToPath(import.meta.url));
-
-export const descriptor = loadJson<{ module: string; componentVersion: string }>(join(here, "descriptor.json"));
-export const inputSchema = loadJson<object>(join(here, "input.schema.json"));
+export { descriptor, inputSchema };
 
 export const SMTP_CREDENTIAL = "cred:smtp";
 export const SEND_HANDLER_ID = "email-send-handler";

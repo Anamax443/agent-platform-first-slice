@@ -1,16 +1,13 @@
 // document.validate/1: deterministic module. Checks artifact integrity and the classified type against the registry.
 // Every registry answer is untrusted until it passes range and semantic checks (F2, INT-FAIL-004).
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { RegistryBusinessError, RegistryUnavailable, type RegistryAdapter, type RegistryRecord } from "../../adapters/registry.js";
-import { capabilityError, DependencyTimeout, iso, loadJson, platformError, withTimeout } from "../../platform/api.js";
+import { capabilityError, DependencyTimeout, iso, platformError, withTimeout } from "../../platform/api.js";
 import type { ArtifactReader, Clock, FieldValue, Handler, HandlerOutcome, Provenance } from "../../platform/api.js";
+import descriptor from "./descriptor.json" with { type: "json" };
+import inputSchema from "./input.schema.json" with { type: "json" };
+import outputSchema from "./output.schema.json" with { type: "json" };
 
-const here = dirname(fileURLToPath(import.meta.url));
-
-export const descriptor = loadJson<{ module: string; componentVersion: string }>(join(here, "descriptor.json"));
-export const inputSchema = loadJson<object>(join(here, "input.schema.json"));
-export const outputSchema = loadJson<{ properties: { retentionDays: { minimum: number; maximum: number } } }>(join(here, "output.schema.json"));
+export { descriptor, inputSchema, outputSchema };
 
 const RETENTION = outputSchema.properties.retentionDays;
 

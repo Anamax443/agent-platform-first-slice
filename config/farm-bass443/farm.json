@@ -1,0 +1,13 @@
+{
+  "$comment": "Per-deployable overlay merged onto deploy/cloudflare/<deployable>/wrangler.jsonc by scripts/farm-config.mjs. Everything here is installation-specific (routes, addresses); the base configs stay free of it.",
+  "apf-gateway": {
+    "routes": [{ "pattern": "apf.maxferit.cz", "custom_domain": true }],
+    "vars": { "INSTALLATION": "farm-bass443" }
+  },
+  "apf-document-host": { "vars": { "INSTALLATION": "farm-bass443" } },
+  "apf-email-executor": {
+    "vars": { "INSTALLATION": "farm-bass443", "EMAIL_FROM": "apf-notify@maxferit.cz", "EMAIL_FROM_NAME": "agent-platform-farm" }
+  },
+  "apf-mail-ingest": { "vars": { "INSTALLATION": "farm-bass443", "INTAKE_ADDRESS": "apf-intake@maxferit.cz" } },
+  "apf-fakes": { "vars": { "INSTALLATION": "farm-bass443" } }
+}

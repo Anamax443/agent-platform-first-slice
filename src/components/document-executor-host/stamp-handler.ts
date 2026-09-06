@@ -1,15 +1,12 @@
 // document.stamp/1: single-purpose write executor (LOW, LOGICAL). The original stays immutable; the stamp is a derivation (F7).
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { DmsAdapter } from "../../adapters/dms.js";
-import { capabilityError, iso, loadJson, UnknownOutcomeError } from "../../platform/api.js";
+import { capabilityError, iso, UnknownOutcomeError } from "../../platform/api.js";
 import type { ArtifactWriter, Clock, CredentialAccess, FieldValue, HandlerOutcome, HostHandlerSpec, ReconcileResult } from "../../platform/api.js";
+import descriptor from "./descriptor.json" with { type: "json" };
+import stampInputSchema from "./stamp.input.schema.json" with { type: "json" };
+import archiveInputSchema from "./archive.input.schema.json" with { type: "json" };
 
-const here = dirname(fileURLToPath(import.meta.url));
-
-export const descriptor = loadJson<{ module: string; componentVersion: string }>(join(here, "descriptor.json"));
-export const stampInputSchema = loadJson<object>(join(here, "stamp.input.schema.json"));
-export const archiveInputSchema = loadJson<object>(join(here, "archive.input.schema.json"));
+export { descriptor, stampInputSchema, archiveInputSchema };
 
 export const STAMP_CREDENTIAL = "cred:dms-stamp";
 export const STAMP_HANDLER_ID = "document-stamp-handler";

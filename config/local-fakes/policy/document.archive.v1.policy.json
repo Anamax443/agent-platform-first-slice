@@ -1,0 +1,15 @@
+{
+  "$comment": "Platform policy (ADR-016): authority artefact. Grants scopes to actors per tenant; the descriptor only claims requiredScopes. Times UTC with Z.",
+  "policyRef": "policy/document.archive/v1",
+  "capability": "document.archive",
+  "capabilityVersion": "1",
+  "owner": "platform",
+  "validFrom": "2026-09-06T00:00:00Z",
+  "grants": [
+    { "actorId": "svc-orchestrator", "actorType": "service", "scopes": ["document.archive"], "tenants": ["tenant-42"], "rateLimit": { "commandsPerMinute": 300 } },
+    { "actorId": "svc-orchestrator-t7", "actorType": "service", "scopes": ["document.archive"], "tenants": ["tenant-7"], "rateLimit": { "commandsPerMinute": 300 } }
+  ],
+  "approval": { "required": false },
+  "isolation": { "acceptedIsolationClass": "LOGICAL", "isolationDecisionRef": "riskClass LOW; shares document-executor-host with document.stamp" },
+  "failClosed": true
+}

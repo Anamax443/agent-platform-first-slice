@@ -1,0 +1,7 @@
+{
+  "source": "agent-platform-foundation",
+  "version": "1.0-rc2.1",
+  "commit": "12a3c32",
+  "repo": "https://github.com/Anamax443/agent-platform-foundation",
+  "$comment": "Pin of the frozen contracts copied into contracts/*.schema.json. Update = new copy + new pin + npm test. Never edit the schemas here."
+}

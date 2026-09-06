@@ -7,7 +7,6 @@ export { sha256, StorageFull } from "./artifacts.js";
 export type { Artifact, ArtifactReader, ArtifactWriter } from "./artifacts.js";
 export type { ReconcileResult, HostHandlerSpec } from "./executor-host.js";
 export type { CredentialAccess } from "./credentials.js";
-export { loadJson } from "./schemas.js";
 
 /** Race a dependency call against a deadline; timeouts become DEPENDENCY_TIMEOUT at the caller. */
 export async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {

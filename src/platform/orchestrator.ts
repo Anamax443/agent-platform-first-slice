@@ -1,11 +1,10 @@
 import type { Audit } from "./audit.js";
 import type { Clock } from "./clock.js";
 import { iso, plus } from "./clock.js";
-import type { Gateway } from "./gateway.js";
 import { newId } from "./ids.js";
 import type { Instance, Journal, SideEffects, StepRecord } from "./journal.js";
 import type { ReviewService, Decision } from "./review.js";
-import type { Router } from "./router.js";
+import type { DispatchTransport } from "./transport.js";
 import type { Reconciler } from "./executor-host.js";
 import type { ErrorClass, MessageEnvelope, ResultEnvelope } from "./types.js";
 
@@ -53,8 +52,8 @@ export class Orchestrator {
   constructor(
     private readonly opts: {
       workflow: WorkflowDef;
-      gateway: Gateway;
-      router: Router;
+      /** In-process or HTTP: the orchestrator does not know and must not care (F3). */
+      transport: DispatchTransport;
       journal: Journal;
       review: ReviewService;
       audit: Audit;
@@ -266,8 +265,7 @@ export class Orchestrator {
       }
 
       const message = step.message as MessageEnvelope;
-      const env = this.opts.gateway.dispatch(message, inst.actorId);
-      const res = await this.opts.router.route(env);
+      const res = await this.opts.transport.dispatch(message, inst.actorId);
       step.result = res;
       step.finishedAt = iso(this.opts.clock.now());
 

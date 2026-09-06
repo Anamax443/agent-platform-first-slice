@@ -2,6 +2,30 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-06 (8) — M4b krok 1 ROZPRACOVÁNO a přerušeno: portabilita platformy + instalační profil, repo je ČERVENÉ
+
+**Pravidlo vlastníka od této chvíle:** postupovat po malých celcích jako po milnících; po každém celku aktualizovat HANDOFF a commitnout. Žádné velké dávky změn napříč deseti soubory najednou.
+
+**Stav: NEKOMPILUJE a testy by nenaběhly.** Tento commit je záměrný snímek rozpracované práce, ne funkční stav. **Nepushovat, dokud další celek nezezelená** (CI by spadlo, GitHub je zdroj pravdy pro druhý PC). Typecheck: 5 chyb (`src/slice.ts` importuje odstraněný `loadPolicy` a orchestrátoru předává `gateway`/`router` místo `transport`; `tests/wf.test.ts` totéž na dvou místech). Runtime: `src/platform/schemas.ts` stále čte disk při importu a hledá textový `contracts/CONTRACTS-VERSION`, který je smazaný → import platformy by spadl na ENOENT.
+
+**Hotové v tomto celku (funguje samo o sobě):**
+- Pět handlerů importuje descriptor a schémata staticky (`import x from "./…json" with { type: "json" }`), bez `node:path`/`node:url`/`loadJson`. `loadJson` odebrán z `platform/api.ts`.
+- `src/platform/policy.ts`: bez čtení disku; typy `Policy`, `PolicySet`, `policyFor` (fail-closed), `checkGrant`. `loadPolicy` odstraněn.
+- `src/platform/transport.ts`: rozhraní `DispatchTransport`, `InProcessTransport` (gateway + router), `HttpDispatchTransport` (POST `/dispatch`, v těle jen `message`, identita jen z hlaviček, odpověď validovaná proti result-envelope). Orchestrátor už bere `transport` místo `gateway`+`router`.
+- Instalační profil: `config/profile.schema.json`, `config/local-fakes/profile.json` (tenanty, identity, role orchestrátoru, credential reference per handler jen jménem, kanály null, retence, policyRefs), `config/farm-bass443/profile.json` (NÁVRH adres, čeká na vlastníka) a `config/farm-bass443/farm.json` (overlay routes/vars per deployable pro budoucí `scripts/farm-config.mjs`). Šest policy přesunuto `git mv` z `contracts/policy/` do `config/local-fakes/policy/` a zkopírováno do `config/farm-bass443/policy/`; v `contracts/policy/` zůstal jen vzor z foundation.
+- `src/installation.ts`: typy `InstallationProfile`, `Installation`, `SecretsSource`; `assembleInstallation()` (schéma, každý policyRef přítomen, každý grant ukazuje na známou identitu s daným scope a známý tenant, `failClosed` povinné) a `credentialTable()` (chybějící secret = výjimka).
+- `contracts/CONTRACTS-VERSION.json` místo textového souboru.
+
+**Další malý celek = zezelenat (odhad 1 session, cca 10 souborů):**
+1. `src/platform/schemas.ts`: statické importy pěti schémat a `CONTRACTS-VERSION.json`, odstranit `readFileSync`/`projectRoot`/`loadJson` (návrh byl připraven, zápis se nestihl).
+2. `src/installation-node.ts`: `loadInstallationFromDir(dir)` (fs až při volání) — Node helper pro testy.
+3. `src/slice.ts`: `createSlice(installation, secrets, opts)`; identity z profilu, policy přes `policyFor(installation.policies, …)`, credential tabulky přes `credentialTable()` per host, `InProcessTransport` do orchestrátorů a do návratu, workflow definice staticky importované a validované proti novému `workflows/workflow-definition.schema.json`; odstranit exportované konstanty tenantů a identit.
+4. Harness: `tests/harness/paths.ts` (projectRoot, loadJson jen pro testy), `tests/harness/installation.ts` (LOCAL_FAKES z `config/local-fakes`, FAKE_SECRETS `cred:dms-stamp`→`dms-secret`, `cred:archive-store`→`archive-secret`, `cred:smtp`→`smtp-secret`, konstanty TENANT_A/B, ORCHESTRATOR(_B), AI_AGENT odvozené z profilu), `index.ts` obal `createSlice(o)` = core(LOCAL_FAKES, FAKE_SECRETS, o), `dispatch()` přes `slice.transport`; opravit importy v `suite.ts`, `rogue.ts`, `ctr.test.ts` (cesta k `email.send` policy je teď `config/local-fakes/policy/`), `sec.test.ts`, `arch.test.ts`, `wf.test.ts` (dva `new Orchestrator` s `transport`).
+5. `scripts/arch-dep.mjs`: komponenty smí importovat jen `./`, `platform/api`, `adapters/*` (bez node:path/url); nový lint: žádný literál z `config/*/profile.json` a policy (tenanty, actor id, adresy, hosty) ani e-mail/doména regexem v `src/**` a `deploy/cloudflare/*/src/**`.
+6. `scripts/farm-config.mjs` (merge base wrangler.jsonc + `config/<instalace>/farm.json` → `.wrangler/generated/`), `farm-check` dry-run i nad generovanými; z base configů odstranit `routes` a `EMAIL_FROM*`.
+7. Docs po zezelenání: BUILD (CONTRACTS-VERSION.json, config/), README CZ/EN (řádek `config/`), ARCHITECTURE (profil, transport), deploy README, MEASUREMENT (M4b krok 1 řádek), STATUS.
+Brána celku: `npm run typecheck`, `npm test` (198), `npm run arch`, `npm run farm:check` zelené; pak push.
+
 ## 2026-09-06 (7) — Posudky 2–4 nad implementací: 9,2/10 formální oponentura, dva konverzační; AI-EVAL jako podmínka v1.0, pentest o eskalaci práv
 
 **Zdroj:** tři další posudky postoupené vlastníkem, protokol v `docs/POSUDKY.md`. Shoda se posudkem 1: norma nevyvrácena, 0 BLOCKER, 1 MAJOR (fyzická izolace, plán M4b), 3 MINOR (AI-EVAL, čas vlastníka, provozní realita).

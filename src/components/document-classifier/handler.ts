@@ -1,15 +1,12 @@
 // document.classify/1: AI capability. Untrusted document text goes in, one enum value with provenance comes out (F2).
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { LlmAdapter } from "../../adapters/llm.js";
-import { capabilityError, DependencyTimeout, loadJson, platformError, sha256, withTimeout } from "../../platform/api.js";
+import { capabilityError, DependencyTimeout, platformError, sha256, withTimeout } from "../../platform/api.js";
 import type { ArtifactReader, Clock, FieldValue, Handler, HandlerOutcome, Provenance } from "../../platform/api.js";
+import descriptor from "./descriptor.json" with { type: "json" };
+import inputSchema from "./input.schema.json" with { type: "json" };
+import outputSchema from "./output.schema.json" with { type: "json" };
 
-const here = dirname(fileURLToPath(import.meta.url));
-
-export const descriptor = loadJson<{ module: string; componentVersion: string }>(join(here, "descriptor.json"));
-export const inputSchema = loadJson<object>(join(here, "input.schema.json"));
-export const outputSchema = loadJson<{ properties: { documentType: { properties: { value: { enum: string[] } } } } }>(join(here, "output.schema.json"));
+export { descriptor, inputSchema, outputSchema };
 
 /** The allowlist is the contract (output schema), not a constant hidden in code. */
 export const DOCUMENT_TYPES: readonly string[] = outputSchema.properties.documentType.properties.value.enum;
