@@ -1,0 +1,38 @@
+{
+  "module": "email-executor",
+  "componentVersion": "0.1.0",
+  "runtime": "in-process",
+  "deploymentModel": "CLOUD_SINGLE_TENANT",
+  "tenantMode": "SINGLE",
+  "owner": "first-slice",
+  "verificationProfiles": ["WRITE_EXECUTOR", "PROVIDER", "EVIDENCE"],
+  "capabilities": [
+    {
+      "name": "email.send",
+      "versions": ["1"],
+      "preferredVersion": "1",
+      "inputSchema": "email.send.input.v1",
+      "outputSchema": "email.send.output.v1",
+      "conformanceSuiteVersion": "1.0",
+      "conformanceTier": "semantic",
+      "executionMode": "sync",
+      "sideEffects": "external-write",
+      "trustClass": "executor",
+      "riskClass": "MEDIUM",
+      "isolationClass": "PRINCIPAL",
+      "requiredScopes": ["email.send"],
+      "usesLlm": false,
+      "idempotency": "required",
+      "idempotencyRetention": "business-identity",
+      "deadlinePolicy": "PT10M",
+      "reversibility": "IRREVERSIBLE",
+      "unknownOutcomeRecovery": "query-external-status",
+      "statusQuery": "smtp.status(clientRef = idempotencyKey)",
+      "reconciliationBudget": 3,
+      "humanApproval": "none",
+      "effectFields": [{ "field": "recipientRef", "role": "target" }],
+      "errorCodes": ["RECIPIENT_NOT_ALLOWED", "ARTIFACT_NOT_FOUND", "TENANT_SCOPE_MISMATCH", "SMTP_REJECTED", "COMMAND_EXPIRED", "CAPABILITY_NOT_ALLOWED", "CREDENTIAL_DENIED"]
+    }
+  ],
+  "endpoints": { "health": "/health", "version": "/version", "capabilities": "/capabilities" }
+}

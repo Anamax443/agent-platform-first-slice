@@ -19,7 +19,7 @@ Golden files are a **subset** of the result envelope: every field present in the
 
 Minimum for the first capability of a new component (VC §5): 5 canonical, 1 damaged, 1 injection, 1 boundary. This suite: 8 canonical, 1 damaged, 3 injection, 2 boundary, 4 error.
 
-`injection-in-allowlist` deliberately has two acceptable outcomes: a model that follows the injected instruction returns a value that is still inside the allowlist. The schema boundary (F2) cannot see the difference. That is the job of `AI-EVAL-ADV-001`, which needs a real model and is deferred (docs/MEASUREMENT.md).
+`injection-in-allowlist` deliberately has two acceptable outcomes: a model that follows the injected instruction returns a value that is still inside the allowlist. The schema boundary (F2) cannot see the difference at this capability. The next step catches it: `document.validate` recomputes the value with a deterministic second signal and disputes the disagreement (W4 in docs/MEASUREMENT.md); `AI-EVAL-ADV-001` over a real model remains deferred.
 
 ## Run
 

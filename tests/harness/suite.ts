@@ -3,9 +3,18 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { DmsMode, DmsStatusMode } from "../../src/adapters/dms.js";
 import type { RegistryMode } from "../../src/adapters/registry.js";
+import type { SmtpMode, SmtpStatusMode } from "../../src/adapters/smtp.js";
 import { projectRoot } from "../../src/platform/schemas.js";
 
 export type FixtureKind = "canonical" | "damaged" | "injection" | "boundary" | "error";
+
+export interface AdapterModes {
+  registry?: RegistryMode;
+  dms?: DmsMode;
+  dmsStatus?: DmsStatusMode;
+  smtp?: SmtpMode;
+  smtpStatus?: SmtpStatusMode;
+}
 
 export interface Fixture {
   id: string;
@@ -14,7 +23,8 @@ export interface Fixture {
   actor?: string;
   artifact?: { tenantId?: string; bytes: string };
   payload: Record<string, unknown>;
-  adapters?: { registry?: RegistryMode; dms?: DmsMode; dmsStatus?: DmsStatusMode };
+  adapters?: AdapterModes;
+  storage?: { capacityBytes: number };
   deadlineMs?: number;
   capabilityVersion?: string;
 }
@@ -47,19 +57,32 @@ export interface Suite {
 
 export const CONFORMANCE_DIR = join(projectRoot, "conformance");
 
+const cache = new Map<string, Suite>();
+
 export function loadSuite(capability: string): Suite {
+  const cached = cache.get(capability);
+  if (cached) return cached;
   const dir = join(CONFORMANCE_DIR, capability);
   const fixtures = JSON.parse(readFileSync(join(dir, "fixtures", `${capability}.fixtures.json`), "utf8")) as Fixture[];
   const golden = JSON.parse(readFileSync(join(dir, "golden", `${capability}.golden.json`), "utf8")) as Record<string, Golden>;
   const readme = readFileSync(join(dir, "README.md"), "utf8");
   const version = /conformanceSuiteVersion:\s*`?([0-9.]+)`?/.exec(readme)?.[1] ?? "?";
-  return { capability, dir, version, fixtures, golden, errors: parseErrorsTable(readFileSync(join(dir, "errors.md"), "utf8")) };
+  const suite = { capability, dir, version, fixtures, golden, errors: parseErrorsTable(readFileSync(join(dir, "errors.md"), "utf8")) };
+  cache.set(capability, suite);
+  return suite;
+}
+
+/** Text of a fixture: its artifact bytes, or the raw mail it carries. `ref` = "<capability>/<fixture id>". */
+export function fixtureText(ref: string): string {
+  const [capability, id] = ref.split("/") as [string, string];
+  const f = loadSuite(capability).fixtures.find((x) => x.id === id);
+  const text = f?.artifact?.bytes ?? (f?.payload.rawMail as string | undefined);
+  if (text === undefined) throw new Error(`fixture ${ref} carries no text`);
+  return text;
 }
 
 export function fixtureBytes(capability: string, id: string): string {
-  const f = loadSuite(capability).fixtures.find((x) => x.id === id);
-  if (!f?.artifact) throw new Error(`fixture ${capability}/${id} has no artifact`);
-  return f.artifact.bytes;
+  return fixtureText(`${capability}/${id}`);
 }
 
 /** errors.md is the CTR-ERR-001 source: | input class | code | class | retryable | reissuable | enforced by | */

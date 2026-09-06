@@ -5,6 +5,7 @@
 | artifact does not exist | `ARTIFACT_NOT_FOUND` | BUSINESS | false | false | handler |
 | artifact belongs to another tenant than the trusted context | `TENANT_SCOPE_MISMATCH` | SECURITY | false | false | handler |
 | claimed hash differs from the stored original | `ARTIFACT_HASH_MISMATCH` | SECURITY | false | false | handler |
+| deterministic cross-check disagrees with a value that came from a model or rules | `CLASSIFICATION_DISPUTED` | QUALITY | false | false | handler |
 | registry does not answer before the deadline | `DEPENDENCY_TIMEOUT` | DEPENDENCY | true | false | platform |
 | registry returns 5xx | `DEPENDENCY_UNAVAILABLE` | DEPENDENCY | true | false | platform |
 | registry rejects the type (business 4xx) | `REGISTRY_REJECTED` | BUSINESS | false | false | handler |

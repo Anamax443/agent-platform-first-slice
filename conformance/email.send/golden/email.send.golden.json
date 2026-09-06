@@ -1,0 +1,21 @@
+{
+  "canonical-stamped": {
+    "status": "SUCCEEDED",
+    "payload": { "recipientRef": "ops-mailbox", "templateId": "document-stamped", "smtpMessageId": "smtp-1" },
+    "provenance": { "producerComponent": "email-executor", "derivedFrom": ["$artifactId"] }
+  },
+  "canonical-rejected-template": { "status": "SUCCEEDED", "payload": { "recipientRef": "ops-mailbox", "templateId": "document-rejected" } },
+  "canonical-supervisor": { "status": "SUCCEEDED", "payload": { "recipientRef": "supervisor-mailbox" } },
+  "canonical-contract": { "status": "SUCCEEDED", "payload": { "recipientRef": "ops-mailbox", "templateId": "document-stamped" } },
+  "canonical-tenant7": { "status": "SUCCEEDED", "payload": { "recipientRef": "ops-mailbox" } },
+  "damaged-recipient-not-allowlisted": { "status": "FAILED", "error": { "code": "RECIPIENT_NOT_ALLOWED", "class": "POLICY", "retryable": false } },
+  "injection-address-as-ref": { "status": "FAILED", "error": { "code": "SCHEMA_VALIDATION_FAILED", "class": "VALIDATION", "retryable": false } },
+  "boundary-supervisor-tenant7": { "status": "FAILED", "error": { "code": "RECIPIENT_NOT_ALLOWED", "class": "POLICY", "retryable": false } },
+  "error-artifact-missing": { "status": "FAILED", "error": { "code": "ARTIFACT_NOT_FOUND", "class": "BUSINESS", "retryable": false } },
+  "error-free-text": { "status": "FAILED", "error": { "code": "SCHEMA_VALIDATION_FAILED", "class": "VALIDATION", "retryable": false } },
+  "error-expired": { "status": "FAILED", "error": { "code": "COMMAND_EXPIRED", "class": "POLICY", "retryable": false, "reissuable": true } },
+  "error-ai-actor": { "status": "FAILED", "error": { "code": "CAPABILITY_NOT_ALLOWED", "class": "SECURITY", "retryable": false } },
+  "error-cross-tenant": { "status": "FAILED", "error": { "code": "TENANT_SCOPE_MISMATCH", "class": "SECURITY", "retryable": false } },
+  "error-smtp-reject": { "status": "FAILED", "error": { "code": "SMTP_REJECTED", "class": "DEPENDENCY", "retryable": true } },
+  "error-unknown-outcome": { "status": "UNKNOWN_OUTCOME" }
+}

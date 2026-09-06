@@ -5,7 +5,7 @@ import { sha256 } from "../src/platform/artifacts.js";
 import { PLATFORM_CODES } from "../src/platform/errors.js";
 import { compileSchema, loadJson, projectRoot, validateContract } from "../src/platform/schemas.js";
 import { expectGolden, runFixture, type FixtureRun } from "./harness/conformance.js";
-import { command, createSlice, dispatch, INVOICE_CZ, putArtifact } from "./harness/index.js";
+import { command, createSlice, dispatch, INVOICE_CZ, putArtifact, TENANT_A, TENANT_B } from "./harness/index.js";
 import { loadSuite } from "./harness/suite.js";
 
 interface Descriptor {
@@ -20,12 +20,16 @@ const COMPONENTS: Record<string, { caps: string[]; output: Record<string, string
     caps: ["document.stamp", "document.archive"],
     output: { "document.stamp": "stamp.output.schema.json", "document.archive": "archive.output.schema.json" },
   },
+  "mail-ingest": { caps: ["mail.ingest"], output: { "mail.ingest": "output.schema.json" } },
+  "email-executor": { caps: ["email.send"], output: { "email.send": "output.schema.json" } },
 };
 const MINIMUM: Record<string, number> = { canonical: 5, damaged: 1, injection: 1, boundary: 1 };
-const FULL_MINIMUM_CAPS = ["document.classify", "document.validate", "document.stamp"];
+const FULL_MINIMUM_CAPS = ["document.classify", "document.validate", "document.stamp", "mail.ingest", "email.send"];
 const runs = new Map<string, FixtureRun>();
 
 const descriptorOf = (module: string) => loadJson<Descriptor>(join(projectRoot, "src", "components", module, "descriptor.json"));
+const emailPolicy = loadJson<{ recipientAllowlist: Record<string, Record<string, string>> }>(join(projectRoot, "contracts", "policy", "email.send.v1.policy.json"));
+const ALLOWLISTED_ADDRESSES = new Set(Object.values(emailPolicy.recipientAllowlist).flatMap((t) => Object.values(t)));
 
 describe("CTR-001 descriptors", () => {
   for (const [module, { caps }] of Object.entries(COMPONENTS)) {
@@ -62,12 +66,28 @@ for (const [module, { caps, output }] of Object.entries(COMPONENTS)) {
           runs.set(`${capability}/${f.id}`, run);
           expectGolden(run.result, suite.golden[f.id], run.vars, f.id);
           expect(validateContract("result-envelope", run.result)).toEqual({ ok: true });
-          if (run.result.status === "SUCCEEDED") expect(validateOutput(run.result.payload)).toEqual({ ok: true });
-          if (capability === "document.stamp" && run.result.status === "SUCCEEDED") {
+          if (run.result.status !== "SUCCEEDED") return;
+          expect(validateOutput(run.result.payload)).toEqual({ ok: true });
+
+          if (capability === "document.stamp") {
             const p = run.result.payload as { stampedArtifactId: string; stampedSha256: string; originalArtifactId: string };
             const derived = run.slice.artifacts.get(p.stampedArtifactId);
             expect(derived?.derivedFrom).toBe(p.originalArtifactId);
             expect(derived && sha256(derived.bytes)).toBe(p.stampedSha256);
+          }
+          if (capability === "mail.ingest") {
+            // EVD-001 for ingest: the stored original is the raw mail, owned by the tenant of the trusted context
+            const p = run.result.payload as { artifactId: string; sha256: string };
+            const stored = run.slice.artifacts.get(p.artifactId);
+            expect(stored?.bytes).toBe(f.payload.rawMail);
+            expect(stored?.tenantId).toBe(f.actor === "svc-orchestrator-t7" ? TENANT_B : TENANT_A);
+            expect(stored?.receivedFrom).toBe(f.payload.receivedFrom);
+            expect(p.sha256).toBe(sha256(String(f.payload.rawMail)));
+          }
+          if (capability === "email.send") {
+            // effect field recipientRef: every delivery went to an allowlisted address, never to anything from a payload
+            for (const to of run.slice.smtp.recipients()) expect(ALLOWLISTED_ADDRESSES.has(to), to).toBe(true);
+            expect(run.slice.smtp.recipients()).toHaveLength(1);
           }
         });
       }

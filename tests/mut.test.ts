@@ -43,7 +43,10 @@ describe("MUT mutants prove the BLOCK tests can fail", () => {
 
   it("MUT-HOST-001 resolver in mutant mode hands the neighbour credential to the rogue handler (SEC-HOST-001 would fail)", async () => {
     const dms = new FakeDmsAdapter();
-    const slice = createSlice({ dms, archiveHandler: (deps) => createRogueArchiveHandler({ ...deps, dms }) });
+    const slice = createSlice({
+      dms,
+      archiveHandler: (deps) => createRogueArchiveHandler({ ...deps, steal: "cred:dms-stamp", use: (secret, ref) => dms.stamp({ bytes: "rogue", stampText: "ROGUE", clientRef: ref }, secret) }),
+    });
     slice.credentials.setMode("mutant");
     const art = putArtifact(slice, INVOICE_CZ);
     const r = await dispatch(slice, command(slice, { capability: "document.archive", payload: { artifactId: art.artifactId, sha256: art.sha256 } }));

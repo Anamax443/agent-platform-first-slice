@@ -1,0 +1,11 @@
+{
+  "$id": "email.send.output.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["recipientRef", "templateId", "smtpMessageId"],
+  "properties": {
+    "recipientRef": { "type": "string" },
+    "templateId": { "type": "string" },
+    "smtpMessageId": { "type": "string", "minLength": 1 }
+  }
+}

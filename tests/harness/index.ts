@@ -6,17 +6,19 @@ import { createSlice, command, ORCHESTRATOR, TENANT_A, type Slice, type SliceOpt
 import type { Artifact } from "../../src/platform/artifacts.js";
 import type { Instance } from "../../src/platform/journal.js";
 import type { MessageEnvelope, ResultEnvelope } from "../../src/platform/types.js";
-import { fixtureBytes } from "./suite.js";
+import { fixtureBytes, fixtureText } from "./suite.js";
 
 export { createSlice, command, ORCHESTRATOR, TENANT_A, type Slice, type SliceOptions };
 export { ORCHESTRATOR_B, AI_AGENT, TENANT_B, DEFAULT_CLOCK_START, loadWorkflow } from "../../src/slice.js";
 
-/** Reference texts come from the classify conformance fixtures; nothing is duplicated here. */
+/** Reference texts come from the conformance fixtures; nothing is duplicated here. */
 export const INVOICE_CZ = fixtureBytes("document.classify", "canonical-invoice-cz");
 export const CONTRACT_CZ = fixtureBytes("document.classify", "canonical-contract-cz");
 export const NEWSLETTER = fixtureBytes("document.classify", "canonical-other-newsletter");
 export const INJECTION_APPROVE_DOC = fixtureBytes("document.classify", "injection-approve");
 export const INJECTION_IN_ALLOWLIST_DOC = fixtureBytes("document.classify", "injection-in-allowlist");
+export const INVOICE_MAIL = fixtureText("mail.ingest/canonical-invoice-mail");
+export const INJECTION_MAIL = fixtureText("mail.ingest/injection-headers");
 
 export function tmpDir(): string {
   return mkdtempSync(join(tmpdir(), "first-slice-"));
@@ -41,6 +43,11 @@ export function validatedStampPayload(slice: Slice, artifact: Artifact, value = 
   };
 }
 
+/** Payload the workflow hands to email.send, for direct executor tests. */
+export function emailPayload(artifactId: string, recipientRef = "ops-mailbox", documentType = "INVOICE"): Record<string, unknown> {
+  return { recipientRef, templateId: "document-stamped", params: { documentType, artifactId } };
+}
+
 export async function runIntake(slice: Slice, input: { bytes: string; tenantId?: string; stampText?: string; correlationId?: string }) {
   const artifact = putArtifact(slice, input.bytes, input.tenantId);
   const inst = slice.orchestrator.start(
@@ -51,6 +58,34 @@ export async function runIntake(slice: Slice, input: { bytes: string; tenantId?:
   return { artifact, instance };
 }
 
+export async function runMailIntake(slice: Slice, input: { rawMail: string; notifyRef?: string; stampText?: string; receivedFrom?: string; correlationId?: string }) {
+  const inst = slice.mailOrchestrator.start(
+    {
+      tenantId: TENANT_A,
+      rawMail: input.rawMail,
+      receivedFrom: input.receivedFrom ?? "smtp:relay.example",
+      notifyRef: input.notifyRef ?? "ops-mailbox",
+      ...(input.stampText ? { stampText: input.stampText } : {}),
+    },
+    input.correlationId,
+  );
+  return slice.mailOrchestrator.run(inst.workflowId);
+}
+
+/** Generic scenario runner for INT-E2E-001: resolves `$artifact` / `$fixtureText` inputs and runs the named workflow. */
+export async function runScenario(slice: Slice, workflow: string, input: Record<string, unknown>): Promise<Instance> {
+  const resolved: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(input)) {
+    if (v && typeof v === "object" && "$artifact" in v) resolved[k] = putArtifact(slice, fixtureText(String((v as { $artifact: string }).$artifact))).artifactId;
+    else if (v && typeof v === "object" && "$fixtureText" in v) resolved[k] = fixtureText(String((v as { $fixtureText: string }).$fixtureText));
+    else resolved[k] = v;
+  }
+  const orchestrator = slice.orchestrators[workflow];
+  if (!orchestrator) throw new Error(`no orchestrator for workflow ${workflow}`);
+  const inst = orchestrator.start({ tenantId: TENANT_A, ...resolved });
+  return orchestrator.run(inst.workflowId);
+}
+
 export interface Trace {
   instance: string;
   published: Instance["published"];
@@ -58,6 +93,8 @@ export interface Trace {
   audit: string[];
   reviews: Array<{ reasonCode: string; requiredRole: string; status: string }>;
   writes: number;
+  sends: number;
+  recipients: string[];
 }
 
 /** Everything INT-E2E-001 compares against the golden master (conformanceTier of the workflow definition). */
@@ -87,6 +124,8 @@ export function trace(slice: Slice, workflowId: string): Trace {
       .filter((t): t is NonNullable<typeof t> => !!t)
       .map((t) => ({ reasonCode: t.reasonCode, requiredRole: t.requiredRole, status: t.status })),
     writes: slice.dms.stampCalls,
+    sends: slice.smtp.sendCalls,
+    recipients: slice.smtp.recipients(),
   };
 }
 

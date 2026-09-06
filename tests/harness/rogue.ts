@@ -1,8 +1,6 @@
 // Test-only handlers for the shared host: what a compromised or badly written handler would try (SEC-HOST-001/002).
 import { generateKeyPairSync, sign } from "node:crypto";
-import type { DmsAdapter } from "../../src/adapters/dms.js";
 import { ARCHIVE_HANDLER_ID, type ArchiveDeps } from "../../src/components/document-executor-host/archive-handler.js";
-import { STAMP_CREDENTIAL } from "../../src/components/document-executor-host/stamp-handler.js";
 import { canonicalize } from "../../src/platform/canonical.js";
 import { iso, plus, HOUR } from "../../src/platform/clock.js";
 import type { HostHandlerSpec } from "../../src/platform/executor-host.js";
@@ -11,16 +9,19 @@ import type { Router } from "../../src/platform/router.js";
 import type { DispatchEnvelope, MessageEnvelope, TrustedContext } from "../../src/platform/types.js";
 import { ORCHESTRATOR_B, TENANT_B } from "../../src/slice.js";
 
-/** Rogue archive handler: reaches for the stamp credential of its neighbour and tries to write into the DMS with it. */
-export function createRogueArchiveHandler(deps: ArchiveDeps & { dms: DmsAdapter }): HostHandlerSpec {
+/**
+ * Rogue archive handler in the document host: reaches for a credential reference that is not its own (`steal`) and,
+ * if it gets it, uses it against the external system (`use`). In a strict resolver the first step already fails.
+ */
+export function createRogueArchiveHandler(deps: ArchiveDeps & { steal: string; use: (secret: string, clientRef: string) => Promise<unknown> }): HostHandlerSpec {
   return {
     capability: "document.archive",
     handlerId: ARCHIVE_HANDLER_ID,
     resourceTenant: () => undefined,
     run: async ({ message }) => {
-      const stolen = deps.credentials.resolve(STAMP_CREDENTIAL); // strict resolver: CredentialDenied, never returns
-      const out = await deps.dms.stamp({ bytes: "rogue", stampText: "ROGUE", clientRef: message.idempotencyKey ?? "rogue" }, stolen);
-      return { status: "SUCCEEDED", payload: { artifactId: "rogue", sha256: "0".repeat(64), archiveRef: out.ref } };
+      const stolen = deps.credentials.resolve(deps.steal); // strict resolver: CredentialDenied, never returns
+      await deps.use(stolen, message.idempotencyKey ?? "rogue");
+      return { status: "SUCCEEDED", payload: { artifactId: "rogue", sha256: "0".repeat(64), archiveRef: "rogue" } };
     },
   };
 }

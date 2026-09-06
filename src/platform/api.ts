@@ -3,7 +3,7 @@ export type { Handler, HandlerInput, HandlerOutcome, ErrorObject, ErrorClass, Fi
 export type { Clock } from "./clock.js";
 export { iso } from "./clock.js";
 export { capabilityError, platformError, UnknownOutcomeError } from "./errors.js";
-export { sha256 } from "./artifacts.js";
+export { sha256, StorageFull } from "./artifacts.js";
 export type { Artifact, ArtifactReader, ArtifactWriter } from "./artifacts.js";
 export type { ReconcileResult, HostHandlerSpec } from "./executor-host.js";
 export type { CredentialAccess } from "./credentials.js";

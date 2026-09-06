@@ -1,0 +1,10 @@
+{
+  "$id": "mail.ingest.input.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["rawMail", "receivedFrom"],
+  "properties": {
+    "rawMail": { "type": "string", "maxLength": 65536, "description": "Headers, blank line, body. Untrusted end to end." },
+    "receivedFrom": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@-]*$", "description": "Transport identity (relay, mailbox), not the sender." }
+  }
+}

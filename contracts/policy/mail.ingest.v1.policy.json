@@ -1,0 +1,15 @@
+{
+  "$comment": "Platform policy (ADR-016): authority artefact. Grants scopes to actors per tenant; the descriptor only claims requiredScopes. Times UTC with Z.",
+  "policyRef": "policy/mail.ingest/v1",
+  "capability": "mail.ingest",
+  "capabilityVersion": "1",
+  "owner": "platform",
+  "validFrom": "2026-09-06T00:00:00Z",
+  "grants": [
+    { "actorId": "svc-orchestrator", "actorType": "service", "scopes": ["mail.ingest"], "tenants": ["tenant-42"], "rateLimit": { "commandsPerMinute": 600 } },
+    { "actorId": "svc-orchestrator-t7", "actorType": "service", "scopes": ["mail.ingest"], "tenants": ["tenant-7"], "rateLimit": { "commandsPerMinute": 600 } }
+  ],
+  "approval": { "required": false },
+  "isolation": { "acceptedIsolationClass": "LOGICAL", "isolationDecisionRef": "riskClass LOW; own host mail-ingest, no credentials" },
+  "failClosed": true
+}

@@ -18,8 +18,10 @@ export interface StepDef {
   capability: string;
   capabilityVersion: string;
   sideEffects: SideEffects;
-  /** JSON-pointer-lite: "$input.x", "$steps.<stepId>.payload.a.b", "$strategy" */
-  inputs: Record<string, string>;
+  /** Payload template. Strings starting with "$" are refs ("$input.x", "$steps.<stepId>.payload.a.b", "$strategy"); objects nest; other values are literals. */
+  inputs: Record<string, unknown>;
+  /** Overrides the workflow deadline for this step (e.g. an executor with a shorter deadlinePolicy). */
+  deadlineMs?: number;
   strategies?: string[];
   qualityBudget?: number;
   technicalRetries?: number;
@@ -91,6 +93,9 @@ export class Orchestrator {
   /** Runs until the instance is terminal or waits. Idempotent to call again after WAITING is resolved. */
   async run(workflowId: string): Promise<Instance> {
     let inst = this.load(workflowId);
+    if (inst.workflow !== this.opts.workflow.workflow) {
+      throw new Error(`instance ${workflowId} belongs to workflow ${inst.workflow}, this orchestrator runs ${this.opts.workflow.workflow}`);
+    }
     if (inst.workflowVersion !== this.opts.workflow.workflowVersion) {
       throw new Error(
         `instance ${workflowId} is pinned to workflow v${inst.workflowVersion}, this orchestrator runs v${this.opts.workflow.workflowVersion} (WF-VER-001)`,
@@ -114,7 +119,7 @@ export class Orchestrator {
   async recover(): Promise<Instance[]> {
     const out: Instance[] = [];
     for (const inst of this.opts.journal.list()) {
-      if (inst.status !== "RUNNING") continue;
+      if (inst.status !== "RUNNING" || inst.workflow !== this.opts.workflow.workflow) continue;
       const step = inst.steps.find((s) => s.status === "RUNNING");
       if (step && step.sideEffects !== "none") {
         step.status = "UNKNOWN_OUTCOME";
@@ -408,11 +413,7 @@ export class Orchestrator {
 
   private buildMessage(inst: Instance, def: StepDef, step: StepRecord): MessageEnvelope {
     const now = this.opts.clock.now();
-    const payload: Record<string, unknown> = {};
-    for (const [k, ref] of Object.entries(def.inputs)) {
-      const v = this.resolveRef(inst, step, ref);
-      if (v !== undefined) payload[k] = v;
-    }
+    const payload = this.resolveInputs(inst, step, def.inputs);
     const prev = inst.steps.filter((s) => s.status === "SUCCEEDED").at(-1);
     const m: MessageEnvelope = {
       messageId: newId("msg"),
@@ -425,11 +426,26 @@ export class Orchestrator {
       schemaVersion: "1",
       idempotencyKey: step.idempotencyKey,
       createdAt: iso(now),
-      notValidAfter: iso(plus(now, this.opts.workflow.deadlineMs)),
+      notValidAfter: iso(plus(now, def.deadlineMs ?? this.opts.workflow.deadlineMs)),
       payload,
     };
     if (prev?.result) m.causationId = prev.result.messageId;
     return m;
+  }
+
+  private resolveInputs(inst: Instance, step: StepRecord, inputs: Record<string, unknown>): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(inputs)) {
+      const r = this.resolveValue(inst, step, v);
+      if (r !== undefined) out[k] = r;
+    }
+    return out;
+  }
+
+  private resolveValue(inst: Instance, step: StepRecord, v: unknown): unknown {
+    if (typeof v === "string") return v.startsWith("$") ? this.resolveRef(inst, step, v) : v;
+    if (v && typeof v === "object" && !Array.isArray(v)) return this.resolveInputs(inst, step, v as Record<string, unknown>);
+    return v;
   }
 
   private resolveRef(inst: Instance, step: StepRecord, ref: string): unknown {

@@ -1,13 +1,17 @@
 // Composition root of the first slice. The only place that knows every concrete class; tests build the world from here.
+// Two flows share one gateway, router, journal, review service and audit: document-intake.v1 and mail-intake.v1.
 import { join } from "node:path";
 import { FakeArchiveAdapter } from "./adapters/archive.js";
 import { FakeDmsAdapter } from "./adapters/dms.js";
-import { FakeLlmAdapter, KeywordClassifierAdapter, type LlmAdapter } from "./adapters/llm.js";
+import { classifyByRules, FakeLlmAdapter, KeywordClassifierAdapter, type LlmAdapter } from "./adapters/llm.js";
 import { FakeRegistryAdapter } from "./adapters/registry.js";
+import { FakeSmtpAdapter } from "./adapters/smtp.js";
 import * as classifier from "./components/document-classifier/handler.js";
 import * as validator from "./components/document-validator/handler.js";
 import * as host from "./components/document-executor-host/stamp-handler.js";
 import { createArchiveHandler, ARCHIVE_CREDENTIAL, ARCHIVE_HANDLER_ID, type ArchiveDeps } from "./components/document-executor-host/archive-handler.js";
+import * as ingest from "./components/mail-ingest/handler.js";
+import * as email from "./components/email-executor/handler.js";
 import { ArtifactStore } from "./platform/artifacts.js";
 import { Audit } from "./platform/audit.js";
 import { FakeClock, iso, plus } from "./platform/clock.js";
@@ -30,7 +34,7 @@ export const ORCHESTRATOR = "svc-orchestrator";
 export const ORCHESTRATOR_B = "svc-orchestrator-t7";
 export const AI_AGENT = "ai-doc-classifier";
 export const DEFAULT_CLOCK_START = "2026-09-06T08:00:00Z";
-export const ALL_SCOPES = ["document.classify", "document.validate", "document.stamp", "document.archive"];
+export const ALL_SCOPES = ["document.classify", "document.validate", "document.stamp", "document.archive", "mail.ingest", "email.send"];
 
 export const IDENTITIES: Identity[] = [
   { actorId: ORCHESTRATOR, actorType: "service", tenantId: TENANT_A, scopes: ALL_SCOPES, authStrength: "client-credentials" },
@@ -43,16 +47,20 @@ export interface SliceOptions {
   clockStart?: string;
   journalFile?: string;
   auditFile?: string;
-  /** Durable stores can be shared between two slices to simulate a restart (RES-CRASH-001). */
+  /** Durable stores can be shared between two slices to simulate a restart (RES-CRASH-001, IDM-RET-002). */
   artifacts?: ArtifactStore;
+  artifactCapacityBytes?: number;
   dms?: FakeDmsAdapter;
   registry?: FakeRegistryAdapter;
   archive?: FakeArchiveAdapter;
+  smtp?: FakeSmtpAdapter;
   models?: Record<string, LlmAdapter>;
   contextTtlMs?: number;
   modelTimeoutMs?: number;
   registryTimeoutMs?: number;
+  /** Test harness: mutants per host (VC §6). */
   hostMutants?: HostMutants;
+  emailHostMutants?: HostMutants;
   /** Replace the archive handler (test harness: rogue handler for SEC-HOST-001). */
   archiveHandler?: (deps: ArchiveDeps) => HostHandlerSpec;
   workflow?: WorkflowDef;
@@ -65,7 +73,7 @@ export function loadWorkflow(name = "document-intake.v1"): WorkflowDef {
 export function createSlice(o: SliceOptions = {}) {
   const clock = new FakeClock(o.clockStart ?? DEFAULT_CLOCK_START);
   const audit = new Audit(clock, o.auditFile);
-  const artifacts = o.artifacts ?? new ArtifactStore(clock);
+  const artifacts = o.artifacts ?? new ArtifactStore(clock, o.artifactCapacityBytes !== undefined ? { capacityBytes: o.artifactCapacityBytes } : {});
 
   // Gateway with Ed25519 key k1; receivers hold only the public key.
   const keyPair = generateKeyPair();
@@ -75,24 +83,38 @@ export function createSlice(o: SliceOptions = {}) {
   const identities = new IdentityProvider(IDENTITIES);
   const gateway = new Gateway({ identities, signer, clock, ...(o.contextTtlMs !== undefined ? { contextTtlMs: o.contextTtlMs } : {}) });
 
-  // Adapters (fakes) and credentials: one table row per handler identity (CredentialResolverFixture, VC §6).
+  // Adapters (fakes)
   const dms = o.dms ?? new FakeDmsAdapter();
   const registry = o.registry ?? new FakeRegistryAdapter();
   const archive = o.archive ?? new FakeArchiveAdapter();
+  const smtp = o.smtp ?? new FakeSmtpAdapter();
   const models = o.models ?? { llm: new FakeLlmAdapter(), keyword: new KeywordClassifierAdapter() };
-  const credentials = new CredentialResolver(
+
+  // Credential domains (CredentialResolverFixture, VC §6): one table row per handler identity, one resolver per deployable.
+  const documentCredentials = new CredentialResolver(
     {
       [host.STAMP_HANDLER_ID]: { [host.STAMP_CREDENTIAL]: "dms-secret" },
       [ARCHIVE_HANDLER_ID]: { [ARCHIVE_CREDENTIAL]: "archive-secret" },
     },
     audit,
   );
+  const emailCredentials = new CredentialResolver({ [email.SEND_HANDLER_ID]: { [email.SMTP_CREDENTIAL]: "smtp-secret" } }, audit);
+  const ingestCredentials = new CredentialResolver({ [ingest.INGEST_HANDLER_ID]: {} }, audit);
 
-  // Executor host: two LOGICAL handlers in one process.
-  const executorHost = new ExecutorHost({ hostId: host.descriptor.module, clock, audit, credentials });
-  Object.assign(executorHost.mutants, o.hostMutants ?? {});
-  executorHost.register(host.createStampHandler({ artifacts, dms, credentials, clock }));
-  executorHost.register((o.archiveHandler ?? createArchiveHandler)({ artifacts, archive, credentials, clock }));
+  // Hosts: document-executor-host (LOGICAL, two handlers), email-executor (PRINCIPAL: own context, own credential domain), mail-ingest.
+  const documentHost = new ExecutorHost({ hostId: host.descriptor.module, clock, audit, credentials: documentCredentials });
+  Object.assign(documentHost.mutants, o.hostMutants ?? {});
+  documentHost.register(host.createStampHandler({ artifacts, dms, credentials: documentCredentials, clock }));
+  documentHost.register((o.archiveHandler ?? createArchiveHandler)({ artifacts, archive, credentials: documentCredentials, clock }));
+
+  const emailPolicy = loadPolicy("email.send", "1");
+  const recipients: email.RecipientDirectory = (tenantId, ref) => emailPolicy.recipientAllowlist?.[tenantId]?.[ref];
+  const emailHost = new ExecutorHost({ hostId: email.descriptor.module, clock, audit, credentials: emailCredentials });
+  Object.assign(emailHost.mutants, o.emailHostMutants ?? {});
+  emailHost.register(email.createEmailSendHandler({ artifacts, smtp, credentials: emailCredentials, recipients, clock }));
+
+  const ingestHost = new ExecutorHost({ hostId: ingest.descriptor.module, clock, audit, credentials: ingestCredentials });
+  ingestHost.register(ingest.createIngestHandler({ artifacts, clock }));
 
   // Router: descriptors validated against the frozen schema, policies loaded fail-closed.
   const router = new Router({ registry: keyRegistry, clock, audit });
@@ -116,7 +138,13 @@ export function createSlice(o: SliceOptions = {}) {
         name: "document.validate",
         version: "1",
         inputSchema: validator.inputSchema,
-        handler: validator.createDocumentValidator({ artifacts, registry, clock, ...(o.registryTimeoutMs !== undefined ? { registryTimeoutMs: o.registryTimeoutMs } : {}) }),
+        handler: validator.createDocumentValidator({
+          artifacts,
+          registry,
+          clock,
+          crossCheck: classifyByRules,
+          ...(o.registryTimeoutMs !== undefined ? { registryTimeoutMs: o.registryTimeoutMs } : {}),
+        }),
       },
     ],
   });
@@ -124,33 +152,69 @@ export function createSlice(o: SliceOptions = {}) {
     descriptor: host.descriptor as never,
     policies: { "document.stamp": loadPolicy("document.stamp", "1"), "document.archive": loadPolicy("document.archive", "1") },
     capabilities: [
-      { name: "document.stamp", version: "1", inputSchema: host.stampInputSchema, handler: executorHost.handlerFor("document.stamp") },
-      { name: "document.archive", version: "1", inputSchema: host.archiveInputSchema, handler: executorHost.handlerFor("document.archive") },
+      { name: "document.stamp", version: "1", inputSchema: host.stampInputSchema, handler: documentHost.handlerFor("document.stamp") },
+      { name: "document.archive", version: "1", inputSchema: host.archiveInputSchema, handler: documentHost.handlerFor("document.archive") },
     ],
+  });
+  router.register({
+    descriptor: ingest.descriptor as never,
+    policies: { "mail.ingest": loadPolicy("mail.ingest", "1") },
+    capabilities: [{ name: "mail.ingest", version: "1", inputSchema: ingest.inputSchema, handler: ingestHost.handlerFor("mail.ingest") }],
+  });
+  router.register({
+    descriptor: email.descriptor as never,
+    policies: { "email.send": emailPolicy },
+    capabilities: [{ name: "email.send", version: "1", inputSchema: email.inputSchema, handler: emailHost.handlerFor("email.send") }],
   });
 
   const journal = new Journal(o.journalFile);
   const review = new ReviewService(clock, audit);
   const workflow = o.workflow ?? loadWorkflow();
-  const orchestrator = new Orchestrator({
-    workflow,
+  const mailWorkflow = loadWorkflow("mail-intake.v1");
+  const reconcilers = { "document.stamp": documentHost.reconcilerFor("document.stamp"), "email.send": emailHost.reconcilerFor("email.send") };
+  const shared = { gateway, router, journal, review, audit, clock, actorId: ORCHESTRATOR, reconcilers };
+  const orchestrator = new Orchestrator({ workflow, ...shared });
+  const mailOrchestrator = new Orchestrator({ workflow: mailWorkflow, ...shared });
+  const orchestrators: Record<string, Orchestrator> = { [workflow.workflow]: orchestrator, [mailWorkflow.workflow]: mailOrchestrator };
+
+  return {
+    clock,
+    audit,
+    artifacts,
+    keyPair,
+    keyRegistry,
+    signer,
+    identities,
     gateway,
+    credentials: documentCredentials,
+    emailCredentials,
+    host: documentHost,
+    emailHost,
+    ingestHost,
+    dms,
+    registry,
+    archive,
+    smtp,
+    models,
+    recipients,
     router,
     journal,
     review,
-    audit,
-    clock,
-    actorId: ORCHESTRATOR,
-    reconcilers: { "document.stamp": executorHost.reconcilerFor("document.stamp") },
-  });
-
-  return { clock, audit, artifacts, keyPair, keyRegistry, signer, identities, gateway, credentials, host: executorHost, dms, registry, archive, models, router, journal, review, workflow, orchestrator };
+    workflow,
+    mailWorkflow,
+    orchestrator,
+    mailOrchestrator,
+    orchestrators,
+  };
 }
 
 export type Slice = ReturnType<typeof createSlice>;
 
 /** Build a well-formed command the way the orchestrator would, for direct router tests. */
-export function command(slice: Slice, input: { capability: string; payload: Record<string, unknown>; version?: string; idempotencyKey?: string; correlationId?: string; deadlineMs?: number; type?: "command" | "query" | "event" }): MessageEnvelope {
+export function command(
+  slice: Slice,
+  input: { capability: string; payload: Record<string, unknown>; version?: string; idempotencyKey?: string; correlationId?: string; deadlineMs?: number; type?: "command" | "query" | "event" },
+): MessageEnvelope {
   const now = slice.clock.now();
   const m: MessageEnvelope = {
     messageId: newId("msg"),

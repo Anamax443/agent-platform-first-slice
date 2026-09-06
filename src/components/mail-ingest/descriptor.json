@@ -1,0 +1,35 @@
+{
+  "module": "mail-ingest",
+  "componentVersion": "0.1.0",
+  "runtime": "in-process",
+  "deploymentModel": "CLOUD_SINGLE_TENANT",
+  "tenantMode": "SINGLE",
+  "owner": "first-slice",
+  "verificationProfiles": ["WRITE_EXECUTOR", "PROVIDER", "EVIDENCE"],
+  "capabilities": [
+    {
+      "name": "mail.ingest",
+      "versions": ["1"],
+      "preferredVersion": "1",
+      "inputSchema": "mail.ingest.input.v1",
+      "outputSchema": "mail.ingest.output.v1",
+      "conformanceSuiteVersion": "1.0",
+      "conformanceTier": "semantic",
+      "executionMode": "sync",
+      "sideEffects": "internal-write",
+      "trustClass": "executor",
+      "riskClass": "LOW",
+      "isolationClass": "LOGICAL",
+      "requiredScopes": ["mail.ingest"],
+      "usesLlm": false,
+      "idempotency": "required",
+      "idempotencyRetention": "P30D",
+      "deadlinePolicy": "PT30M",
+      "reversibility": "REVERSIBLE",
+      "unknownOutcomeRecovery": "not-applicable",
+      "humanApproval": "none",
+      "errorCodes": ["MAIL_MALFORMED", "STORAGE_FULL", "COMMAND_EXPIRED", "CAPABILITY_NOT_ALLOWED", "CREDENTIAL_DENIED"]
+    }
+  ],
+  "endpoints": { "health": "/health", "version": "/version", "capabilities": "/capabilities" }
+}

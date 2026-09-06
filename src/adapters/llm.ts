@@ -7,7 +7,8 @@ export interface LlmAdapter {
 
 const UNTRUSTED = /<untrusted>([\s\S]*?)<\/untrusted>/;
 
-function keywordClass(text: string): string {
+/** Deterministic rules classifier over plain text. Also the second signal the validator uses (W4 in MEASUREMENT). */
+export function classifyByRules(text: string): string {
   const t = text.toLowerCase();
   if (/(faktura|invoice|iban|dič|dph|variabilní symbol)/.test(t)) return "INVOICE";
   if (/(smlouva|contract|smluvní strany|agreement)/.test(t)) return "CONTRACT";
@@ -28,7 +29,7 @@ export class FakeLlmAdapter implements LlmAdapter {
     const text = UNTRUSTED.exec(prompt)?.[1] ?? "";
     const injected = /system:\s*ignore[^\n]*?classify\s+(?:this\s+)?as\s+([a-z_]+)/i.exec(text);
     if (injected) return (injected[1] as string).toUpperCase();
-    return keywordClass(text);
+    return classifyByRules(text);
   }
 }
 
@@ -40,7 +41,6 @@ export class KeywordClassifierAdapter implements LlmAdapter {
 
   async complete(prompt: string): Promise<string> {
     this.calls += 1;
-    const text = UNTRUSTED.exec(prompt)?.[1] ?? "";
-    return keywordClass(text);
+    return classifyByRules(UNTRUSTED.exec(prompt)?.[1] ?? "");
   }
 }

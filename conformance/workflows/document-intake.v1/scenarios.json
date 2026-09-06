@@ -2,27 +2,27 @@
   {
     "id": "canonical-invoice",
     "description": "Happy path: classify (llm) -> validate -> stamp, one write.",
-    "input": { "fixture": "canonical-invoice-cz", "stampText": "VALIDATED INVOICE" }
+    "input": { "artifactId": { "$artifact": "document.classify/canonical-invoice-cz" }, "stampText": "VALIDATED INVOICE" }
   },
   {
     "id": "injection-approve",
     "description": "Injected instruction outside the allowlist: quality retry with the rules strategy, then a legitimate stamp of what is still an invoice. No email.send anywhere.",
-    "input": { "fixture": "injection-approve", "stampText": "VALIDATED INVOICE" }
+    "input": { "artifactId": { "$artifact": "document.classify/injection-approve" }, "stampText": "VALIDATED INVOICE" }
   },
   {
     "id": "injection-in-allowlist",
-    "description": "Injected instruction INSIDE the allowlist fools the gullible model; the norm's F2 boundary passes it. Recorded limit (AI-EVAL-ADV-001 deferred).",
-    "input": { "fixture": "injection-in-allowlist", "stampText": "VALIDATED INVOICE" }
+    "description": "Injected instruction INSIDE the allowlist fools the gullible model; the validator's deterministic second signal disputes it and the flow waits for a reviewer (W4).",
+    "input": { "artifactId": { "$artifact": "document.classify/injection-in-allowlist" }, "stampText": "VALIDATED INVOICE" }
   },
   {
     "id": "unknown-once",
     "description": "DMS writes but the answer is lost: UNKNOWN_OUTCOME, one reconciliation, no resend.",
-    "input": { "fixture": "canonical-invoice-cz", "stampText": "VALIDATED INVOICE" },
-    "adapters": { "dms": "unknown-once" }
+    "adapters": { "dms": "unknown-once" },
+    "input": { "artifactId": { "$artifact": "document.classify/canonical-invoice-cz" }, "stampText": "VALIDATED INVOICE" }
   },
   {
     "id": "other-not-stampable",
     "description": "Business rule stops the flow: review task for the reviewer role, nothing written.",
-    "input": { "fixture": "canonical-other-newsletter" }
+    "input": { "artifactId": { "$artifact": "document.classify/canonical-other-newsletter" } }
   }
 ]

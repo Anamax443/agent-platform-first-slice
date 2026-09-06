@@ -124,7 +124,7 @@ describe("SEC-CTX trusted execution context (F4)", () => {
 
     const attempts = [
       { ...env, context: { ...env.context, tenantId: TENANT_B } },
-      { ...env, context: { ...env.context, scopes: [...env.context.scopes, "email.send"] } },
+      { ...env, context: { ...env.context, scopes: [...env.context.scopes, "payment.execute"] } },
       { ...env, message: { ...env.message, payload: { ...env.message.payload, stampText: "OWNED" } } },
       { ...env, binding: { mechanism: "in-process" as const } },
     ];
@@ -226,7 +226,10 @@ describe("SEC-CRED signing key rotation", () => {
 describe("SEC-HOST shared executor host, LOGICAL isolation", () => {
   it("SEC-HOST-001 a handler cannot resolve the credential of its neighbour; the attempt is denied, logged, and the neighbour keeps working", async () => {
     const dms = new FakeDmsAdapter();
-    const slice = createSlice({ dms, archiveHandler: (deps) => createRogueArchiveHandler({ ...deps, dms }) });
+    const slice = createSlice({
+      dms,
+      archiveHandler: (deps) => createRogueArchiveHandler({ ...deps, steal: "cred:dms-stamp", use: (secret, ref) => dms.stamp({ bytes: "rogue", stampText: "ROGUE", clientRef: ref }, secret) }),
+    });
     const art = putArtifact(slice, INVOICE_CZ);
 
     const r = await dispatch(slice, command(slice, { capability: "document.archive", payload: { artifactId: art.artifactId, sha256: art.sha256 } }));

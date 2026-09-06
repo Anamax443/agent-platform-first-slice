@@ -23,6 +23,8 @@ export interface Policy {
   approval?: { required: boolean; reviewerRole?: string; minAuthStrength?: string; approvalBoundTo?: string[] };
   effectFieldValidators?: Record<string, { validator: string; mustPass: boolean; params?: Record<string, unknown> }>;
   isolation?: { acceptedIsolationClass: string; isolationDecisionRef?: string };
+  /** tenantId -> recipientRef -> address. Authority for effect field `recipientRef` of email.send (no payload names an address). */
+  recipientAllowlist?: Record<string, Record<string, string>>;
   failClosed: boolean;
 }
 

@@ -1,13 +1,12 @@
-// INT family: dependency failure classes, end-to-end golden master, implementation replacement.
-import { readFileSync } from "node:fs";
+// INT family: dependency failure classes, end-to-end golden masters of every workflow, implementation replacement.
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { FakeDmsAdapter, type DmsMode } from "../src/adapters/dms.js";
 import { KeywordClassifierAdapter } from "../src/adapters/llm.js";
 import { FakeRegistryAdapter } from "../src/adapters/registry.js";
-import { expectGolden, runFixture } from "./harness/conformance.js";
-import { createSlice, INVOICE_CZ, runIntake, subsetDiff, trace, type Trace } from "./harness/index.js";
-import { CONFORMANCE_DIR, fixtureBytes, loadSuite } from "./harness/suite.js";
+import { expectGolden, runFixture, sliceOptionsFor } from "./harness/conformance.js";
+import { createSlice, INVOICE_CZ, runIntake, runScenario, subsetDiff, trace, type Trace } from "./harness/index.js";
+import { CONFORMANCE_DIR, loadSuite, type AdapterModes } from "./harness/suite.js";
 
 describe("INT-FAIL dependency failure per error class (validator -> registry)", () => {
   it("INT-FAIL-001 timeout -> DEPENDENCY_TIMEOUT retryable, bounded retries, never a silent continue", async () => {
@@ -62,28 +61,40 @@ describe("INT-FAIL dependency failure per error class (validator -> registry)", 
   });
 });
 
-describe("INT-E2E-001 workflow golden master (semantic tier of document-intake.v1)", () => {
-  const dir = join(CONFORMANCE_DIR, "workflows", "document-intake.v1");
-  const scenarios = JSON.parse(readFileSync(join(dir, "scenarios.json"), "utf8")) as Array<{
-    id: string;
-    input: { fixture: string; stampText?: string };
-    adapters?: { dms?: DmsMode };
-  }>;
-  const golden = JSON.parse(readFileSync(join(dir, "golden.json"), "utf8")) as Record<string, Partial<Trace>>;
+interface Scenario {
+  id: string;
+  description?: string;
+  input: Record<string, unknown>;
+  adapters?: AdapterModes;
+  storage?: { capacityBytes: number };
+}
 
-  for (const sc of scenarios) {
-    it(`INT-E2E-001 ${sc.id}`, async () => {
-      const slice = createSlice({ dms: new FakeDmsAdapter(sc.adapters?.dms ?? "ok") });
-      const { instance } = await runIntake(slice, { bytes: fixtureBytes("document.classify", sc.input.fixture), ...(sc.input.stampText ? { stampText: sc.input.stampText } : {}) });
-      const actual = trace(slice, instance.workflowId);
-      const diff = subsetDiff(actual, golden[sc.id]);
-      expect(diff, `${sc.id}:\n${diff.join("\n")}\nactual: ${JSON.stringify(actual, null, 2)}`).toEqual([]);
-      // property that holds for every scenario: every write has an audit record before and after it
-      expect(slice.audit.byKind("write-intent")).toHaveLength(slice.audit.byKind("write-done").length);
-      expect(slice.dms.stampCalls).toBeLessThanOrEqual(slice.audit.byKind("write-intent").length);
+const WORKFLOW_DIRS = readdirSync(join(CONFORMANCE_DIR, "workflows"));
+
+for (const dir of WORKFLOW_DIRS) {
+  const workflow = dir.replace(/\.v\d+$/, "");
+  const scenarios = JSON.parse(readFileSync(join(CONFORMANCE_DIR, "workflows", dir, "scenarios.json"), "utf8")) as Scenario[];
+  const golden = JSON.parse(readFileSync(join(CONFORMANCE_DIR, "workflows", dir, "golden.json"), "utf8")) as Record<string, Partial<Trace>>;
+
+  describe(`INT-E2E-001 golden master of ${dir} (semantic tier)`, () => {
+    it("every scenario has a golden and every golden a scenario", () => {
+      expect(scenarios.map((s) => s.id).sort()).toEqual(Object.keys(golden).sort());
     });
-  }
-});
+    for (const sc of scenarios) {
+      it(`INT-E2E-001 ${dir} ${sc.id}`, async () => {
+        const slice = createSlice(sliceOptionsFor(sc.adapters, sc.storage));
+        const instance = await runScenario(slice, workflow, sc.input);
+        const actual = trace(slice, instance.workflowId);
+        const diff = subsetDiff(actual, golden[sc.id]);
+        expect(diff, `${sc.id}:\n${diff.join("\n")}\nactual: ${JSON.stringify(actual, null, 2)}`).toEqual([]);
+        // properties that hold for every scenario: every write has an audit record before and after; no address outside the allowlist
+        expect(slice.audit.byKind("write-intent")).toHaveLength(slice.audit.byKind("write-done").length);
+        expect(slice.dms.stampCalls + slice.smtp.sendCalls).toBeLessThanOrEqual(slice.audit.byKind("write-intent").length);
+        for (const to of slice.smtp.recipients()) expect(to.endsWith("@maxferit.example") || to.endsWith("@tenant7.example"), to).toBe(true);
+      });
+    }
+  });
+}
 
 describe("INT-REPLACE-001 replacing the model behind document.classify", () => {
   const rules = () => ({ llm: new KeywordClassifierAdapter(), keyword: new KeywordClassifierAdapter() });

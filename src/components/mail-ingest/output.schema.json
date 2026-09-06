@@ -1,0 +1,22 @@
+{
+  "$id": "mail.ingest.output.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifactId", "sha256", "receivedFrom", "sender", "subject"],
+  "properties": {
+    "artifactId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "receivedFrom": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "sender": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "source", "trustLevel"],
+      "properties": {
+        "value": { "type": "string", "maxLength": 254 },
+        "source": { "type": "string", "const": "rules" },
+        "trustLevel": { "type": "string", "const": "untrusted-derived" }
+      }
+    },
+    "subject": { "type": "string", "maxLength": 200, "description": "Data, never interpreted. Truncated to 200 characters." }
+  }
+}

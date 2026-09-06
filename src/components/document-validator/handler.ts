@@ -19,6 +19,21 @@ export interface ValidatorDeps {
   registry: RegistryAdapter;
   clock: Clock;
   registryTimeoutMs?: number;
+  /**
+   * Second, deterministic signal for values that came from a model (W4 in MEASUREMENT): a rules classifier over the
+   * document text. Disagreement is a QUALITY failure that the workflow routes to review; it is a heuristic, not proof.
+   */
+  crossCheck?: (text: string) => string;
+}
+
+const INSTRUCTION_LINE = /(ignore (all |any )?(previous|prior|above|earlier) instructions|^\s*system\s*:|classify (this |it )?as\b|^\s*assistant\s*:)/i;
+
+/** Lines that read like instructions are data too, but they must not feed the second signal (an injected keyword would satisfy both). */
+export function stripInstructionLines(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .filter((line) => !INSTRUCTION_LINE.test(line))
+    .join("\n");
 }
 
 interface Input {
@@ -48,6 +63,13 @@ export function createDocumentValidator(deps: ValidatorDeps): Handler {
       p.strategy === "human-corrected" && p.correctedDocumentType
         ? { value: p.correctedDocumentType, source: "human", confidence: 1, trustLevel: "human-corrected" }
         : { value: p.documentType.value, source: p.documentType.source ?? "llm", trustLevel: "untrusted-derived", ...(p.documentType.confidence !== undefined ? { confidence: p.documentType.confidence } : {}) };
+
+    if (deps.crossCheck && type.source !== "human") {
+      const second = deps.crossCheck(stripInstructionLines(art.bytes));
+      if (second !== type.value) {
+        return failed(capabilityError("CLASSIFICATION_DISPUTED", "QUALITY", false, "deterministic cross-check disagrees with the classifier", { classifier: type.value, rules: second, source: type.source }));
+      }
+    }
 
     let record: RegistryRecord;
     try {

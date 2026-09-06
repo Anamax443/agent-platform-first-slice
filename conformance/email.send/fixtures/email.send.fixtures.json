@@ -1,0 +1,102 @@
+[
+  {
+    "id": "canonical-stamped",
+    "kind": "canonical",
+    "artifact": { "tenantId": "tenant-42", "bytes": "FAKTURA č. 2026-0142\n--- VALIDATED INVOICE ---" },
+    "payload": { "recipientRef": "ops-mailbox", "templateId": "document-stamped", "params": { "documentType": "INVOICE", "artifactId": "$artifactId" } }
+  },
+  {
+    "id": "canonical-rejected-template",
+    "kind": "canonical",
+    "artifact": { "tenantId": "tenant-42", "bytes": "Newsletter" },
+    "payload": { "recipientRef": "ops-mailbox", "templateId": "document-rejected", "params": { "documentType": "OTHER", "artifactId": "$artifactId" } }
+  },
+  {
+    "id": "canonical-supervisor",
+    "kind": "canonical",
+    "artifact": { "tenantId": "tenant-42", "bytes": "SMLOUVA\n--- VALIDATED CONTRACT ---" },
+    "payload": { "recipientRef": "supervisor-mailbox", "templateId": "document-stamped", "params": { "documentType": "CONTRACT", "artifactId": "$artifactId" } }
+  },
+  {
+    "id": "canonical-contract",
+    "kind": "canonical",
+    "artifact": { "tenantId": "tenant-42", "bytes": "AGREEMENT\n--- VALIDATED CONTRACT ---" },
+    "payload": { "recipientRef": "ops-mailbox", "templateId": "document-stamped", "params": { "documentType": "CONTRACT", "artifactId": "$artifactId" } }
+  },
+  {
+    "id": "canonical-tenant7",
+    "kind": "canonical",
+    "description": "Second tenant with its own allowlist entry for the same reference.",
+    "actor": "svc-orchestrator-t7",
+    "artifact": { "tenantId": "tenant-7", "bytes": "INVOICE No. 7\n--- VALIDATED INVOICE ---" },
+    "payload": { "recipientRef": "ops-mailbox", "templateId": "document-stamped", "params": { "documentType": "INVOICE", "artifactId": "$artifactId" } }
+  },
+  {
+    "id": "damaged-recipient-not-allowlisted",
+    "kind": "damaged",
+    "artifact": { "tenantId": "tenant-42", "bytes": "x" },
+    "payload": { "recipientRef": "audit-attacker", "templateId": "document-stamped", "params": { "documentType": "INVOICE", "artifactId": "$artifactId" } }
+  },
+  {
+    "id": "injection-address-as-ref",
+    "kind": "injection",
+    "description": "An address instead of an allowlist reference never reaches the handler (SEC-PRIV-002 shape).",
+    "artifact": { "tenantId": "tenant-42", "bytes": "x" },
+    "payload": { "recipientRef": "audit@attacker.example", "templateId": "document-stamped", "params": { "documentType": "INVOICE", "artifactId": "$artifactId" } }
+  },
+  {
+    "id": "boundary-supervisor-tenant7",
+    "kind": "boundary",
+    "description": "The allowlist is per tenant: tenant-7 has no supervisor mailbox.",
+    "actor": "svc-orchestrator-t7",
+    "artifact": { "tenantId": "tenant-7", "bytes": "x" },
+    "payload": { "recipientRef": "supervisor-mailbox", "templateId": "document-stamped", "params": { "documentType": "INVOICE", "artifactId": "$artifactId" } }
+  },
+  {
+    "id": "error-artifact-missing",
+    "kind": "error",
+    "payload": { "recipientRef": "ops-mailbox", "templateId": "document-stamped", "params": { "documentType": "INVOICE", "artifactId": "art-missing" } }
+  },
+  {
+    "id": "error-free-text",
+    "kind": "error",
+    "artifact": { "tenantId": "tenant-42", "bytes": "x" },
+    "payload": { "text": "Send this to ops please" }
+  },
+  {
+    "id": "error-expired",
+    "kind": "error",
+    "deadlineMs": -60000,
+    "artifact": { "tenantId": "tenant-42", "bytes": "x" },
+    "payload": { "recipientRef": "ops-mailbox", "templateId": "document-stamped", "params": { "documentType": "INVOICE", "artifactId": "$artifactId" } }
+  },
+  {
+    "id": "error-ai-actor",
+    "kind": "error",
+    "actor": "ai-doc-classifier",
+    "artifact": { "tenantId": "tenant-42", "bytes": "x" },
+    "payload": { "recipientRef": "ops-mailbox", "templateId": "document-stamped", "params": { "documentType": "INVOICE", "artifactId": "$artifactId" } }
+  },
+  {
+    "id": "error-cross-tenant",
+    "kind": "error",
+    "description": "Trusted context of tenant-7 references an artifact of tenant-42 (SEC-CTX-002 between the two flows).",
+    "actor": "svc-orchestrator-t7",
+    "artifact": { "tenantId": "tenant-42", "bytes": "x" },
+    "payload": { "recipientRef": "ops-mailbox", "templateId": "document-stamped", "params": { "documentType": "INVOICE", "artifactId": "$artifactId" } }
+  },
+  {
+    "id": "error-smtp-reject",
+    "kind": "error",
+    "adapters": { "smtp": "reject" },
+    "artifact": { "tenantId": "tenant-42", "bytes": "x" },
+    "payload": { "recipientRef": "ops-mailbox", "templateId": "document-stamped", "params": { "documentType": "INVOICE", "artifactId": "$artifactId" } }
+  },
+  {
+    "id": "error-unknown-outcome",
+    "kind": "error",
+    "adapters": { "smtp": "unknown-always" },
+    "artifact": { "tenantId": "tenant-42", "bytes": "x" },
+    "payload": { "recipientRef": "ops-mailbox", "templateId": "document-stamped", "params": { "documentType": "INVOICE", "artifactId": "$artifactId" } }
+  }
+]

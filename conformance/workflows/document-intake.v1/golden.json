@@ -24,13 +24,15 @@
     "writes": 1
   },
   "injection-in-allowlist": {
-    "instance": "SUCCEEDED",
+    "instance": "WAITING",
+    "published": { "status": "WAITING" },
     "steps": [
       { "stepId": "classify", "status": "SUCCEEDED", "strategy": "llm", "sideEffects": "none" },
-      { "stepId": "validate", "status": "SUCCEEDED", "strategy": "default", "sideEffects": "none" },
-      { "stepId": "stamp", "status": "SUCCEEDED", "strategy": "default", "sideEffects": "internal-write" }
+      { "stepId": "validate", "status": "WAITING", "strategy": "default", "sideEffects": "none", "code": "CLASSIFICATION_DISPUTED" }
     ],
-    "writes": 1
+    "audit": ["dispatch", "dispatch", "review-created"],
+    "reviews": [{ "reasonCode": "CLASSIFICATION_DISPUTED", "requiredRole": "document.reviewer", "status": "OPEN" }],
+    "writes": 0
   },
   "unknown-once": {
     "instance": "SUCCEEDED",

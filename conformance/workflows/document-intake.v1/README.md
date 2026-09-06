@@ -2,7 +2,7 @@
 
 conformanceTier of the workflow definition: `semantic` (FOUNDATION-core §5.7).
 
-`scenarios.json` names a classify fixture as input plus adapter modes; `golden.json` is a subset of the trace that `tests/harness/index.ts#trace` builds from the journal, the audit trail (filtered by `correlationId`), the review service and the DMS fake.
+`scenarios.json` gives the workflow input (`{ "$artifact": "<capability>/<fixture id>" }` stores the fixture bytes as an artifact and passes its id) plus adapter modes; `golden.json` is a subset of the trace that `tests/harness/index.ts#trace` builds from the journal, the audit trail (filtered by `correlationId`), the review service and the DMS fake.
 
 | MUST (semantic tier) | DON'T CARE |
 |---|---|

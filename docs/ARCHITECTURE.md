@@ -2,46 +2,51 @@
 
 Norma je v `agent-platform-foundation` (zmrazeno 1.0-rc2.1). Tady je jen to, jak ji tento projekt naplňuje.
 
-## Tok
+## Toky
 
 ```text
-ArtifactStore (immutable, sha256)
+                 ┌──────────────────────────────────────────────────────────────────────────┐
+                 │ Gateway ──sign Ed25519──> DispatchEnvelope { message, context, binding } │
+                 └──────────────────────────────────────────────────────────────────────────┘
+                                                   |
+                                                   v
+   Router: schema -> mechanism -> binding -> context expiry -> scope -> version -> policy (tenant) -> input schema -> handler
       |
-      v
-Gateway ──sign Ed25519──> DispatchEnvelope { message, context, binding }
-      |
-      v
-Router: schema -> mechanism -> binding -> context expiry -> scope -> version -> policy (tenant) -> input schema -> handler
-      |
-      +--> document.classify   (AI, LlmAdapter, enum allowlist z output schématu, provenance)   sideEffects: none
-      +--> document.validate   (deterministic, RegistryAdapter, dependsOn)                       sideEffects: none
-      +--> ExecutorHost (LOGICAL, CredentialResolver podle identity handleru)
-             +--> document.stamp    (LOW, cred:dms-stamp, DmsAdapter, reconcile přes clientRef)   sideEffects: internal-write
-             +--> document.archive  (LOW, cred:archive-store, ArchiveAdapter)                    sideEffects: internal-write
-      |
-      v
-Orchestrator (workflow document-intake.v1, Journal na disku, Review Service, Audit, reconcilers z hostu)
+      +--> document.classify   (AI, LlmAdapter, enum allowlist z output schématu, provenance)         sideEffects: none
+      +--> document.validate   (deterministic, RegistryAdapter, dependsOn, druhý signál pravidly)      sideEffects: none
+      +--> document-executor-host  (LOGICAL, credential doména A: cred:dms-stamp, cred:archive-store)
+      |        +--> document.stamp    (LOW, DmsAdapter, reconcile přes clientRef = idempotencyKey)      sideEffects: internal-write
+      |        +--> document.archive  (LOW, ArchiveAdapter)                                             sideEffects: internal-write
+      +--> mail-ingest              (LOGICAL, bez credentialů; immutable originál do ArtifactStore)
+      |        +--> mail.ingest       (LOW, hlavičky parsovány pravidly, vše zůstává data)              sideEffects: internal-write
+      +--> email-executor           (PRINCIPAL, credential doména B: jen cred:smtp)
+               +--> email.send       (MEDIUM, IRREVERSIBLE, SmtpAdapter, příjemce jen z allowlistu policy) sideEffects: external-write
+
+   Orchestrátory (společný Journal, Review Service, Audit; každý jen svou definici):
+     document-intake.v1:  classify -> validate -> stamp
+     mail-intake.v1:      ingest -> classify -> validate -> stamp -> notify(email.send)
 ```
 
-Kompoziční kořen je `src/slice.ts`: jediné místo, které zná všechny konkrétní třídy. Testy z něj staví svět s fakes; `createSlice()` bere volby (journal soubor, adaptéry, mutanty, náhradní handler) a vrací všechny části pro assert.
+Kompoziční kořen je `src/slice.ts`: jediné místo, které zná všechny konkrétní třídy. Testy z něj staví svět s fakes; `createSlice()` bere volby (journal soubor, adaptéry, kapacita úložiště, mutanty per host, náhradní handler) a vrací všechny části pro assert.
 
 ## Kde jsou hranice normy vidět v kódu
 
 | Invariant / pravidlo | Kde |
 |---|---|
-| F1 privilege boundary | `router.ts` odmítne capability mimo `context.scopes`; policy v `contracts/policy/*.json` AI identitě write negrantuje; write jen přes `executor-host.ts` s allowlistem |
-| F2 untrusted data | `document-classifier/handler.ts`: text v oddělovačích (jméno oddělovače až za blokem, nález N3), výstup modelu jen přes enum z `output.schema.json`; `document-validator/handler.ts`: odpověď registru prochází rozsahovým a sémantickým testem; `stamp-handler.ts` přijme jen hodnotu s `validation.status: passed` od validátoru |
-| F3 contract boundary | komponenty importují jen `platform/api.ts`, vlastní adresář a adapter kontrakty (hlídá `scripts/arch-dep.mjs`); orchestrátor volá reconciler executora jako neprůhledný objekt |
-| F4 trusted context | `gateway.ts` tvoří context z identity, `signing.ts` podpis nad JCS `{message, context}` s okny platnosti klíčů a grace period, `router.ts` ověřuje a přijímá jen `signed-envelope` |
-| F5 observable execution | `orchestrator.ts` stavy, `journal.ts` persistence, `UNKNOWN_OUTCOME` + reconciliation s budgetem, publikovaný stav během reconciliace, `applyReviewExpiries` |
-| F6 safe state change | `executor-host.ts` řetězec: allowlist, context, deadline s tolerancí, idempotency store (drží SUCCEEDED a UNKNOWN_OUTCOME), audit před/po, reconciliation hook mění dedup záznam podle zjištěné pravdy |
-| F7 evidence | `artifacts.ts` originál immutable + `derivedFrom`; `audit.ts` append-only s hlubokými kopiemi; provenance v každém result; `correlationId` i na review tascích |
-| P1 verifiable | `tests/` podle Test ID; mutanty jako flagy v `executor-host.ts` a `credentials.ts`, rogue handlery v `tests/harness/rogue.ts` (jen test harness) |
+| F1 privilege boundary | `router.ts` odmítne capability mimo `context.scopes`; policy v `contracts/policy/*.json` AI identitě write negrantuje; write jen přes `executor-host.ts` s allowlistem; `email.send` bere `recipientRef`, adresu doplní jen allowlist z policy |
+| F2 untrusted data | `document-classifier/handler.ts`: text v oddělovačích (jméno oddělovače až za blokem, nález N3), výstup modelu jen přes enum z `output.schema.json`; `document-validator/handler.ts`: druhý deterministický signál nad textem bez instrukčních řádků (`CLASSIFICATION_DISPUTED`, W4), odpověď registru prochází rozsahovým a sémantickým testem; `stamp-handler.ts` přijme jen hodnotu s `validation.status: passed` od validátoru; `mail-ingest/handler.ts` čte z hlaviček jen From a Subject a ukládá je jako data; `email-executor/handler.ts` renderuje šablonu jen z enum a id |
+| F3 contract boundary | komponenty importují jen `platform/api.ts`, vlastní adresář a adapter kontrakty (hlídá `scripts/arch-dep.mjs`); orchestrátor volá reconciler executora jako neprůhledný objekt; druhé workflow konzumuje `document.*` beze změny providerů |
+| F4 trusted context | `gateway.ts` tvoří context z identity, `signing.ts` podpis nad JCS `{message, context}` s okny platnosti klíčů a grace period, `router.ts` ověřuje a přijímá jen `signed-envelope`; tenant nového originálu bere `mail.ingest` z contextu, ne z payloadu |
+| F5 observable execution | `orchestrator.ts` stavy, `journal.ts` persistence, `UNKNOWN_OUTCOME` + reconciliation s budgetem, publikovaný stav během reconciliace, `applyReviewExpiries`; `STORAGE_FULL` je explicitní FAILED, ne tiché 202 |
+| F6 safe state change | `executor-host.ts` řetězec: allowlist, context, deadline s tolerancí (per krok, `notify` má PT10M), idempotency store (drží SUCCEEDED a UNKNOWN_OUTCOME), audit před/po, reconciliation hook mění dedup záznam podle zjištěné pravdy; u IRREVERSIBLE `email.send` deduplikuje navíc provider podle `clientRef` |
+| F7 evidence | `artifacts.ts` originál immutable + `derivedFrom` + kapacita; `audit.ts` append-only s hlubokými kopiemi; provenance v každém result; `correlationId` i na review tascích |
+| §3.2 izolační třídy | `LOGICAL` = dva handlery v jednom hostu se společným resolverem (document-executor-host); `PRINCIPAL` = vlastní host a vlastní `CredentialResolver` (email-executor); v jednom procesu je to simulace, skutečná hranice je samostatný deployable (PLATFORM-NOTES §7) |
+| P1 verifiable | `tests/` podle Test ID; mutanty jako flagy per host v `executor-host.ts` a režim v `credentials.ts`, rogue handlery v `tests/harness/rogue.ts` (jen test harness) |
 
 ## Co je záměrně jednoduché
 
-- Journal je JSON soubor, ne databáze. Stačí na `RES-CRASH-001`.
+- Journal je JSON soubor, ne databáze. Stačí na `RES-CRASH-001`; dva orchestrátory ho sdílejí a každý zpracovává jen instance své definice.
 - Gateway a router běží in-process; dispatch obálka je přesto podepsaná, aby `SEC-CTX-003` a rotace klíčů byly reálné, ne simulované.
-- Executor host je jeden proces se dvěma `LOGICAL` handlery; to je přesně případ pro `SEC-HOST-001` a pro pentest podle ADR-017.
 - Technický retry je okamžitý, bez backoffu a circuit breakeru (W6 v MEASUREMENT). Přijde s durable frontou.
 - `document.archive` není krok workflow. Existuje, aby sdílený host měl dva handlery se dvěma credentialy a `SEC-HOST-001` nebyl simulace.
+- Druhý signál ve validátoru je heuristika (pravidla nad textem bez instrukčních řádků), ne důkaz. Měří cenu a účinek; rozhodnutí o normě je v MEASUREMENT W4.

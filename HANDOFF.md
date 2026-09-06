@@ -2,6 +2,30 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-06 (4) — M4 hotové: druhý tok mail.ingest → document.* → email.send, W4 rozhodnuto druhým signálem
+
+**Stav:** `npm run typecheck`, `npm test` (10 souborů, 198 testů) a `npm run arch` zelené lokálně. Tři rozhodnutí z minulého zápisu vzal na sebe asistent na pokyn vlastníka („up to you"): W4 řešit v řezu druhým deterministickým signálem a měřit; M4 žije v tomto repu jako druhý deployable; čas vlastníka zůstává nezměřen (nelze vymyslet).
+
+**Hotové v této session:**
+- `src/components/mail-ingest` (`mail.ingest/1`, internal-write, vlastní host bez credentialů, immutable originál z raw mailu, From/Subject parsovány pravidly a uloženy jako data, `STORAGE_FULL` při plném úložišti).
+- `src/components/email-executor` (`email.send/1`, external-write, MEDIUM, **PRINCIPAL** = vlastní `ExecutorHost` + vlastní `CredentialResolver` s jediným `cred:smtp`; `recipientRef` se překládá na adresu jen přes `recipientAllowlist` v `contracts/policy/email.send.v1.policy.json`; šablony jen z enum a id; IRREVERSIBLE, reconcile přes `smtp.status(clientRef)`).
+- `src/adapters/smtp.ts` (fake s dedup podle `clientRef` = business identita, režimy ok / unknown-once / unknown-always / reject), `ArtifactStore` s kapacitou a `put` v `ArtifactWriter`.
+- `workflows/mail-intake.v1.json`: ingest → classify → validate → stamp → notify; vnořené `inputs` a `deadlineMs` per krok v orchestrátoru; orchestrátor zpracovává jen instance své definice (`workflow` guard v `run` i `recover`).
+- W4: `document-validator` dostal `crossCheck` (pravidla nad textem bez instrukčních řádků); neshoda = `CLASSIFICATION_DISPUTED` (QUALITY) → review. Scénář `injection-in-allowlist` teď končí WAITING(REVIEW), ne razítkem.
+- Conformance `mail.ingest` (5/1/2/1 + 4 error), `email.send` (5/1/1/1 + 7 error), golden master `mail-intake.v1` (5 scénářů), scénáře `document-intake.v1` přepsány do obecného formátu (`$artifact`, `$fixtureText`).
+- Testy: `tests/mail.test.ts` (MUST sada `email.send` vč. 4 mutantů na druhém hostu, SEC-CTX-002 mezi toky, SEC-HOST-001 PRINCIPAL varianta, IDM-RET-002, RES-STOR-001, WF-UNK na SMTP, EVD toku 2, dvě workflow v jednom journalu); `ctr.test.ts` a `int.test.ts` zobecněny přes všechny komponenty a workflow adresáře.
+
+**Nálezy této session (detail MEASUREMENT N10–N12):** sdílený journal by bez guardu nechal orchestrátor jednoho workflow „obnovit" instanci druhého; druhý signál chytil injection uvnitř allowlistu v obou tocích; fixture injekce jen v hlavičkách neměla co „poslechnout" (chyba scénáře, ne kódu).
+
+**Rozpracované / chybí:**
+1. Čas vlastníka do MEASUREMENT (M1–M4).
+2. Ověřit CI po pushi.
+3. M5 podle XII.G: obnova `EVIDENCE-MATRIX.md` ve foundation se dvěma novými řádky (document-intake, mail-intake) a Core Admission review `EXISTS × 2` (kandidáti: result envelope, error object, ClockFixture, CredentialResolverFixture, conformance runner, `subsetDiff` golden porovnání).
+4. Přenést N5–N12 a W1–W10 do foundation jako část XVII „Protokol implementace".
+5. Backoff a circuit breaker u technického retry (W6) až s durable frontou; alert při `STORAGE_FULL` (W10).
+
+**Zbývá rozhodnout (Milan):** (a) zda W4 zůstane v řezu jako implementační volba, nebo půjde do normy jako CONDITIONAL pravidlo pro `usesLlm → write s riskClass ≥ MEDIUM`; (b) zda M5/M6 (první sdílený kontraktový balíček) začít hned, nebo napřed pentest izolace hostu podle ADR-017.
+
 ## 2026-09-06 (3) — M1 dokončeno, M2 a M3 hotové: 132 testů, 44 Test ID, MUST sada zelená
 
 **Stav:** `npm run typecheck`, `npm test` (9 souborů, 132 testů) a `npm run arch` procházejí lokálně. CI `kontrola` dosud padala na chybějících testech a chybějícím `scripts/arch-dep.mjs`; oboje je teď v repu, CI přepnuto na Node 24 (varování o deprecaci Node 20 na runnerech).

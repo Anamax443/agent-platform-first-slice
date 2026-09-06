@@ -16,6 +16,7 @@
   "canonical-minimal-fieldvalue": { "status": "SUCCEEDED", "payload": { "documentType": { "value": "CONTRACT", "trustLevel": "validated" } } },
   "damaged-hash-mismatch": { "status": "FAILED", "error": { "code": "ARTIFACT_HASH_MISMATCH", "class": "SECURITY", "retryable": false } },
   "injection-type-value": { "status": "FAILED", "error": { "code": "SCHEMA_VALIDATION_FAILED", "class": "VALIDATION", "retryable": false } },
+  "injection-disputed": { "status": "FAILED", "error": { "code": "CLASSIFICATION_DISPUTED", "class": "QUALITY", "retryable": false } },
   "boundary-other-not-stampable": { "status": "FAILED", "error": { "code": "STAMP_NOT_ALLOWED", "class": "BUSINESS", "retryable": false } },
   "error-artifact-missing": { "status": "FAILED", "error": { "code": "ARTIFACT_NOT_FOUND", "class": "BUSINESS", "retryable": false } },
   "error-tenant-mismatch": { "status": "FAILED", "error": { "code": "TENANT_SCOPE_MISMATCH", "class": "SECURITY", "retryable": false } },

@@ -1,0 +1,75 @@
+{
+  "$comment": "Second flow (XII.G M4): mail comes in, its body goes through the document flow, an allowlisted mailbox is notified. Versioned, immutable.",
+  "workflow": "mail-intake",
+  "workflowVersion": "1",
+  "conformanceTier": "semantic",
+  "deadlineMs": 1800000,
+  "operatorRole": "document.operator",
+  "supervisorRole": "document.supervisor",
+  "steps": [
+    {
+      "id": "ingest",
+      "capability": "mail.ingest",
+      "capabilityVersion": "1",
+      "sideEffects": "internal-write",
+      "inputs": { "rawMail": "$input.rawMail", "receivedFrom": "$input.receivedFrom" },
+      "technicalRetries": 2
+    },
+    {
+      "id": "classify",
+      "capability": "document.classify",
+      "capabilityVersion": "1",
+      "sideEffects": "none",
+      "inputs": { "artifactId": "$steps.ingest.payload.artifactId", "strategy": "$strategy", "documentType": "$input.documentType" },
+      "strategies": ["llm", "keyword"],
+      "qualityBudget": 2,
+      "technicalRetries": 2,
+      "onFailed": { "QUALITY": "retryQuality", "BUSINESS": "review", "VALIDATION": "review" },
+      "reviewRole": "document.reviewer"
+    },
+    {
+      "id": "validate",
+      "capability": "document.validate",
+      "capabilityVersion": "1",
+      "sideEffects": "none",
+      "inputs": {
+        "artifactId": "$steps.ingest.payload.artifactId",
+        "sha256": "$steps.classify.payload.sha256",
+        "documentType": "$steps.classify.payload.documentType",
+        "strategy": "$strategy",
+        "correctedDocumentType": "$input.documentType"
+      },
+      "technicalRetries": 2,
+      "onFailed": { "QUALITY": "review", "BUSINESS": "review" },
+      "reviewRole": "document.reviewer"
+    },
+    {
+      "id": "stamp",
+      "capability": "document.stamp",
+      "capabilityVersion": "1",
+      "sideEffects": "internal-write",
+      "inputs": {
+        "artifactId": "$steps.ingest.payload.artifactId",
+        "sha256": "$steps.validate.payload.sha256",
+        "documentType": "$steps.validate.payload.documentType",
+        "stampText": "$input.stampText"
+      },
+      "technicalRetries": 2,
+      "reconciliationBudget": 3
+    },
+    {
+      "id": "notify",
+      "capability": "email.send",
+      "capabilityVersion": "1",
+      "sideEffects": "external-write",
+      "deadlineMs": 600000,
+      "inputs": {
+        "recipientRef": "$input.notifyRef",
+        "templateId": "document-stamped",
+        "params": { "documentType": "$steps.validate.payload.documentType.value", "artifactId": "$steps.stamp.payload.stampedArtifactId" }
+      },
+      "technicalRetries": 2,
+      "reconciliationBudget": 3
+    }
+  ]
+}

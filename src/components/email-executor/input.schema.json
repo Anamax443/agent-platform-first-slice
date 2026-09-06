@@ -1,0 +1,23 @@
+{
+  "$id": "email.send.input.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["recipientRef", "templateId", "params"],
+  "properties": {
+    "recipientRef": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{1,63}$",
+      "description": "Key into the recipient allowlist of the platform policy for the caller's tenant. Never an address."
+    },
+    "templateId": { "type": "string", "enum": ["document-stamped", "document-rejected"] },
+    "params": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["documentType", "artifactId"],
+      "properties": {
+        "documentType": { "type": "string", "enum": ["INVOICE", "CONTRACT", "OTHER"] },
+        "artifactId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$" }
+      }
+    }
+  }
+}
