@@ -171,6 +171,7 @@ Identita se váže na kanál: Access token pro API, nic pro e-mail (proto e-mail
 | Situace | Kdo se dozví | Jak |
 |---|---|---|
 | Worker spadl uprostřed kroku | vlastník | journal DO zůstane RUNNING → `recover()` při dalším alarmu označí UNKNOWN_OUTCOME; audit; Workers Logs |
+| Durable Object evikován a reaktivován (posudek 3) | nikdo, je to normální stav | stav instance žije jen v SQLite storage DO, nikdy jen v paměti; při reaktivaci (konstruktor v `blockConcurrencyWhile`, nebo alarm) běží `recover()`: RUNNING čtecí krok se spustí znovu, RUNNING write krok se označí UNKNOWN_OUTCOME a jde do reconciliace podle `clientRef` (lokálně `RES-CRASH-001`); audit v D1 je append-only a evikci nevnímá |
 | Workers AI nedostupné | tok | `MODEL_UNAVAILABLE` retryable, po vyčerpání FAILED s auditem |
 | review bez odpovědi do 3 dnů | supervisor role | escalate podle `expiryPolicy`, po max hloubce FAILED + notifikace |
 | plné úložiště / limit | tok | `STORAGE_FULL` retryable (backpressure), alert e-mailem na `ops-mailbox` (W10) |
@@ -227,7 +228,8 @@ Co dnes pravidlo porušuje (audit 6. 9. 2026) a přesune se v kroku 1: konstanty
 3. **Nasazení D1, D2, D5** na bass443 za Access, custom doména `apf.maxferit.cz`. Golden mastery `document-intake` proti farmě.
 4. **D3 email-executor** s Email Sending, **D4 mail-ingest** s Email Routing na `apf-intake@maxferit.cz`. Golden mastery `mail-intake`.
 5. **Fronta** (Queues, Workers Paid) mezi gateway a hosty pro skutečné at-least-once; `RES-CRASH-001` přes evikci DO; měření hodin mezi Workery.
-6. **Pentest izolace podle ADR-017** nad D2 vs. D3 a zápis M4b do MEASUREMENT s cenou. Akceptační kritéria (posudek 1, doporučení 8), očekávaná odpověď u všech tří **NE**: (a) může `apf-document-host` získat SMTP oprávnění? (b) může `apf-email-executor` získat `DMS_SECRET` nebo `ARCHIVE_SECRET`? (c) může kterýkoli Worker mimo gateway vytvořit platnou podepsanou dispatch obálku? Každá odpověď s důkazem (pokus, odmítnutí, audit).
+6. **Pentest izolace podle ADR-017** nad D2 vs. D3 a zápis M4b do MEASUREMENT s cenou. Akceptační kritéria (posudek 1, doporučení 8), očekávaná odpověď u všech tří **NE**: (a) může `apf-document-host` získat SMTP oprávnění? (b) může `apf-email-executor` získat `DMS_SECRET` nebo `ARCHIVE_SECRET`? (c) může kterýkoli Worker mimo gateway vytvořit platnou podepsanou dispatch obálku? (d) **eskalace práv** (posudek 3): dostane se handler k cizím bindingům nebo k podpisovému klíči nepřímo, přes chybové hlášky, výpis prostředí, metadata objektů v R2, zneužití service bindingu na gateway (`/audit`, `/dispatch`) nebo přes chaos přepínače v `apf-fakes`? Každá odpověď s důkazem (pokus, odmítnutí, audit).
+7. **Reálný model za `document.classify`** (posudek 2, podmínka v1.0): Workers AI jako `LlmAdapter`, minimální golden set 10 faktur + 3 injection s ownerem labelů, `criticalFields: [documentType]`, `AI-EVAL-REG-001` a `AI-EVAL-ADV-001` nad ním; druhý signál validátoru měřen na skutečném modelu.
 
 **Svislé řezy po dokončení modulů:**
 

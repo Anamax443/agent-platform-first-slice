@@ -2,6 +2,19 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-06 (7) — Posudky 2–4 nad implementací: 9,2/10 formální oponentura, dva konverzační; AI-EVAL jako podmínka v1.0, pentest o eskalaci práv
+
+**Zdroj:** tři další posudky postoupené vlastníkem, protokol v `docs/POSUDKY.md`. Shoda se posudkem 1: norma nevyvrácena, 0 BLOCKER, 1 MAJOR (fyzická izolace, plán M4b), 3 MINOR (AI-EVAL, čas vlastníka, provozní realita).
+
+**Co se změnilo:**
+1. **Reálný model = podmínka v1.0** s konkrétním minimem: Workers AI za `document.classify`, golden set 10 faktur + 3 injection s ownerem labelů, `criticalFields: [documentType]`, `AI-EVAL-REG-001` + `AI-EVAL-ADV-001`. Krok 7 návrhového listu. Návrh pro foundation: XII.D doplnit podmínku v1.0 o AI-EVAL s reálným modelem.
+2. **Pentest** kroku 6 rozšířen o scénář (d) eskalace práv (nepřímé cesty k cizím bindingům a podpisovému klíči).
+3. **Durable Objects:** zapsáno, jak journal přežije evikci (stav jen v SQLite storage, `recover()` při reaktivaci, audit append-only v D1).
+4. **Meze smyček** doloženy z workflow definic (2 strategie × qualityBudget 2, technicalRetries 2, reconciliationBudget 3, eskalace review 2, deadline 30 / 10 min) a zapsány do STATUS.
+5. **STATUS „Zbývá" je číslované podle priority**; kategorie času vlastníka sjednoceny (posudky 1 a 2).
+
+**Zbývá rozhodnout (Milan):** beze změny (čas vlastníka v členění, adresy pro farmu, schránka za `ops-mailbox`). Otázka posudku 3 „co bylo nejtěžší a co jinak" má v protokolu odpověď z pohledu implementace; odpověď vlastníka může být jiná.
+
 ## 2026-09-06 (6) — Posudek 1 nad implementací (9,1/10): W4 rozhodnuto jako CONDITIONAL, pořadí dalších kroků upraveno
 
 **Zdroj:** externí posudek nad `STATUS.html`, který vlastník postoupil. Protokol s dispozicí každého doporučení: `docs/POSUDKY.md`. Hlavní závěr: první implementace normu nevyvrátila, testy našly konstrukční chyby, druhý tok prokázal reuse za 45 řádků platformy.

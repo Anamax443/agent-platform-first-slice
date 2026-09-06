@@ -62,7 +62,8 @@
     <tr><th>Stav</th><td><span class="pill live">M1–M4 hotové</span> <span class="pill prep">bez cloudu, bez reálného modelu</span>
       <b>Dvojí stav schválně.</b> <i>Hotové</i> — oba toky běží end-to-end, MUST sada normy je zelená na třech write executorech, CI zelené.
       <i>Bez cloudu</i> — všechno běží lokálně s fakes (LLM, registr, DMS, archiv, SMTP), žádný API klíč. Izolace PRINCIPAL je <b>návrhově prokázaná, fyzicky ne</b>: v jednom procesu je simulovaná, důkaz přinese až vlastní deployable na farmě (M4b).</td></tr>
-    <tr><th>Posudek</th><td>Posudek 1 nad implementací (6. 9. 2026): <b>9,1 / 10</b>. Norma nevyvrácena, testy našly konstrukční chyby, reuse kostek doložen. Přijato: W4 jako CONDITIONAL, pořadí M4b → pentest → reálný model → třetí doména → M5, M6 jen kontrakty a fixtures. Protokol: <code>docs/POSUDKY.md</code>.</td></tr>
+    <tr><th>Posudky</th><td>Čtyři posudky nad implementací (6. 9. 2026): <b>9,1</b> a <b>9,2 / 10</b>, dva bez skóre. Shoda: norma nevyvrácena, testy našly konstrukční chyby, reuse kostek doložen. Hodnoticí list: 0 BLOCKER · 1 MAJOR (fyzická izolace, plán M4b) · 3 MINOR (AI-EVAL, čas vlastníka, provozní realita). Přijato: W4 jako CONDITIONAL, reálný model s golden setem jako podmínka v1.0, pentest včetně eskalace práv, pořadí M4b → pentest → reálný model → třetí doména → M5, M6 jen kontrakty a fixtures. Protokol: <code>docs/POSUDKY.md</code>.</td></tr>
+    <tr><th>Meze smyček</th><td>Každá smyčka má strop v definici workflow, nekonečná větev neexistuje: 2 strategie klasifikace × qualityBudget 2 · technické retry 2 (max 3 pokusy na strategii) · reconciliace 3 · eskalace review do hloubky 2 · deadline příkazu 30 min, u notifikace 10 min.</td></tr>
     <tr><th>Kontrola</th><td>CI při každém pushi (Node 24): typecheck, Vitest, <code>ARCH-DEP-001</code> + lint hodin, <code>farm:check</code>, sken tajemství (gitleaks), kontrola odkazů (lychee). Poslední běh <span class="pill live">zelený</span>.</td></tr>
     <tr><th>Vývojový diagram</th><td><a href="VYVOJOVY-DIAGRAM.html">VYVOJOVY-DIAGRAM.html</a>: cesta jednoho příkazu bezpečnostním řetězcem (gateway → router → executor host → výsledek) a běh toku od e-mailu k notifikaci se všemi konci, které smí nastat.</td></tr>
   </table>
@@ -171,18 +172,18 @@ Orchestrátory: společný journal, review service, audit · každý jen svou de
       </ul>
     </div>
     <div class="card todo-card">
-      <strong>⏳ Zbývá</strong>
+      <strong>⏳ Zbývá · v pořadí priority</strong>
       <ul>
-        <li class="todo"><b>M4b farma</b>: portabilita platformy (bez čtení disku při importu, <code>DispatchTransport</code>), <code>wrangler dev</code> lokálně, nasazení na bass443 za Access, e-mail, fronta, pentest ADR-017</li>
-        <li class="todo"><b>Instalační profil</b> (pravidlo vlastníka): identity, tenanty, policy, domény a adresy kanálů z <code>src/</code> a <code>contracts/policy/</code> do <code>config/&lt;instalace&gt;/</code>, secrets jen jménem, lint na instalační hodnoty v kódu; nová instalace = nový profil, nula změn kódu</li>
-        <li class="todo"><b>Čas vlastníka</b> do MEASUREMENT (M1–M4)</li>
-        <li class="todo">Pentest izolace podle ADR-017 nad skutečnými deployables: tři otázky s očekávaným NE (SMTP z document hostu, DMS z email executoru, podpis obálky mimo gateway)</li>
-        <li class="todo">Reálný model za <code>document.classify</code> a s ním <code>AI-EVAL</code> (injection, drift, druhý signál na skutečném modelu)</li>
-        <li class="todo">Třetí doména kvůli mezní ceně: sledovat „platforma +řádků" (M4 = 45)</li>
-        <li class="todo">M5: obnova <code>EVIDENCE-MATRIX</code> ve foundation, Core Admission <code>EXISTS × 2</code> (kandidáti: result envelope, error object, ClockFixture, CredentialResolverFixture, conformance runner)</li>
-        <li class="todo">M6: první sdílený balíček = jen kontrakty, schémata, fixtures a conformance runner; runtime zůstává duplikovaný</li>
-        <li class="todo">Část XVII ve foundation z N1–N12, W1–W12 a posudku 1</li>
-        <li class="todo">Backoff a circuit breaker u technického retry, alert při plném úložišti (až s durable frontou)</li>
+        <li class="todo"><b>1 · M4b farma, krok 1–2:</b> instalační profil (identity, tenanty, policy, domény z kódu do <code>config/&lt;instalace&gt;/</code>, secrets jen jménem, lint) a portabilita platformy (bez čtení disku při importu, <code>DispatchTransport</code>), pak <code>wrangler dev</code> lokálně. Nezávisí na ničem.</li>
+        <li class="todo"><b>2 · M4b farma, krok 3–5:</b> nasazení na bass443 za Access, e-mail (Routing + Sending), fronta, pád DO. Čeká na adresy od vlastníka.</li>
+        <li class="todo"><b>3 · Pentest ADR-017</b> nad skutečnými deployables: tři otázky s očekávaným NE (SMTP z document hostu, DMS z email executoru, podpis obálky mimo gateway) plus eskalace práv nepřímými cestami. Jediný MAJOR z posudků.</li>
+        <li class="todo"><b>4 · Reálný model</b> za <code>document.classify</code> s golden setem (10 faktur + 3 injection, <code>criticalFields: [documentType]</code>) a <code>AI-EVAL-REG-001</code>, <code>AI-EVAL-ADV-001</code>. Podmínka v1.0.</li>
+        <li class="todo"><b>5 · Čas vlastníka</b> za M1–M4 v členění do MEASUREMENT. Bez něj se limit 40 h nedá vyhodnotit; jde doplnit kdykoli.</li>
+        <li class="todo"><b>6 · Třetí doména</b> kvůli mezní ceně: sledovat „platforma +řádků" (M4 = 45).</li>
+        <li class="todo"><b>7 · M5:</b> obnova <code>EVIDENCE-MATRIX</code> ve foundation, Core Admission <code>EXISTS × 2</code> (kandidáti: result envelope, error object, ClockFixture, CredentialResolverFixture, conformance runner).</li>
+        <li class="todo"><b>8 · M6:</b> první sdílený balíček = jen kontrakty, schémata, fixtures a conformance runner; runtime zůstává duplikovaný.</li>
+        <li class="todo"><b>9 · Část XVII</b> ve foundation z N1–N12, W1–W12 a čtyř posudků.</li>
+        <li class="todo"><b>10 ·</b> Backoff a circuit breaker u technického retry, alert při plném úložišti (až s durable frontou).</li>
       </ul>
     </div>
   </div>

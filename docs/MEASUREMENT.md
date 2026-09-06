@@ -12,7 +12,7 @@ K tomu lean pohled (dotaz vlastníka 6. 9. 2026): rozlišovat čas přidávajíc
 - **Čas je AI-asistovaný wall-clock**, ne hodiny solo operátora. Limit 40 hodin na MUST sadu (VC §7) je limit na lidskou práci; proto se zvlášť zapisuje **čas vlastníka** (čtení, review, rozhodnutí). Bez toho by měření lhalo.
 - Každý nález zachycený testem se zapíše s Test ID a s tím, kde by se jinak projevil (provoz, review, nikdy).
 - WIP limit: **jeden řez najednou.** Druhý tok začne až po uzavření M3 prvního.
-- **Čas vlastníka se člení** (posudek 1, doporučení 5): architektura a rozhodování · review výstupů · ladění a opravy · provoz (login, DNS, secrets, účty). Součet je skutečná cena; AI wall-clock je jen jedna položka vedle něj. Hodnoty doplní vlastník, asistent je nemůže odhadnout.
+- **Čas vlastníka se člení** (posudky 1 a 2): architektura a rozhodování (čtení normy, volba komponent, návrh descriptorů) · review výstupů · implementace handlerů · testy a fixtures · ladění nálezů (12 nálezů × čas opravy) · dokumentace · provoz (login, DNS, secrets, účty). Součet je skutečná cena; AI wall-clock je jen jedna položka vedle něj. Hodnoty doplní vlastník, asistent je nemůže odhadnout. Překročí-li součet za M1–M4 100 h, přehodnotit III §7 podle XII.G.
 - **Mezní cena domény** (posudek 1, doporučení 4): u každého dalšího toku se zapíše „platforma +řádků" zvlášť od komponenty, fixtures a testů. M4 = 45. Poroste-li platforma s každou doménou o stovky řádků, LEGO hypotéza slábne a je to nález, ne šum.
 
 ## Lean kategorie plýtvání (muda), jak je tu chápeme

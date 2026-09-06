@@ -62,7 +62,8 @@
     <tr><th>State</th><td><span class="pill live">M1–M4 done</span> <span class="pill prep">no cloud, no real model</span>
       <b>Two states on purpose.</b> <i>Done</i> — both flows run end to end, the norm's MUST set is green on three write executors, CI is green.
       <i>No cloud</i> — everything runs locally with fakes (LLM, registry, DMS, archive, SMTP), no API key. PRINCIPAL isolation is <b>design proven, not physically proven</b>: simulated inside one process, the proof comes with an own deployable on the farm (M4b).</td></tr>
-    <tr><th>Review</th><td>Review 1 of the implementation (6 Sep 2026): <b>9.1 / 10</b>. The norm was not refuted, tests found construction bugs, brick reuse is documented. Accepted: W4 as CONDITIONAL, order M4b → pentest → real model → third domain → M5, M6 limited to contracts and fixtures. Protocol: <code>docs/POSUDKY.md</code>.</td></tr>
+    <tr><th>Reviews</th><td>Four reviews of the implementation (6 Sep 2026): <b>9.1</b> and <b>9.2 / 10</b>, two without a score. Consensus: the norm was not refuted, tests found construction bugs, brick reuse is documented. Scorecard: 0 BLOCKER · 1 MAJOR (physical isolation, planned for M4b) · 3 MINOR (AI-EVAL, owner time, operational reality). Accepted: W4 as CONDITIONAL, a real model with a golden set as a v1.0 condition, pentest including privilege escalation, order M4b → pentest → real model → third domain → M5, M6 limited to contracts and fixtures. Protocol: <code>docs/POSUDKY.md</code> (Czech).</td></tr>
+    <tr><th>Loop bounds</th><td>Every loop has a cap in the workflow definition, no infinite branch exists: 2 classification strategies × qualityBudget 2 · technical retries 2 (max 3 attempts per strategy) · reconciliation 3 · review escalation depth 2 · command deadline 30 min, 10 min for the notification.</td></tr>
     <tr><th>Checks</th><td>CI on every push (Node 24): typecheck, Vitest, <code>ARCH-DEP-001</code> + clock lint, <code>farm:check</code>, secret scan (gitleaks), link check (lychee). Last run <span class="pill live">green</span>.</td></tr>
     <tr><th>Flowchart</th><td><a href="VYVOJOVY-DIAGRAM.en.html">VYVOJOVY-DIAGRAM.en.html</a>: the path of one command through the security chain (gateway → router → executor host → result) and the run of a flow from e-mail to notification with every ending that may happen.</td></tr>
   </table>
@@ -171,18 +172,18 @@ Orchestrators: shared journal, review service, audit · each runs only its own d
       </ul>
     </div>
     <div class="card todo-card">
-      <strong>⏳ Remaining</strong>
+      <strong>⏳ Remaining · in priority order</strong>
       <ul>
-        <li class="todo"><b>M4b farm</b>: platform portability (no disk reads at import, <code>DispatchTransport</code>), <code>wrangler dev</code> locally, deployment on bass443 behind Access, email, queue, ADR-017 pentest</li>
-        <li class="todo"><b>Installation profile</b> (owner rule): identities, tenants, policy, domains and channel addresses move from <code>src/</code> and <code>contracts/policy/</code> to <code>config/&lt;installation&gt;/</code>, secrets by name only, lint for installation values in code; a new installation = a new profile, zero code changes</li>
-        <li class="todo"><b>Owner time</b> in MEASUREMENT (M1–M4)</li>
-        <li class="todo">Isolation pentest per ADR-017 over real deployables: three questions with an expected NO (SMTP from the document host, DMS from the email executor, envelope signature outside the gateway)</li>
-        <li class="todo">A real model behind <code>document.classify</code> and with it <code>AI-EVAL</code> (injection, drift, second signal on a real model)</li>
-        <li class="todo">A third domain for the marginal cost: track "platform +lines" (M4 = 45)</li>
-        <li class="todo">M5: refresh <code>EVIDENCE-MATRIX</code> in foundation, Core Admission <code>EXISTS × 2</code> (candidates: result envelope, error object, ClockFixture, CredentialResolverFixture, conformance runner)</li>
-        <li class="todo">M6: first shared package = contracts, schemas, fixtures and the conformance runner only; the runtime stays duplicated</li>
-        <li class="todo">Part XVII in foundation from N1–N12, W1–W12 and review 1</li>
-        <li class="todo">Backoff and circuit breaker for technical retry, alert on full storage (with a durable queue)</li>
+        <li class="todo"><b>1 · M4b farm, steps 1–2:</b> installation profile (identities, tenants, policy, domains out of code into <code>config/&lt;installation&gt;/</code>, secrets by name only, lint) and platform portability (no disk reads at import, <code>DispatchTransport</code>), then <code>wrangler dev</code> locally. Depends on nothing.</li>
+        <li class="todo"><b>2 · M4b farm, steps 3–5:</b> deployment on bass443 behind Access, email (Routing + Sending), queue, DO crash. Waits for addresses from the owner.</li>
+        <li class="todo"><b>3 · ADR-017 pentest</b> over real deployables: three questions with an expected NO (SMTP from the document host, DMS from the email executor, envelope signature outside the gateway) plus privilege escalation through indirect paths. The only MAJOR from the reviews.</li>
+        <li class="todo"><b>4 · A real model</b> behind <code>document.classify</code> with a golden set (10 invoices + 3 injections, <code>criticalFields: [documentType]</code>) and <code>AI-EVAL-REG-001</code>, <code>AI-EVAL-ADV-001</code>. A v1.0 condition.</li>
+        <li class="todo"><b>5 · Owner time</b> for M1–M4, itemised, into MEASUREMENT. Without it the 40 h limit cannot be evaluated; can be added any time.</li>
+        <li class="todo"><b>6 · A third domain</b> for the marginal cost: track "platform +lines" (M4 = 45).</li>
+        <li class="todo"><b>7 · M5:</b> refresh <code>EVIDENCE-MATRIX</code> in foundation, Core Admission <code>EXISTS × 2</code> (candidates: result envelope, error object, ClockFixture, CredentialResolverFixture, conformance runner).</li>
+        <li class="todo"><b>8 · M6:</b> first shared package = contracts, schemas, fixtures and the conformance runner only; the runtime stays duplicated.</li>
+        <li class="todo"><b>9 · Part XVII</b> in foundation from N1–N12, W1–W12 and the four reviews.</li>
+        <li class="todo"><b>10 ·</b> Backoff and circuit breaker for technical retry, alert on full storage (with a durable queue).</li>
       </ul>
     </div>
   </div>
