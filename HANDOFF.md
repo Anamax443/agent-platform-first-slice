@@ -2,6 +2,20 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-06 (21) — Posudek 5 a oprava W19: `ExecutorHost` dedup scoped na capability
+
+**Co se stalo:** vlastník poslal čtvrtý externí posudek, tentokrát nad skutečným TypeScript kódem (ne jen STATUS). Každé tvrzení jsem ověřil přímo v kódu před zápisem dispozice — zapsáno jako Posudek 5 do `docs/POSUDKY.md` (8,8/10, deset bodů s dispozicí P/PÚ/Z). Dva body posudku (reálný registry adapter, chaos přes service binding) už vyřešil stejný den celek C, po commitu `a5310fc`, který posudek viděl a nemohl proto vědět o HANDOFF (19) ani o celku C (oba lokální, nepushnuté).
+
+**Potvrzený reálný nález (W19, priorita P0):** `ExecutorHost.idempotency` byla jedna `Map<string, HandlerOutcome>` klíčovaná jen `idempotencyKey`, sdílená mezi všemi capabilitami jednoho hostu — `document.stamp` a `document.archive` sdílejí `documentHost`. Orchestrátor dnes generuje klíč s `stepId`, takže v běžném toku ke kolizi nedojde, ale primitivum samo to nezaručovalo a žádný test to nekryl.
+
+**Vlastník na dotaz „teď, nebo v rámci D": „up to you"** → opraveno hned jako samostatný malý celek. `ExecutorHost.dedupKey(capability, idempotencyKey)` skládá interní klíč mapy z obou; kontrakt na drátě (`message.idempotencyKey`) beze změny. Upraveny `execute()`, `reconcilerFor()`, `remembered()` (signatura teď `remembered(capability, key)`, dva volající testy upraveny). Nový test `IDM-HOST-SCOPE-001`: stejný `idempotencyKey` na `document.stamp` i `document.archive` — obě proběhnou, `archive.putCalls` 1, žádný `duplicate` audit záznam. **Ověřeno, že test je reálný regresní test:** `git stash` jen na `executor-host.ts`, test padá (`archiveRef` undefined, druhá capabilita se vůbec nespustila), `git stash pop` a zelené znovu.
+
+**Brány zelené:** typecheck, **219 testů / 12 souborů**, `npm run arch`, `npm run farm:check`.
+
+**W20 zůstává otevřené jako podmínka celku D:** durabilita dedup na farmě stojí celá na `reconcile()` (dotaz na vnější systém), ne na lokální mapě hostu, protože `apf-document-host` bude samostatný Worker s jiným isolátem na každý požadavek. D musí mít `reconcile()` zapojený a testovaný pro `document.stamp` i `document.archive` na skutečném Workeru.
+
+**Nasazeno na farmu:** ne, jen v repu. Farma `farm-bass443` běží stále z `6c63b16` (beze změny).
+
 ## 2026-09-06 (20) — Krok 2, celek C: `document.validate` přes skutečnou síť (`apf-fakes` service binding)
 
 **Pokyn vlastníka:** „pokračujeme" (po HANDOFF (19), beze změny plánu) — další v pořadí byl celek C podle HANDOFF (17)/(19) a `docs/NAVRHOVY-LIST-farma.md`.

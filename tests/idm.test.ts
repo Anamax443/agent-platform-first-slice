@@ -33,7 +33,7 @@ describe("IDM-REPLAY-001 one logical write intent = one side effect", () => {
     expect(slice.dms.stampCalls).toBe(1);
     expect(slice.audit.byKind("write-intent")).toHaveLength(1);
     expect(slice.audit.byKind("duplicate")).toHaveLength(2);
-    expect(slice.host.remembered("wf-1:stamp:default:1")?.status).toBe("SUCCEEDED");
+    expect(slice.host.remembered("document.stamp", "wf-1:stamp:default:1")?.status).toBe("SUCCEEDED");
   });
 
   it("technical retry keeps the idempotency key and the step record (FOUNDATION-core §5.2)", async () => {
@@ -109,5 +109,22 @@ describe("IDM-STRAT-001 quality retry never reuses a key", () => {
     expect(second.payload?.stampText).toBe("STAMP B");
     expect(replay.payload?.stampText).toBe("STAMP A"); // the key wins, not the payload
     expect(replay.payload).toEqual(first.payload);
+  });
+});
+
+describe("IDM-HOST-SCOPE-001 dedup is scoped by capability, not by idempotencyKey alone (Posudek 5, W19)", () => {
+  it("the same idempotencyKey sent to document.stamp and document.archive on the shared host runs both, never returns one's outcome for the other", async () => {
+    const slice = createSlice();
+    const art = putArtifact(slice, INVOICE_CZ);
+    const key = "shared-key-cross-capability";
+    const stamp = await dispatch(slice, command(slice, { capability: "document.stamp", payload: validatedStampPayload(slice, art), idempotencyKey: key }));
+    const archive = await dispatch(slice, command(slice, { capability: "document.archive", payload: { artifactId: art.artifactId, sha256: art.sha256 }, idempotencyKey: key }));
+    expect(stamp.status).toBe("SUCCEEDED");
+    expect(archive.status).toBe("SUCCEEDED");
+    expect(archive.payload?.archiveRef).toBeDefined(); // not the stamp's payload shape
+    expect(slice.dms.stampCalls).toBe(1);
+    expect(slice.archive.putCalls).toBe(1); // archive actually ran; a shared bare key would have short-circuited it
+    expect(slice.audit.byKind("duplicate")).toHaveLength(0);
+    expect(slice.host.remembered("document.stamp", key)).not.toEqual(slice.host.remembered("document.archive", key));
   });
 });
