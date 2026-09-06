@@ -1,6 +1,7 @@
 {
-  // D4: mail-ingest. Receives real mail through Email Routing (rule: apf-intake@maxferit.cz -> this Worker),
-  // stores the raw message as an immutable original in R2 and starts mail-intake.v1 through the gateway.
+  // D4: mail-ingest. Receives real mail through Email Routing (rule: the installation's intake address -> this Worker;
+  // INTAKE_ADDRESS var comes from config/<installation>/farm.json), stores the raw message as an immutable original in R2
+  // and starts mail-intake.v1 through the gateway.
   "$schema": "../../../node_modules/wrangler/config-schema.json",
   "name": "apf-mail-ingest",
   "main": "./src/index.ts",

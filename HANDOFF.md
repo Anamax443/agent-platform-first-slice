@@ -2,6 +2,26 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-06 (10) — M4b krok 1 HOTOVÝ (celek B): lint instalačních hodnot, generované wrangler configy, docs; 207 testů, pushnuto
+
+**Stav:** `npm run typecheck`, `npm test` (11 souborů, **207 testů**), `npm run arch` (0 nálezů, 17 instalačních hodnot z obou profilů), `npm run farm:check` (**10 configů**: 5 base + 5 vygenerovaných pro `farm-bass443`) zelené lokálně. Krok 1 návrhového listu farmy je uzavřený; po pushi ověřit CI (nově běží i lint nad `deploy/` a dry-run nad generovanými configy).
+
+**Hotové v tomto celku:**
+- `scripts/arch-dep.mjs`: komponenty už nesmí `node:path`/`node:url` (statické importy je nepotřebují); **lint instalačních hodnot**: načte `config/*/profile.json` (název instalace, tenanty, actorId identit, kanály) a `config/*/policy/*.json` (actorId grantů, allowlist příjemců: tenant, ref i adresa) a hlídá, že žádná z nich, žádný e-mail ani veřejný hostname (regex nad TLD) není literál v `src/**` (.ts řetězce mimo komentáře, .json hodnoty), `deploy/cloudflare/*/src/**` a base `wrangler.jsonc` (tam navíc zakázané `routes`). Jeden nález na literál. Bez argumentu kontroluje všechno, s argumentem jen daný strom (testy). Test v `arch.test.ts` (3. případ: tenant z profilu, e-mail, hostname → `FAILED (3)`).
+- `scripts/jsonc.mjs` (sdílený JSONC reader), `scripts/farm-config.mjs` (`merge` base + `config/<instalace>/farm.json` → `.wrangler/generated/<instalace>/<deployable>/wrangler.jsonc`, `main` přepočítaný relativně, `$schema` pryč; deployable v overlay musí existovat, nepojmenovaný dostane base beze změny), `scripts/farm-check.mjs` dry-run nad base i generovanými; **natvrdo zapsané account id ze skriptu pryč** (dry-run ho nepotřebuje, ověřeno).
+- Base `wrangler.jsonc`: z gateway pryč `routes`, z email-executoru `EMAIL_FROM`/`EMAIL_FROM_NAME`, z mail-ingestu adresa v komentáři; overlay je má v `config/farm-bass443/farm.json`. Lint tyto čtyři hodnoty při prvním běhu našel (shoda s auditem v (5)).
+- Docs: BUILD (příkazy `arch`/`farm:check`/`farm-config`, pin `CONTRACTS-VERSION.json`, sekce „Instalační profil", CI, testy `inst` + `mail`), ARCHITECTURE (`createSlice(installation, secrets, volby)`, `DispatchTransport`, statické importy; F1/F3 řádky), README CZ/EN (řádky `contracts/`, `config/`, `src/platform/`, `src/slice.ts`, `src/installation.ts`, `workflows/`), deploy README (dvouvrstvé configy, příkazy z generovaného configu, cesta k policy), MEASUREMENT (řádek M4b krok 1: ≈ 1 h 10 min AI, ≈ 1 010 řádků; W12 „vyřešeno v řezu"; „Co je zelené" 207/11 + INST), STATUS CZ/EN (kpi 207/11, hotové M4b krok 1, zbývá 1 = krok 2).
+
+**Poznámky pro krok 2 (wrangler dev + harness proti localhost):**
+- `HttpDispatchTransport` existuje, ale nikdo ho nevolá; harness `dispatch()` a orchestrátory berou `slice.transport`, takže přepnutí na HTTP je jen jiná instance v `createSlice` (volba `transport?`) nebo v `tests/harness/index.ts`.
+- `Journal` a `Audit` v `src/platform` stále umí soubor (`node:fs`); ve Workeru půjde journal do DO SQLite a audit do D1: rozhraní zůstávají, implementace se vymění v gateway Workeru, ne v platformě.
+- Worker si profil vezme statickým importem `config/<instalace>/profile.json` + policy podle `INSTALLATION` var (build-time výběr přes `farm-config`, ne runtime `fs`); to je první věc kroku 2.
+- Fakes očekávají hodnoty `dms-secret`/`archive-secret`/`smtp-secret` (defaulty konstruktorů adaptérů); na farmě je nahradí skutečné secrets přes `SecretsSource` z `env`.
+
+**Rozpracované / chybí:** krok 2 (výše); krok 3 nasazení (D1, R2 eu, KV, secrets, Access, doména); krok 4 e-mail; krok 5 fronta + RES-CRASH přes evikci DO; krok 6 pentest ADR-017 + řádek M4b s cenou; čas vlastníka do MEASUREMENT; W4 do normy; část XVII ve foundation (W12 + INST jako evidence pro instalační profil v normě).
+
+**Zbývá rozhodnout (Milan):** beze změny: adresy `apf.maxferit.cz`, `apf-intake@`, `apf-notify@maxferit.cz` a schránka za `ops-mailbox` (dnes placeholder v `config/farm-bass443/policy/email.send.v1.policy.json`); čas vlastníka za M1–M4.
+
 ## 2026-09-06 (9) — M4b krok 1, celek A ZELENÝ: platforma bez disku, instalační profil v kompozičním kořeni, 206 testů
 
 **Stav:** `npm run typecheck`, `npm test` (11 souborů, **206 testů** = 198 + 8 nových INST), `npm run arch`, `npm run farm:check` zelené lokálně. Repo je po (8) zase funkční. Tento commit uzavírá body 1–4 z (8); body 5–7 (lint instalačních hodnot, `farm-config`, docs) jsou celek B a jdou hned za ním.

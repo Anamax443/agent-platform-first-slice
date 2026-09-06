@@ -2,7 +2,9 @@
 
 Návrh a rozhodnutí: [`docs/NAVRHOVY-LIST-farma.md`](../../docs/NAVRHOVY-LIST-farma.md). Tady je jen to, co je v adresáři a jak se s tím zachází.
 
-**Stav: skeleton.** Pět `wrangler.jsonc` s bindingy a pět Workerů, které odpovídají `501 NOT_WIRED` na všechno kromě `/health` a `/version`. Nic není nasazené. Napojení `src/platform` a `src/components` je krok 2 a dál v návrhovém listu.
+**Stav: skeleton; krok 1 návrhového listu (portabilita platformy + instalační profil) hotový.** Pět `wrangler.jsonc` s bindingy a pět Workerů, které odpovídají `501 NOT_WIRED` na všechno kromě `/health` a `/version`. Nic není nasazené. Napojení `src/platform` a `src/components` je krok 2 a dál v návrhovém listu.
+
+Configy jsou dvouvrstvé: base `wrangler.jsonc` v tomto adresáři je **kód** (žádná doména, adresa, účet ani `routes`; hlídá `npm run arch`), `config/<instalace>/farm.json` je **overlay** per deployable (routes, vars jako `INSTALLATION`, `EMAIL_FROM`, `INTAKE_ADDRESS`). `scripts/farm-config.mjs` je slučuje do `.wrangler/generated/<instalace>/<deployable>/wrangler.jsonc` (git-ignored) a z něj se dry-runuje i nasazuje. Identity, tenanty, policy a adresy pro farmu jsou v `config/farm-bass443/` (adresy zatím návrh).
 
 ## Deployables
 
@@ -28,10 +30,11 @@ Co je skutečné a co simulace, po napojení:
 ## Příkazy
 
 ```bash
-npm run farm:check                 # wrangler deploy --dry-run pro všech pět configů, bez přihlášení
-npx wrangler dev -c deploy/cloudflare/apf-gateway/wrangler.jsonc      # lokálně (miniflare: DO, R2, KV, service bindings)
-npx wrangler whoami                # musí říct bass443 (a37a3627…), viz níže
-npx wrangler deploy -c deploy/cloudflare/apf-fakes/wrangler.jsonc     # pořadí nasazení: fakes → document-host → email-executor → mail-ingest → gateway
+npm run farm:check                                   # wrangler deploy --dry-run: 5 base configů + 5 vygenerovaných per instalace, bez přihlášení
+node scripts/farm-config.mjs farm-bass443            # jen vygenerovat .wrangler/generated/farm-bass443/<deployable>/wrangler.jsonc
+npx wrangler dev -c deploy/cloudflare/apf-gateway/wrangler.jsonc      # lokálně (miniflare: DO, R2, KV, service bindings); base config stačí
+npx wrangler whoami                                  # musí říct bass443 (a37a3627…), viz níže
+npx wrangler deploy -c .wrangler/generated/farm-bass443/apf-fakes/wrangler.jsonc   # vždy z vygenerovaného configu; pořadí: fakes → document-host → email-executor → mail-ingest → gateway
 ```
 
 Service bindingy míří na jména Workerů, takže cíl musí existovat dřív než ten, kdo na něj ukazuje. Gateway jde poslední.
@@ -47,7 +50,7 @@ Service bindingy míří na jména Workerů, takže cíl musí existovat dřív 
 ## Co se ještě nerozhodlo
 
 - Workers Paid kvůli Queues (krok 5), nebo první verze bez front.
-- Skutečná schránka za `ops-mailbox` v `contracts/policy/email.send.v1.policy.json` pro režim `live`.
+- Skutečná schránka za `ops-mailbox` v `config/farm-bass443/policy/email.send.v1.policy.json` pro režim `live`; adresy v `config/farm-bass443/profile.json` a `farm.json` jsou návrh.
 
 ## Proč to žije v tomto repu
 

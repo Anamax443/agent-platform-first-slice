@@ -31,12 +31,14 @@ npm run arch      # ARCH-DEP-001: komponenta neimportuje jinou komponentu ani vn
 
 | Cesta | Role |
 |---|---|
-| `contracts/` | zmrazená schémata s pinem v `CONTRACTS-VERSION`; platform policy per capability (ADR-016) včetně allowlistu příjemců pro `email.send` |
-| `src/platform/` | hodiny, id, schémata, kanonický JSON, podpis, gateway, router, policy, executor host, credentials, journal, orchestrátor, review, audit, artefakty |
+| `contracts/` | zmrazená schémata s pinem v `CONTRACTS-VERSION.json`; vzor policy z foundation |
+| `config/` | instalační profily, nic z nich není v kódu: `profile.schema.json`; `local-fakes/` (testy) a `farm-bass443/` (farma, návrh), každý s `profile.json` (tenanty, identity, role, reference credentialů jen jménem, kanály, retence) a `policy/*.policy.json` (granty ADR-016, allowlist příjemců pro `email.send`); `farm.json` = overlay wrangler configů per deployable. Nová instalace = nový adresář + secrets, nula změn v `src/` (hlídá `npm run arch`) |
+| `src/platform/` | hodiny, id, schémata, kanonický JSON, podpis, gateway, router, policy, transport (in-process, HTTP), executor host, credentials, journal, orchestrátor, workflow definice, review, audit, artefakty |
 | `src/components/` | pět capability v pěti komponentách: document-classifier, document-validator, document-executor-host (stamp + archive), mail-ingest, email-executor |
 | `src/adapters/` | LLM, registr, DMS, archiv a SMTP adaptéry s fakes a režimy selhání |
-| `src/slice.ts` | kompoziční kořen: dva toky, tři hosty, dvě credential domény |
-| `workflows/` | `document-intake.v1.json`, `mail-intake.v1.json` |
+| `src/slice.ts` | kompoziční kořen: `createSlice(installation, secrets, volby)`; dva toky, tři hosty, dvě credential domény, in-process transport |
+| `src/installation.ts` | instalační profil: typy, fail-closed sestavení (schéma, policy, granty proti identitám a tenantům), tabulka credentialů; `installation-node.ts` je Node loader pro testy |
+| `workflows/` | `document-intake.v1.json`, `mail-intake.v1.json`, `workflow-definition.schema.json` |
 | `conformance/` | per capability: fixtures, golden, `errors.md`, `compat.md`; per workflow: scénáře a golden master |
 | `tests/` | jeden soubor na rodinu plus `mail.test.ts` pro druhý tok; názvy testů nesou Test ID |
 | `docs/MEASUREMENT.md` | hodiny, řádky, zachycené nálezy, plýtvání podle lean kategorií, co bylo nutné obejít |

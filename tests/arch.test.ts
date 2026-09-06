@@ -1,9 +1,10 @@
-// ARCH-DEP-001: components import only platform/api, their own directory and adapter contracts; platform logic never reads the system clock.
+// ARCH-DEP-001: components import only platform/api, their own directory and adapter contracts; platform logic never reads
+// the system clock; no installation value (config/<installation>/) and no e-mail address or public hostname is a literal in code.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { tmpDir } from "./harness/index.js";
+import { TENANT_A, tmpDir } from "./harness/index.js";
 import { projectRoot } from "./harness/paths.js";
 
 const script = join(projectRoot, "scripts", "arch-dep.mjs");
@@ -48,5 +49,22 @@ describe("ARCH-DEP-001", () => {
     expect(r.out).toContain("node:fs");
     expect(r.out).toContain("direct system clock");
     expect(r.out).toContain("platform/deadline.ts:1");
+  });
+
+  it("the check can fail on installation values: a tenant from config/, an e-mail address or a public hostname as a literal in code", () => {
+    const dir = tmpDir();
+    mkdirSync(join(dir, "components", "leaky"), { recursive: true });
+    mkdirSync(join(dir, "platform"), { recursive: true });
+    writeFileSync(
+      join(dir, "components", "leaky", "handler.ts"),
+      [`export const tenant = "${TENANT_A}";`, 'export const ops = "ops@example.cz";', "// a comment may mention ops@example.cz, the lint reads literals only"].join("\n"),
+    );
+    writeFileSync(join(dir, "platform", "hosts.json"), JSON.stringify({ gateway: "apf.example.org" }));
+    const r = run(dir);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("ARCH-DEP-001 FAILED (3)");
+    expect(r.out).toContain(`installation value "${TENANT_A}"`);
+    expect(r.out).toContain("e-mail address");
+    expect(r.out).toContain("public hostname");
   });
 });

@@ -69,7 +69,7 @@
   </table>
 
   <div class="kpis">
-    <div class="kpi"><b>198</b><span>testů v 10 souborech</span></div>
+    <div class="kpi"><b>207</b><span>testů v 11 souborech</span></div>
     <div class="kpi"><b>46</b><span>Test ID z verifikačního kontraktu</span></div>
     <div class="kpi"><b>5</b><span>capability ve 2 tocích</span></div>
     <div class="kpi"><b>≈ 1 h 50 min</b><span>AI wall-clock M1–M4 · čas vlastníka nezměřen</span></div>
@@ -169,12 +169,13 @@ Orchestrátory: společný journal, review service, audit · každý jen svou de
         <li class="ok">MEASUREMENT s 12 nálezy a 11 návrhy pro normu</li>
         <li class="ok">CI zelené, README CZ/EN, HANDOFF, ARCHITECTURE, BUILD</li>
         <li class="ok">M4b farma na Cloudflare: návrhový list a skeleton pěti deployables (<code>deploy/cloudflare/</code>, <code>npm run farm:check</code> zelený), nic nenasazeno</li>
+        <li class="ok">M4b krok 1: platforma bez čtení disku (kontrakty, schémata, workflow definice importované staticky), <code>DispatchTransport</code> (in-process + HTTP klient), <b>instalační profil</b> <code>config/&lt;instalace&gt;/</code> se schématem a fail-closed sestavením, žádná instalační hodnota v kódu (lint v <code>npm run arch</code>), wrangler configy generované per instalace (<code>farm:check</code> nad 10 configy)</li>
       </ul>
     </div>
     <div class="card todo-card">
       <strong>⏳ Zbývá · v pořadí priority</strong>
       <ul>
-        <li class="todo"><b>1 · M4b farma, krok 1–2:</b> instalační profil (identity, tenanty, policy, domény z kódu do <code>config/&lt;instalace&gt;/</code>, secrets jen jménem, lint) a portabilita platformy (bez čtení disku při importu, <code>DispatchTransport</code>), pak <code>wrangler dev</code> lokálně. Nezávisí na ničem.</li>
+        <li class="todo"><b>1 · M4b farma, krok 2:</b> gateway + document-host + fakes na <code>wrangler dev</code> lokálně, harness proti localhost přes <code>HttpDispatchTransport</code> (týchž 207 testů nad druhým runtime). Krok 1 hotový. Nezávisí na ničem.</li>
         <li class="todo"><b>2 · M4b farma, krok 3–5:</b> nasazení na bass443 za Access, e-mail (Routing + Sending), fronta, pád DO. Čeká na adresy od vlastníka.</li>
         <li class="todo"><b>3 · Pentest ADR-017</b> nad skutečnými deployables: tři otázky s očekávaným NE (SMTP z document hostu, DMS z email executoru, podpis obálky mimo gateway) plus eskalace práv nepřímými cestami. Jediný MAJOR z posudků.</li>
         <li class="todo"><b>4 · Reálný model</b> za <code>document.classify</code> s golden setem (10 faktur + 3 injection, <code>criticalFields: [documentType]</code>) a <code>AI-EVAL-REG-001</code>, <code>AI-EVAL-ADV-001</code>. Podmínka v1.0.</li>

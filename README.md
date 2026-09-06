@@ -31,12 +31,14 @@ npm run arch      # ARCH-DEP-001: no component imports another component or plat
 
 | Path | Role |
 |---|---|
-| `contracts/` | frozen schemas pinned in `CONTRACTS-VERSION`; platform policies per capability (ADR-016), including the recipient allowlist of `email.send` |
-| `src/platform/` | clock, ids, schemas, canonical JSON, signing, gateway, router, policy, executor host, credentials, journal, orchestrator, review, audit, artifacts |
+| `contracts/` | frozen schemas pinned in `CONTRACTS-VERSION.json`; the foundation policy example |
+| `config/` | installation profiles, nothing of them in code: `profile.schema.json`; `local-fakes/` (tests) and `farm-bass443/` (farm, draft), each with `profile.json` (tenants, identities, roles, credential references by name, channels, retention) and `policy/*.policy.json` (ADR-016 grants, recipient allowlist of `email.send`); `farm.json` = per-deployable wrangler overlay. New installation = new directory + secrets, zero changes in `src/` (`npm run arch` enforces it) |
+| `src/platform/` | clock, ids, schemas, canonical JSON, signing, gateway, router, policy, transport (in-process, HTTP), executor host, credentials, journal, orchestrator, workflow definitions, review, audit, artifacts |
 | `src/components/` | five capabilities in five components: document-classifier, document-validator, document-executor-host (stamp + archive), mail-ingest, email-executor |
 | `src/adapters/` | LLM, registry, DMS, archive and SMTP adapters with fakes and failure modes |
-| `src/slice.ts` | composition root: two flows, three hosts, two credential domains |
-| `workflows/` | `document-intake.v1.json`, `mail-intake.v1.json` |
+| `src/slice.ts` | composition root: `createSlice(installation, secrets, options)`; two flows, three hosts, two credential domains, in-process transport |
+| `src/installation.ts` | installation profile: types, fail-closed assembly (schema, policies, grants against identities and tenants), credential table; `installation-node.ts` is the Node loader used by tests |
+| `workflows/` | `document-intake.v1.json`, `mail-intake.v1.json`, `workflow-definition.schema.json` |
 | `conformance/` | per capability: fixtures, golden, `errors.md`, `compat.md`; per workflow: scenarios and golden master |
 | `tests/` | one file per test family plus `mail.test.ts` for the second flow; test names carry Test IDs |
 | `docs/MEASUREMENT.md` | hours, lines, findings caught, waste by lean category, what had to be worked around |

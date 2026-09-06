@@ -6,9 +6,9 @@
   "main": "./src/index.ts",
   "compatibility_date": "2026-08-15",
   "compatibility_flags": ["nodejs_compat"],
-  // workers.dev cannot sit behind Cloudflare Access (lesson from job-watch); the custom domain is the only way in.
+  // workers.dev cannot sit behind Cloudflare Access (lesson from job-watch); a custom domain is the only way in.
+  // The domain is an installation value: `routes` come from config/<installation>/farm.json through scripts/farm-config.mjs.
   "workers_dev": false,
-  "routes": [{ "pattern": "apf.maxferit.cz", "custom_domain": true }],
   "observability": { "enabled": true },
 
   "durable_objects": {

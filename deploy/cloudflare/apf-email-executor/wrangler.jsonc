@@ -9,7 +9,7 @@
   "workers_dev": false,
   "observability": { "enabled": true },
 
-  // Cloudflare Email Sending: the sender domain maxferit.cz is onboarded (job-watch uses it). This binding IS cred:smtp.
+  // Cloudflare Email Sending: the sender domain of the installation must be onboarded in the account. This binding IS cred:smtp.
   "send_email": [{ "name": "EMAIL" }],
 
   // Read-only: the notification names an artifact id and must check it exists and belongs to the tenant.
@@ -20,8 +20,7 @@
   "vars": {
     "HOST_ID": "email-executor",
     "ISOLATION_CLASS": "PRINCIPAL",
-    "EMAIL_FROM": "apf-notify@maxferit.cz",
-    "EMAIL_FROM_NAME": "agent-platform-farm",
+    // EMAIL_FROM and EMAIL_FROM_NAME (profile channels.notifyFrom) are installation values: config/<installation>/farm.json.
     "SIGNING_PUBLIC_KEYS": "{}",
     // "sandbox" swaps the Email Sending binding for the SMTP fake with chaos modes (WF-UNK tests); "live" sends for real.
     "SEND_MODE": "sandbox"
