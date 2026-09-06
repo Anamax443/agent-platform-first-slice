@@ -2,14 +2,21 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createSlice, command, ORCHESTRATOR, TENANT_A, type Slice, type SliceOptions } from "../../src/slice.js";
+import { createSlice as composeSlice, command, type Slice, type SliceOptions } from "../../src/slice.js";
 import type { Artifact } from "../../src/platform/artifacts.js";
 import type { Instance } from "../../src/platform/journal.js";
 import type { MessageEnvelope, ResultEnvelope } from "../../src/platform/types.js";
+import { FAKE_SECRETS, LOCAL_FAKES, ORCHESTRATOR, TENANT_A } from "./installation.js";
 import { fixtureBytes, fixtureText } from "./suite.js";
 
-export { createSlice, command, ORCHESTRATOR, TENANT_A, type Slice, type SliceOptions };
-export { ORCHESTRATOR_B, AI_AGENT, TENANT_B, DEFAULT_CLOCK_START, loadWorkflow } from "../../src/slice.js";
+export { command, type Slice, type SliceOptions };
+export { DEFAULT_CLOCK_START, WORKFLOW_DEFINITIONS, workflowDef } from "../../src/slice.js";
+export { AI_AGENT, FAKE_SECRETS, LOCAL_FAKES, ORCHESTRATOR, ORCHESTRATOR_B, TENANT_A, TENANT_B } from "./installation.js";
+
+/** The slice as the tests see it: the local-fakes installation with fake secret values. */
+export function createSlice(o: SliceOptions = {}): Slice {
+  return composeSlice(LOCAL_FAKES, FAKE_SECRETS, o);
+}
 
 /** Reference texts come from the conformance fixtures; nothing is duplicated here. */
 export const INVOICE_CZ = fixtureBytes("document.classify", "canonical-invoice-cz");
@@ -28,9 +35,9 @@ export function putArtifact(slice: Slice, bytes: string, tenantId = TENANT_A): A
   return slice.artifacts.put({ tenantId, bytes, receivedFrom: "test-harness" });
 }
 
-/** Sign as the given actor and route. This is exactly what the orchestrator does per step. */
+/** Deliver as the given actor through the slice transport. This is exactly what the orchestrator does per step. */
 export async function dispatch(slice: Slice, message: MessageEnvelope, actorId = ORCHESTRATOR): Promise<ResultEnvelope> {
-  return slice.router.route(slice.gateway.dispatch(message, actorId));
+  return slice.transport.dispatch(message, actorId);
 }
 
 /** Payload a validator would hand to the stamp executor, for direct executor tests. */

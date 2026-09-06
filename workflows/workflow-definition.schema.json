@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "workflow-definition.v1",
+  "title": "Workflow definition v1",
+  "description": "Shape of a versioned, immutable workflow definition as the orchestrator of this slice runs it (FOUNDATION-core §5.7). Slice-local: not a foundation contract. Loaded fail-closed at composition time; step ids must be unique and $steps refs must point to an earlier step (checked in code).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workflow", "workflowVersion", "conformanceTier", "deadlineMs", "operatorRole", "supervisorRole", "steps"],
+  "properties": {
+    "$comment": { "type": "string" },
+    "workflow": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+    "workflowVersion": { "type": "string", "pattern": "^[0-9]+$" },
+    "conformanceTier": { "type": "string", "enum": ["exact", "semantic", "property", "ai-eval"] },
+    "deadlineMs": { "type": "integer", "minimum": 1 },
+    "operatorRole": { "$ref": "#/$defs/role", "description": "Role for the operator review created when reconciliation runs out of budget (WF-UNK-002)." },
+    "supervisorRole": { "$ref": "#/$defs/role", "description": "Default escalation target of an expired review (WF-REV-003)." },
+    "steps": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/step" } }
+  },
+  "$defs": {
+    "role": { "type": "string", "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*$" },
+    "capabilityName": { "type": "string", "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)+$" },
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "capability", "capabilityVersion", "sideEffects", "inputs"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+        "capability": { "$ref": "#/$defs/capabilityName" },
+        "capabilityVersion": { "type": "string", "pattern": "^[0-9]+$" },
+        "sideEffects": { "type": "string", "enum": ["none", "internal-write", "external-write"] },
+        "inputs": {
+          "type": "object",
+          "description": "Payload template. Strings starting with $ are refs ($input.x, $steps.<stepId>.payload.a.b, $strategy); objects nest; other values are literals."
+        },
+        "deadlineMs": { "type": "integer", "minimum": 1 },
+        "strategies": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "qualityBudget": { "type": "integer", "minimum": 1 },
+        "technicalRetries": { "type": "integer", "minimum": 0 },
+        "reconciliationBudget": { "type": "integer", "minimum": 0 },
+        "onFailed": {
+          "type": "object",
+          "propertyNames": { "enum": ["TECHNICAL", "QUALITY", "BUSINESS", "SECURITY", "POLICY", "VALIDATION", "DEPENDENCY", "UNKNOWN"] },
+          "additionalProperties": { "type": "string", "enum": ["retryQuality", "review", "fail"] }
+        },
+        "reviewRole": { "$ref": "#/$defs/role" },
+        "reviewEscalateTo": { "$ref": "#/$defs/role" },
+        "reviewExpiresInMs": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}

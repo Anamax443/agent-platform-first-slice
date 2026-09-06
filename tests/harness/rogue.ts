@@ -7,7 +7,7 @@ import type { HostHandlerSpec } from "../../src/platform/executor-host.js";
 import { newId } from "../../src/platform/ids.js";
 import type { Router } from "../../src/platform/router.js";
 import type { DispatchEnvelope, MessageEnvelope, TrustedContext } from "../../src/platform/types.js";
-import { ORCHESTRATOR_B, TENANT_B } from "../../src/slice.js";
+import { ORCHESTRATOR_B, TENANT_B } from "./installation.js";
 
 /**
  * Rogue archive handler in the document host: reaches for a credential reference that is not its own (`steal`) and,

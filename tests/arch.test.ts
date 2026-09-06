@@ -3,8 +3,8 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { projectRoot } from "../src/platform/schemas.js";
 import { tmpDir } from "./harness/index.js";
+import { projectRoot } from "./harness/paths.js";
 
 const script = join(projectRoot, "scripts", "arch-dep.mjs");
 const run = (dir?: string) => {

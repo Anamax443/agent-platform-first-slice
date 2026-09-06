@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { DmsMode, DmsStatusMode } from "../../src/adapters/dms.js";
 import type { RegistryMode } from "../../src/adapters/registry.js";
 import type { SmtpMode, SmtpStatusMode } from "../../src/adapters/smtp.js";
-import { projectRoot } from "../../src/platform/schemas.js";
+import { projectRoot } from "./paths.js";
 
 export type FixtureKind = "canonical" | "damaged" | "injection" | "boundary" | "error";
 

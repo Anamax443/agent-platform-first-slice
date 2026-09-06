@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { FakeDmsAdapter } from "../src/adapters/dms.js";
 import { iso, MINUTE } from "../src/platform/clock.js";
 import type { Router } from "../src/platform/router.js";
-import { projectRoot } from "../src/platform/schemas.js";
+import { projectRoot } from "./harness/paths.js";
 import { generateKeyPair, Signer } from "../src/platform/signing.js";
 import {
   AI_AGENT,

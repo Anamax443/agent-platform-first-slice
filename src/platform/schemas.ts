@@ -1,25 +1,25 @@
+// Contract schemas are bundled, never read from disk: the same module runs under Node (tests) and in a Worker (farm).
 import Ajv2020Exports from "ajv/dist/2020.js";
 import addFormatsExports from "ajv-formats";
 import type { ValidateFunction } from "ajv";
+import contractsPin from "../../contracts/CONTRACTS-VERSION.json" with { type: "json" };
+import dispatchEnvelope from "../../contracts/dispatch-envelope.v1.schema.json" with { type: "json" };
+import messageEnvelope from "../../contracts/message-envelope.v1.schema.json" with { type: "json" };
+import moduleDescriptor from "../../contracts/module-descriptor.v1.schema.json" with { type: "json" };
+import resultEnvelope from "../../contracts/result-envelope.v1.schema.json" with { type: "json" };
+import trustedContext from "../../contracts/trusted-context.v1.schema.json" with { type: "json" };
 
 // ajv is CommonJS: under NodeNext the default import is the exports object, the class sits on `.default`.
 const Ajv2020 = Ajv2020Exports.default;
 const addFormats = addFormatsExports.default;
-import { readFileSync, readdirSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-
-export const projectRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const contractsDir = join(projectRoot, "contracts");
 
 const ajv = new Ajv2020({ strict: true, strictRequired: false, allErrors: true });
 addFormats(ajv);
+for (const schema of [messageEnvelope, trustedContext, dispatchEnvelope, resultEnvelope, moduleDescriptor]) ajv.addSchema(schema);
 
-for (const f of readdirSync(contractsDir).filter((x) => x.endsWith(".schema.json"))) {
-  ajv.addSchema(JSON.parse(readFileSync(join(contractsDir, f), "utf8")));
-}
-
-export const CONTRACTS_VERSION = readFileSync(join(contractsDir, "CONTRACTS-VERSION"), "utf8").trim();
+/** Pin of the frozen foundation contracts copied into contracts/ (source, version, commit). */
+export const CONTRACTS_PIN = contractsPin;
+export const CONTRACTS_VERSION = `${contractsPin.version} ${contractsPin.commit}`;
 
 export type SchemaName =
   | "message-envelope"
@@ -42,8 +42,4 @@ export function validateContract(name: SchemaName, data: unknown): Validation {
 export function compileSchema(schema: object): (data: unknown) => Validation {
   const v: ValidateFunction = ajv.compile(schema);
   return (data) => (v(data) ? { ok: true } : { ok: false, errors: ajv.errorsText(v.errors) });
-}
-
-export function loadJson<T = unknown>(absolutePath: string): T {
-  return JSON.parse(readFileSync(absolutePath, "utf8")) as T;
 }

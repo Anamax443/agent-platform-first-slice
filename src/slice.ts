@@ -1,6 +1,9 @@
 // Composition root of the first slice. The only place that knows every concrete class; tests build the world from here.
 // Two flows share one gateway, router, journal, review service and audit: document-intake.v1 and mail-intake.v1.
-import { join } from "node:path";
+// Nothing bound to a customer or environment lives here: identities, tenants, policies and credential references
+// come from the installation profile, secret values from a SecretsSource (config/<installation>/, docs/NAVRHOVY-LIST-farma.md).
+import documentIntakeJson from "../workflows/document-intake.v1.json" with { type: "json" };
+import mailIntakeJson from "../workflows/mail-intake.v1.json" with { type: "json" };
 import { FakeArchiveAdapter } from "./adapters/archive.js";
 import { FakeDmsAdapter } from "./adapters/dms.js";
 import { classifyByRules, FakeLlmAdapter, KeywordClassifierAdapter, type LlmAdapter } from "./adapters/llm.js";
@@ -12,36 +15,37 @@ import * as host from "./components/document-executor-host/stamp-handler.js";
 import { createArchiveHandler, ARCHIVE_CREDENTIAL, ARCHIVE_HANDLER_ID, type ArchiveDeps } from "./components/document-executor-host/archive-handler.js";
 import * as ingest from "./components/mail-ingest/handler.js";
 import * as email from "./components/email-executor/handler.js";
+import { credentialTable, type Installation, type SecretsSource } from "./installation.js";
 import { ArtifactStore } from "./platform/artifacts.js";
 import { Audit } from "./platform/audit.js";
 import { FakeClock, iso, plus } from "./platform/clock.js";
 import { CredentialResolver } from "./platform/credentials.js";
 import { ExecutorHost, type HostHandlerSpec, type HostMutants } from "./platform/executor-host.js";
-import { Gateway, IdentityProvider, type Identity } from "./platform/gateway.js";
+import { Gateway, IdentityProvider } from "./platform/gateway.js";
 import { newId } from "./platform/ids.js";
 import { Journal } from "./platform/journal.js";
 import { Orchestrator, type WorkflowDef } from "./platform/orchestrator.js";
-import { loadPolicy } from "./platform/policy.js";
+import { policyFor } from "./platform/policy.js";
 import { ReviewService } from "./platform/review.js";
 import { Router } from "./platform/router.js";
-import { loadJson, projectRoot } from "./platform/schemas.js";
 import { generateKeyPair, KeyRegistry, Signer } from "./platform/signing.js";
+import { InProcessTransport } from "./platform/transport.js";
 import type { MessageEnvelope } from "./platform/types.js";
+import { parseWorkflowDef } from "./platform/workflow.js";
 
-export const TENANT_A = "tenant-42";
-export const TENANT_B = "tenant-7";
-export const ORCHESTRATOR = "svc-orchestrator";
-export const ORCHESTRATOR_B = "svc-orchestrator-t7";
-export const AI_AGENT = "ai-doc-classifier";
+/** Test default for the fake clock. Not an installation value: real runtimes use SystemClock. */
 export const DEFAULT_CLOCK_START = "2026-09-06T08:00:00Z";
-export const ALL_SCOPES = ["document.classify", "document.validate", "document.stamp", "document.archive", "mail.ingest", "email.send"];
 
-export const IDENTITIES: Identity[] = [
-  { actorId: ORCHESTRATOR, actorType: "service", tenantId: TENANT_A, scopes: ALL_SCOPES, authStrength: "client-credentials" },
-  { actorId: ORCHESTRATOR_B, actorType: "service", tenantId: TENANT_B, scopes: ALL_SCOPES, authStrength: "client-credentials" },
-  // The AI identity holds exactly one scope. No policy grants it a write capability (F1).
-  { actorId: AI_AGENT, actorType: "ai-agent", tenantId: TENANT_A, scopes: ["document.classify"], authStrength: "client-credentials" },
-];
+/** Every workflow definition this slice can run, validated fail-closed at import. */
+export const WORKFLOW_DEFINITIONS: Readonly<Record<string, WorkflowDef>> = Object.freeze(
+  Object.fromEntries([documentIntakeJson, mailIntakeJson].map(parseWorkflowDef).map((d) => [d.workflow, d])),
+);
+
+export function workflowDef(name: string): WorkflowDef {
+  const def = WORKFLOW_DEFINITIONS[name];
+  if (!def) throw new Error(`unknown workflow definition ${name}`);
+  return def;
+}
 
 export interface SliceOptions {
   clockStart?: string;
@@ -63,24 +67,22 @@ export interface SliceOptions {
   emailHostMutants?: HostMutants;
   /** Replace the archive handler (test harness: rogue handler for SEC-HOST-001). */
   archiveHandler?: (deps: ArchiveDeps) => HostHandlerSpec;
+  /** Primary workflow of `slice.orchestrator` (default document-intake). */
   workflow?: WorkflowDef;
 }
 
-export function loadWorkflow(name = "document-intake.v1"): WorkflowDef {
-  return loadJson<WorkflowDef>(join(projectRoot, "workflows", `${name}.json`));
-}
-
-export function createSlice(o: SliceOptions = {}) {
+export function createSlice(installation: Installation, secrets: SecretsSource, o: SliceOptions = {}) {
+  const profile = installation.profile;
   const clock = new FakeClock(o.clockStart ?? DEFAULT_CLOCK_START);
   const audit = new Audit(clock, o.auditFile);
   const artifacts = o.artifacts ?? new ArtifactStore(clock, o.artifactCapacityBytes !== undefined ? { capacityBytes: o.artifactCapacityBytes } : {});
 
-  // Gateway with Ed25519 key k1; receivers hold only the public key.
+  // Gateway with Ed25519 key k1; receivers hold only the public key. Identities come from the profile, never from code.
   const keyPair = generateKeyPair();
   const keyRegistry = new KeyRegistry();
   keyRegistry.add({ keyId: "k1", publicKey: keyPair.publicKey, validFrom: iso(clock.now()) });
   const signer = new Signer("k1", keyPair.privateKey);
-  const identities = new IdentityProvider(IDENTITIES);
+  const identities = new IdentityProvider(profile.identities);
   const gateway = new Gateway({ identities, signer, clock, ...(o.contextTtlMs !== undefined ? { contextTtlMs: o.contextTtlMs } : {}) });
 
   // Adapters (fakes)
@@ -90,16 +92,14 @@ export function createSlice(o: SliceOptions = {}) {
   const smtp = o.smtp ?? new FakeSmtpAdapter();
   const models = o.models ?? { llm: new FakeLlmAdapter(), keyword: new KeywordClassifierAdapter() };
 
-  // Credential domains (CredentialResolverFixture, VC §6): one table row per handler identity, one resolver per deployable.
+  // Credential domains (CredentialResolverFixture, VC §6): one table per deployable, rows only for its handlers,
+  // references from the profile, values from the secrets source; a missing or ungranted reference stops the wiring.
   const documentCredentials = new CredentialResolver(
-    {
-      [host.STAMP_HANDLER_ID]: { [host.STAMP_CREDENTIAL]: "dms-secret" },
-      [ARCHIVE_HANDLER_ID]: { [ARCHIVE_CREDENTIAL]: "archive-secret" },
-    },
+    credentialTable(installation, secrets, { [host.STAMP_HANDLER_ID]: [host.STAMP_CREDENTIAL], [ARCHIVE_HANDLER_ID]: [ARCHIVE_CREDENTIAL] }),
     audit,
   );
-  const emailCredentials = new CredentialResolver({ [email.SEND_HANDLER_ID]: { [email.SMTP_CREDENTIAL]: "smtp-secret" } }, audit);
-  const ingestCredentials = new CredentialResolver({ [ingest.INGEST_HANDLER_ID]: {} }, audit);
+  const emailCredentials = new CredentialResolver(credentialTable(installation, secrets, { [email.SEND_HANDLER_ID]: [email.SMTP_CREDENTIAL] }), audit);
+  const ingestCredentials = new CredentialResolver(credentialTable(installation, secrets, { [ingest.INGEST_HANDLER_ID]: [] }), audit);
 
   // Hosts: document-executor-host (LOGICAL, two handlers), email-executor (PRINCIPAL: own context, own credential domain), mail-ingest.
   const documentHost = new ExecutorHost({ hostId: host.descriptor.module, clock, audit, credentials: documentCredentials });
@@ -107,7 +107,9 @@ export function createSlice(o: SliceOptions = {}) {
   documentHost.register(host.createStampHandler({ artifacts, dms, credentials: documentCredentials, clock }));
   documentHost.register((o.archiveHandler ?? createArchiveHandler)({ artifacts, archive, credentials: documentCredentials, clock }));
 
-  const emailPolicy = loadPolicy("email.send", "1");
+  // Policies are authority artefacts of the installation (ADR-016); a capability without one cannot be registered.
+  const policy = (capability: string) => policyFor(installation.policies, capability, "1");
+  const emailPolicy = policy("email.send");
   const recipients: email.RecipientDirectory = (tenantId, ref) => emailPolicy.recipientAllowlist?.[tenantId]?.[ref];
   const emailHost = new ExecutorHost({ hostId: email.descriptor.module, clock, audit, credentials: emailCredentials });
   Object.assign(emailHost.mutants, o.emailHostMutants ?? {});
@@ -116,11 +118,11 @@ export function createSlice(o: SliceOptions = {}) {
   const ingestHost = new ExecutorHost({ hostId: ingest.descriptor.module, clock, audit, credentials: ingestCredentials });
   ingestHost.register(ingest.createIngestHandler({ artifacts, clock }));
 
-  // Router: descriptors validated against the frozen schema, policies loaded fail-closed.
+  // Router: descriptors validated against the frozen schema, policies looked up fail-closed.
   const router = new Router({ registry: keyRegistry, clock, audit });
   router.register({
     descriptor: classifier.descriptor as never,
-    policies: { "document.classify": loadPolicy("document.classify", "1") },
+    policies: { "document.classify": policy("document.classify") },
     capabilities: [
       {
         name: "document.classify",
@@ -132,7 +134,7 @@ export function createSlice(o: SliceOptions = {}) {
   });
   router.register({
     descriptor: validator.descriptor as never,
-    policies: { "document.validate": loadPolicy("document.validate", "1") },
+    policies: { "document.validate": policy("document.validate") },
     capabilities: [
       {
         name: "document.validate",
@@ -150,7 +152,7 @@ export function createSlice(o: SliceOptions = {}) {
   });
   router.register({
     descriptor: host.descriptor as never,
-    policies: { "document.stamp": loadPolicy("document.stamp", "1"), "document.archive": loadPolicy("document.archive", "1") },
+    policies: { "document.stamp": policy("document.stamp"), "document.archive": policy("document.archive") },
     capabilities: [
       { name: "document.stamp", version: "1", inputSchema: host.stampInputSchema, handler: documentHost.handlerFor("document.stamp") },
       { name: "document.archive", version: "1", inputSchema: host.archiveInputSchema, handler: documentHost.handlerFor("document.archive") },
@@ -158,7 +160,7 @@ export function createSlice(o: SliceOptions = {}) {
   });
   router.register({
     descriptor: ingest.descriptor as never,
-    policies: { "mail.ingest": loadPolicy("mail.ingest", "1") },
+    policies: { "mail.ingest": policy("mail.ingest") },
     capabilities: [{ name: "mail.ingest", version: "1", inputSchema: ingest.inputSchema, handler: ingestHost.handlerFor("mail.ingest") }],
   });
   router.register({
@@ -167,17 +169,20 @@ export function createSlice(o: SliceOptions = {}) {
     capabilities: [{ name: "email.send", version: "1", inputSchema: email.inputSchema, handler: emailHost.handlerFor("email.send") }],
   });
 
+  // Transport: in this runtime gateway and router share the process. Orchestrators only ever see the interface.
+  const transport = new InProcessTransport(gateway, router);
   const journal = new Journal(o.journalFile);
   const review = new ReviewService(clock, audit);
-  const workflow = o.workflow ?? loadWorkflow();
-  const mailWorkflow = loadWorkflow("mail-intake.v1");
+  const workflow = o.workflow ?? workflowDef("document-intake");
+  const mailWorkflow = workflowDef("mail-intake");
   const reconcilers = { "document.stamp": documentHost.reconcilerFor("document.stamp"), "email.send": emailHost.reconcilerFor("email.send") };
-  const shared = { gateway, router, journal, review, audit, clock, actorId: ORCHESTRATOR, reconcilers };
+  const shared = { transport, journal, review, audit, clock, actorId: profile.roles.orchestrator, reconcilers };
   const orchestrator = new Orchestrator({ workflow, ...shared });
   const mailOrchestrator = new Orchestrator({ workflow: mailWorkflow, ...shared });
   const orchestrators: Record<string, Orchestrator> = { [workflow.workflow]: orchestrator, [mailWorkflow.workflow]: mailOrchestrator };
 
   return {
+    installation,
     clock,
     audit,
     artifacts,
@@ -186,6 +191,7 @@ export function createSlice(o: SliceOptions = {}) {
     signer,
     identities,
     gateway,
+    transport,
     credentials: documentCredentials,
     emailCredentials,
     host: documentHost,

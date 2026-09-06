@@ -2,6 +2,21 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-06 (9) — M4b krok 1, celek A ZELENÝ: platforma bez disku, instalační profil v kompozičním kořeni, 206 testů
+
+**Stav:** `npm run typecheck`, `npm test` (11 souborů, **206 testů** = 198 + 8 nových INST), `npm run arch`, `npm run farm:check` zelené lokálně. Repo je po (8) zase funkční. Tento commit uzavírá body 1–4 z (8); body 5–7 (lint instalačních hodnot, `farm-config`, docs) jsou celek B a jdou hned za ním.
+
+**Hotové v tomto celku:**
+- `src/platform/schemas.ts`: pět schémat + `contracts/CONTRACTS-VERSION.json` importované staticky; žádné `node:fs`/`node:path`/`node:url`, žádný `projectRoot`, žádný `loadJson`. `CONTRACTS_VERSION` má stejný tvar jako dřív (`1.0-rc2.1 12a3c32`), navíc `CONTRACTS_PIN` (celý objekt).
+- `workflows/workflow-definition.schema.json` (nové, slice-local, ne kontrakt foundation) + `src/platform/workflow.ts` s `parseWorkflowDef()`: schéma, unikátní id kroků, každý `$steps.<id>` ukazuje na dřívější krok; jinak výjimka.
+- `src/installation.ts`: `credentialTable()` teď bere `{ handlerId: [reference, které kód potřebuje] }` a kontroluje, že profil je handleru přiznává (kód říká, co potřebuje; profil, co smí; obojí musí sedět). Přidané kontroly: duplicitní `actorId`, identita v neznámém tenantu.
+- `src/installation-node.ts`: `loadInstallationFromDir(dir)` (fs až při volání) pro testy a Node.
+- `src/slice.ts`: `createSlice(installation, secrets, opts)`; identity z profilu, policy přes `policyFor()`, credential tabulky přes `credentialTable()` per host, `InProcessTransport` do obou orchestrátorů i do návratu (`slice.transport`), workflow definice importované staticky a parsované (`WORKFLOW_DEFINITIONS`, `workflowDef(name)`). **Konstanty tenantů a identit ze `src/` zmizely**; `DEFAULT_CLOCK_START` zůstává (testovací default hodin, ne instalační hodnota).
+- Harness: `tests/harness/paths.ts` (`projectRoot`, `loadJson` jen pro testy), `tests/harness/installation.ts` (`LOCAL_FAKES` z `config/local-fakes`, `FAKE_SECRETS`, `ORCHESTRATOR`/`TENANT_A`/`ORCHESTRATOR_B`/`TENANT_B`/`AI_AGENT` odvozené z profilu, ne literály), `index.ts` obaluje `createSlice(o)` a `dispatch()` jde přes `slice.transport`. Opravené importy v `suite.ts`, `rogue.ts`, `ctr.test.ts` (allowlist příjemců z `LOCAL_FAKES.policies`), `sec.test.ts`, `arch.test.ts`, `wf.test.ts` (dva `new Orchestrator` s `transport`).
+- `tests/inst.test.ts` (INST-001..003): profil proti schématu, chybějící policy, policy bez `failClosed`, grant neznámé identitě / scope, který identita nedrží / neznámému tenantu, `roles.orchestrator` mimo identity; credential tabulka (handler bez záznamu, nepřiznaná reference, chybějící secret); workflow definice (schéma, duplicitní krok, dopředný `$steps`).
+
+**Celek B (další commit):** 5. `scripts/arch-dep.mjs` zpřísnit (komponenty bez `node:path`/`node:url`) + lint instalačních hodnot v `src/**` a `deploy/cloudflare/*/src/**`; 6. `scripts/farm-config.mjs` + `farm:check` i nad generovanými configy, z base `wrangler.jsonc` pryč `routes` a `EMAIL_FROM*`; 7. docs (BUILD, README CZ/EN, ARCHITECTURE, deploy README, MEASUREMENT řádek M4b krok 1, STATUS CZ/EN). Push až po celku B (CI běží `farm:check`, generované configy musí projít).
+
 ## 2026-09-06 (8) — M4b krok 1 ROZPRACOVÁNO a přerušeno: portabilita platformy + instalační profil, repo je ČERVENÉ
 
 **Pravidlo vlastníka od této chvíle:** postupovat po malých celcích jako po milnících; po každém celku aktualizovat HANDOFF a commitnout. Žádné velké dávky změn napříč deseti soubory najednou.

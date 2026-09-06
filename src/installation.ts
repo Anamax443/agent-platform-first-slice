@@ -47,6 +47,10 @@ export function assembleInstallation(profileJson: unknown, policies: Policy[]): 
     if (!set[cap]) throw new Error(`installation ${profile.installation}: policy for ${cap} missing (fail-closed)`);
   }
   const identities = new Map(profile.identities.map((i) => [i.actorId, i]));
+  if (identities.size !== profile.identities.length) throw new Error(`installation ${profile.installation}: duplicate actorId among identities`);
+  for (const id of profile.identities) {
+    if (!profile.tenants.includes(id.tenantId)) throw new Error(`identity ${id.actorId} belongs to tenant ${id.tenantId}, unknown to installation ${profile.installation}`);
+  }
   for (const pol of Object.values(set)) {
     for (const g of pol.grants) {
       const id = identities.get(g.actorId);
@@ -63,12 +67,19 @@ export function assembleInstallation(profileJson: unknown, policies: Policy[]): 
   return { profile, policies: set };
 }
 
-/** Credential table for the handlers of one deployable: only their references, values resolved now, missing value = fail-closed. */
-export function credentialTable(installation: Installation, secrets: SecretsSource, handlerIds: string[]): Record<string, Record<string, string>> {
+/**
+ * Credential table for the handlers of one deployable. `required` says which references the code of each handler needs;
+ * the profile says which it may resolve. Both must agree, and every listed reference must have a value now (fail-closed).
+ */
+export function credentialTable(installation: Installation, secrets: SecretsSource, required: Record<string, string[]>): Record<string, Record<string, string>> {
   const table: Record<string, Record<string, string>> = {};
-  for (const handlerId of handlerIds) {
+  const name = installation.profile.installation;
+  for (const [handlerId, needed] of Object.entries(required)) {
     const refs = installation.profile.credentials[handlerId];
-    if (refs === undefined) throw new Error(`installation ${installation.profile.installation}: no credential entry for handler ${handlerId} (fail-closed)`);
+    if (refs === undefined) throw new Error(`installation ${name}: no credential entry for handler ${handlerId} (fail-closed)`);
+    for (const ref of needed) {
+      if (!refs.includes(ref)) throw new Error(`installation ${name}: handler ${handlerId} needs ${ref}, which the profile does not grant it (fail-closed)`);
+    }
     table[handlerId] = {};
     for (const ref of refs) {
       const value = secrets(ref);

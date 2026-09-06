@@ -69,8 +69,7 @@ describe("WF-UNK unknown outcome (F5, F6)", () => {
     const hostReconciler = slice.host.reconcilerFor("document.stamp");
     const orchestrator = new Orchestrator({
       workflow: slice.workflow,
-      gateway: slice.gateway,
-      router: slice.router,
+      transport: slice.transport,
       journal: slice.journal,
       review: slice.review,
       audit: slice.audit,
@@ -169,8 +168,7 @@ describe("WF-VER-001 running instances pin their workflow version", () => {
     const { instance } = await runIntake(slice, { bytes: NEWSLETTER });
     const v2 = new Orchestrator({
       workflow: { ...slice.workflow, workflowVersion: "2" },
-      gateway: slice.gateway,
-      router: slice.router,
+      transport: slice.transport,
       journal: slice.journal,
       review: slice.review,
       audit: slice.audit,

@@ -3,9 +3,10 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { sha256 } from "../src/platform/artifacts.js";
 import { PLATFORM_CODES } from "../src/platform/errors.js";
-import { compileSchema, loadJson, projectRoot, validateContract } from "../src/platform/schemas.js";
+import { compileSchema, validateContract } from "../src/platform/schemas.js";
 import { expectGolden, runFixture, type FixtureRun } from "./harness/conformance.js";
-import { command, createSlice, dispatch, INVOICE_CZ, putArtifact, TENANT_A, TENANT_B } from "./harness/index.js";
+import { command, createSlice, dispatch, INVOICE_CZ, LOCAL_FAKES, putArtifact, TENANT_A, TENANT_B } from "./harness/index.js";
+import { loadJson, projectRoot } from "./harness/paths.js";
 import { loadSuite } from "./harness/suite.js";
 
 interface Descriptor {
@@ -28,8 +29,8 @@ const FULL_MINIMUM_CAPS = ["document.classify", "document.validate", "document.s
 const runs = new Map<string, FixtureRun>();
 
 const descriptorOf = (module: string) => loadJson<Descriptor>(join(projectRoot, "src", "components", module, "descriptor.json"));
-const emailPolicy = loadJson<{ recipientAllowlist: Record<string, Record<string, string>> }>(join(projectRoot, "contracts", "policy", "email.send.v1.policy.json"));
-const ALLOWLISTED_ADDRESSES = new Set(Object.values(emailPolicy.recipientAllowlist).flatMap((t) => Object.values(t)));
+const emailPolicy = LOCAL_FAKES.policies["email.send"];
+const ALLOWLISTED_ADDRESSES = new Set(Object.values(emailPolicy?.recipientAllowlist ?? {}).flatMap((t) => Object.values(t)));
 
 describe("CTR-001 descriptors", () => {
   for (const [module, { caps }] of Object.entries(COMPONENTS)) {
