@@ -14,6 +14,8 @@ Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného p
 
 **Testovací PDF:** `scratchpad/make-pdf.mjs` (mimo repo) generuje `faktura-test.pdf`; na druhém PC vezmi libovolné PDF s textovou vrstvou.
 
+**Reálný dokument (vlastník, 19:51):** skutečná faktura za internet (export z POHODY, 100 kB, jedna strana) → derivace 1 726 znaků, 432 tokenů, formát markdown. Kvalita: sloupcová sazba slévá sousední buňky do jednoho řádku (číslo dokladu + „Variabilní symbol" + jméno bez oddělovače), ale číslo dokladu, VS, IČ/DIČ, částky, DPH, datum vystavení i splatnost jsou v textu; blok `## Metadata` prozradí autora a systém (Author, Creator=POHODA). **Datová hygiena:** faktura nese osobní údaje vlastníka (jméno, adresa, DIČ = rodné číslo); leží v R2 (jurisdiction eu), v SQLite Durable Objectu instance a v D1 (EEUR) na účtu vlastníka za Access. **Mezera:** Durable Object nemá pinovanou jurisdikci → v celku B použít `env.WORKFLOW.jurisdiction("eu").idFromName(...)`; retence z profilu (`retentionDays`) se zatím nevymáhá (žádné mazání) → samostatný celek „retence" po D.
+
 **Další celek B (`/dispatch` + classify):** beze změny proti (14); navíc classify poběží nad derivací (markdown s metadaty).
 
 **Zbývá rozhodnout (Milan):** aliasy do jedné schránky (krok 4). Jinak nic.
