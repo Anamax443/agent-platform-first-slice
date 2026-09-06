@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { FakeDmsAdapter } from "../src/adapters/dms.js";
+import { FakeRegistryAdapter } from "../src/adapters/registry.js";
 import { iso, MINUTE } from "../src/platform/clock.js";
 import type { Router } from "../src/platform/router.js";
 import { projectRoot } from "./harness/paths.js";
@@ -91,7 +92,8 @@ describe("SEC-INJ untrusted data boundary (F2)", () => {
   });
 
   it("SEC-INJ-002 output of agent A carrying an instruction for module B is rejected as untrusted before B runs", async () => {
-    const slice = createSlice();
+    const registry = new FakeRegistryAdapter();
+    const slice = createSlice({ registry });
     const art = putArtifact(slice, INVOICE_CZ);
     const r = await dispatch(
       slice,
@@ -101,7 +103,7 @@ describe("SEC-INJ untrusted data boundary (F2)", () => {
       }),
     );
     expect(r.error?.code).toBe("SCHEMA_VALIDATION_FAILED");
-    expect(slice.registry.calls).toBe(0);
+    expect(registry.calls).toBe(0);
   });
 });
 

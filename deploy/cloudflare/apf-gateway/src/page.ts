@@ -13,6 +13,7 @@ export interface Wired {
   dispatch: boolean;
   gateway: string;
   signing: string;
+  fakes: string;
   hosts: boolean;
   accessJwtVerified: boolean;
 }
@@ -68,7 +69,8 @@ const wiredList = (w: Wired): string => {
     row(true, "artefakty", w.artifacts),
     row(w.dispatch, "dispatch: router a podpis obálky", w.dispatch ? w.gateway : "zatím ne: každý krok toku skončí DEPENDENCY_UNAVAILABLE"),
     row(!w.signing.startsWith("MISSING"), "podpisový klíč gateway (Ed25519)", w.signing),
-    row(w.hosts, "hosty: document-host (stamp, archive), fakes, mail, e-mail", w.hosts ? "zapojeno" : "zatím ne: kroky stamp a dál skončí DEPENDENCY_UNAVAILABLE"),
+    row(true, "fakes: registr, DMS, archiv jako dvojníci za service bindingem", w.fakes),
+    row(w.hosts, "hosty: document-host (stamp, archive), mail, e-mail", w.hosts ? "zapojeno" : "zatím ne: kroky stamp a dál skončí DEPENDENCY_UNAVAILABLE"),
     row(w.accessJwtVerified, "ověření Access JWT ve Workeru", w.accessJwtVerified ? "ano" : "zatím jen hlavička od Access"),
   ].join("")}</ul>`;
 };

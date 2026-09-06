@@ -5,7 +5,7 @@
 import { FakeArchiveAdapter } from "./adapters/archive.js";
 import { FakeDmsAdapter } from "./adapters/dms.js";
 import { classifyByRules, FakeLlmAdapter, KeywordClassifierAdapter, type LlmAdapter } from "./adapters/llm.js";
-import { FakeRegistryAdapter } from "./adapters/registry.js";
+import { FakeRegistryAdapter, type RegistryAdapter } from "./adapters/registry.js";
 import { FakeSmtpAdapter } from "./adapters/smtp.js";
 import * as classifier from "./components/document-classifier/handler.js";
 import * as validator from "./components/document-validator/handler.js";
@@ -44,7 +44,8 @@ export interface SliceOptions {
   artifacts?: ArtifactStore;
   artifactCapacityBytes?: number;
   dms?: FakeDmsAdapter;
-  registry?: FakeRegistryAdapter;
+  /** Any RegistryAdapter: the fake in process (default), or HttpRegistryAdapter over the fakes protocol (INT-HTTP-*). */
+  registry?: RegistryAdapter;
   archive?: FakeArchiveAdapter;
   smtp?: FakeSmtpAdapter;
   models?: Record<string, LlmAdapter>;
@@ -76,7 +77,7 @@ export function createSlice(installation: Installation, secrets: SecretsSource, 
 
   // Adapters (fakes)
   const dms = o.dms ?? new FakeDmsAdapter();
-  const registry = o.registry ?? new FakeRegistryAdapter();
+  const registry: RegistryAdapter = o.registry ?? new FakeRegistryAdapter();
   const archive = o.archive ?? new FakeArchiveAdapter();
   const smtp = o.smtp ?? new FakeSmtpAdapter();
   const models = o.models ?? { llm: new FakeLlmAdapter(), keyword: new KeywordClassifierAdapter() };

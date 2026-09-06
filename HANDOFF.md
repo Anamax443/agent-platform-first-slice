@@ -2,6 +2,22 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-06 (20) — Krok 2, celek C: `document.validate` přes skutečnou síť (`apf-fakes` service binding)
+
+**Pokyn vlastníka:** „pokračujeme" (po HANDOFF (19), beze změny plánu) — další v pořadí byl celek C podle HANDOFF (17)/(19) a `docs/NAVRHOVY-LIST-farma.md`.
+
+**Co se změnilo:** validátor už nedostává `FakeRegistryAdapter("ok")` napevno v procesu (`platform-wiring.ts`); dostává libovolný `RegistryAdapter` a gateway (`deploy/cloudflare/apf-gateway/src/index.ts`) mu injektuje `HttpRegistryAdapter` mířící na `env.FAKES` (service binding). Nový modul `src/adapters/fakes-http.ts` je protokol dvojníka: `handleFakes(request, deps)` obsluhuje registr (`POST /registry/lookup`), DMS (`POST /dms/stamp`, `GET /dms/status`, `GET /dms/read`) a archiv (`POST /archive/put`) nad jedním rozhraním `ChaosSource`/`FakesStore`, chaos módy čte na každé volání (žádné cachování) a neznámou hodnotu módu odmítá (`CHAOS_MODE_UNKNOWN`), nikdy ji neuhodne. `deploy/cloudflare/apf-fakes/src/index.ts` je teď jen tenký binding na KV (`CHAOS`, `STORE`) + `memory` Map před KV kvůli read-your-writes uvnitř jednoho isolátu (W18: KV je eventuálně konzistentní). `HttpRegistryAdapter` (v `src/adapters/registry.ts`) mapuje transport na existující chybové třídy (5xx → `RegistryUnavailable`, 4xx s kódem → `RegistryBusinessError`, nevalidní JSON → prázdný záznam, který validátor stejně odmítne jako `REGISTRY_RESPONSE_INVALID` — žádná nová důvěra vůči odpovědi). `src/slice.ts` a testy (`tests/sec.test.ts`) dostaly `registry` jako volbu místo implicitního fake v procesu; nový `tests/fakes.test.ts` (8 testů, `INT-HTTP-001..008`) opakuje třídy `INT-FAIL` přes tento protokol plus DMS/archiv idempotenci a chybové stavy pro celek D.
+
+**Ověřeno nad víc než dry-run (brána stejná jako u kroku 2 od začátku):** `npx wrangler dev -c .wrangler/generated/local-fakes/apf-gateway/wrangler.jsonc -c .wrangler/generated/local-fakes/apf-fakes/wrangler.jsonc` (multi-worker dev, dva Workery v jednom miniflare, service binding hlásí `[connected]`, ne `[not connected]` jako dřív). `/version` gateway teď v poli `fakes` ukazuje živou odpověď dvojníka (`endpoints`, `chaos`, `secrets: {dms:false, archive:false}` — bez nastavení secrets na farmě, jak čeká celek D). `POST /intake` s textem faktury prošel `classify:SUCCEEDED` → `validate:SUCCEEDED` (registr přes skutečnou síť vrátil INVOICE) → `stamp:FAILED:DEPENDENCY_UNAVAILABLE` (document-host = celek D, beze změny). Instance po ověření smazána `purge`.
+
+**Brány zelené:** typecheck, **218 testů / 12 souborů**, `npm run arch` (20 hodnot), `npm run farm:check` (10 configů) i `tsc` nad `deploy/cloudflare`.
+
+**Nálezy:** 0 v kódu; W18 zapsáno do MEASUREMENT (KV jako zdroj pravdy testovacího dvojníka je eventuálně konzistentní, dvojník řeší čtení-po-zápisu jen v paměti isolátu — pro D5 dost, pro skutečný DMS na farmě irelevantní, protože ten se ptá vlastního úložiště, ne KV).
+
+**Nenasazeno na farmu:** změna je jen v repu a ověřená na `wrangler dev`; farma `farm-bass443` stále běží z `6c63b16` (poslední nasazený kód, viz HANDOFF (19)). Nasazení celku C na farmu (`node scripts/farm-deploy.mjs farm-bass443`) je otevřené — nevyžaduje nový secret, `apf-fakes` je tam už od kroku 3 „lite".
+
+**Další celek D:** `apf-document-host` (`document.stamp`, `document.archive`) přes service binding s podepsanou obálkou (veřejný klíč z `config/farm-bass443/farm.json` `$signingPublicKeys`), secrety `DMS_SECRET`/`ARCHIVE_SECRET` (stejné hodnoty musí mít i `apf-fakes`, aby si DMS/archiv rozuměly), DO `jurisdiction("eu")` (mezera 1 shody). Pak retence podle profilu → krok 8 formáty faktur → krok 4 e-mail → harness proti farmě.
+
 ## 2026-09-06 (19) — Konec session: stav farmy, co je kde, jak pokračovat
 
 **Stav repa:** origin/main = `a5310fc` (docs), poslední kódový commit `6c63b16` (celek B). Lokální brána zelená: typecheck, **210 testů / 11 souborů**, `npm run arch` (20 instalačních hodnot), `npm run farm:check` (10 configů). CI `kontrola` zelené na `6c63b16`. Tento záznam je jen commit bez pushe (pokyn vlastníka); po pushi z tohoto PC bude origin o jeden napřed.

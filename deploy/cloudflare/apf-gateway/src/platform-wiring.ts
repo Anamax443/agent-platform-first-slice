@@ -4,7 +4,7 @@
 import { createPrivateKey, createPublicKey, generateKeyPairSync, type KeyObject } from "node:crypto";
 import { AnthropicAdapter } from "../../../../src/adapters/anthropic.js";
 import { classifyByRules, FakeLlmAdapter, KeywordClassifierAdapter, type LlmAdapter } from "../../../../src/adapters/llm.js";
-import { FakeRegistryAdapter } from "../../../../src/adapters/registry.js";
+import type { RegistryAdapter } from "../../../../src/adapters/registry.js";
 import { WorkersAiAdapter, type WorkersAiBinding } from "../../../../src/adapters/workers-ai.js";
 import * as classifier from "../../../../src/components/document-classifier/handler.js";
 import * as validator from "../../../../src/components/document-validator/handler.js";
@@ -82,6 +82,8 @@ export interface WiringOptions {
   keyId: string;
   /** PKCS8 PEM of the gateway's Ed25519 key (secret). Absent = ephemeral key, allowed only for an installation without an API host. */
   signingKeyPem: string | undefined;
+  /** The document-type registry behind document.validate: on the farm the apf-fakes double over a service binding (unit C). */
+  registry: RegistryAdapter;
   /** Result for a capability no deployable serves yet. */
   notWired: (message: MessageEnvelope, actorId: string) => Promise<ResultEnvelope>;
   modelTimeoutMs?: number;
@@ -124,7 +126,7 @@ export function wirePlatform(o: WiringOptions): Wiring {
       },
     ],
   });
-  // Unit C replaces the in-process fake registry with the client of apf-fakes (a real network hop with chaos modes).
+  // The registry is injected (unit C: apf-fakes over a service binding, chaos modes in KV); the validator treats every answer as untrusted.
   router.register({
     descriptor: validator.descriptor as never,
     policies: { "document.validate": policy("document.validate") },
@@ -133,7 +135,7 @@ export function wirePlatform(o: WiringOptions): Wiring {
         name: "document.validate",
         version: "1",
         inputSchema: validator.inputSchema,
-        handler: validator.createDocumentValidator({ artifacts: o.artifacts, registry: new FakeRegistryAdapter("ok"), clock: o.clock, crossCheck: classifyByRules, registryTimeoutMs: 5_000 }),
+        handler: validator.createDocumentValidator({ artifacts: o.artifacts, registry: o.registry, clock: o.clock, crossCheck: classifyByRules, registryTimeoutMs: 5_000 }),
       },
     ],
   });

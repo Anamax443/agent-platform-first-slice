@@ -4,11 +4,13 @@
 // into a text derivation with provenance by Workers AI (toMarkdown), a workflow instance starts in its own Durable
 // Object (SQLite = journal, audit, artifacts; R2 and D1 get async copies) and the orchestrator dispatches through the
 // signed gateway -> router path: document.classify with the installation's models (chosen per document) and
-// document.validate run here; hosts (stamp, archive, mail, e-mail) stay "not wired" until their units land.
+// document.validate (registry = the apf-fakes double over a service binding, unit C) run here; hosts (stamp, archive,
+// mail, e-mail) stay "not wired" until their units land.
 // The installation (profile + policies) comes from the build-time alias apf:installation and is assembled fail-closed at
 // import. Nothing installation-bound is written here; secrets are named, never valued.
 import { DurableObject } from "cloudflare:workers";
 import { INSTALLATION, installation } from "apf:installation";
+import { FAKES_ORIGIN, HttpRegistryAdapter } from "../../../../src/adapters/registry.js";
 import type { WorkersAiBinding } from "../../../../src/adapters/workers-ai.js";
 import type { SecretsSource } from "../../../../src/installation.js";
 import { sha256Bytes } from "../../../../src/platform/artifacts.js";
@@ -69,8 +71,9 @@ const wiredOf = (env: Env): Wired => ({
   audit: "durable-object-sqlite + d1",
   artifacts: "durable-object-sqlite + r2",
   dispatch: true,
-  gateway: "gateway + router v objektu instance: document.classify (modely z profilu, výběr per dokument), document.validate (registr = fake v procesu do celku C)",
+  gateway: "gateway + router v objektu instance: document.classify (modely z profilu, výběr per dokument), document.validate (registr přes service binding apf-fakes)",
   signing: signingMode(env),
+  fakes: "apf-fakes přes service binding: registr zapojen do validate; DMS a archiv čekají na document-host (celek D); chaos přepínače v KV apf-chaos, náhled /chaos",
   hosts: false,
   accessJwtVerified: false,
 });
@@ -80,6 +83,16 @@ const modelsOf = (env: Env): ModelsInfo => {
     return describeModels(installation, secretsOf(env));
   } catch (e) {
     return { error: String(e) };
+  }
+};
+
+/** What the fakes deployable answers through its service binding (/version, /chaos). An error is data here, never a crash of the caller. */
+const fakesInfo = async (env: Env, path = "/version"): Promise<{ status: number; body: unknown }> => {
+  try {
+    const r = await env.FAKES.fetch(`${FAKES_ORIGIN}${path}`);
+    return { status: r.status, body: await r.json().catch(() => undefined) };
+  } catch (e) {
+    return { status: 0, body: { error: String(e) } };
   }
 };
 
@@ -170,6 +183,7 @@ export class WorkflowInstance extends DurableObject<Env> {
       installation,
       secrets: secretsOf(this.env),
       ai: this.env.AI as unknown as WorkersAiBinding,
+      registry: new HttpRegistryAdapter(this.env.FAKES),
       artifacts: this.artifacts,
       audit: this.audit,
       clock: this.clock,
@@ -368,12 +382,19 @@ export default {
         policies: Object.keys(installation.policies).length,
         workflows: WORKFLOW_NAMES,
         models: modelsOf(env),
+        fakes: await fakesInfo(env),
         contracts: env.CONTRACTS_VERSION,
         killSwitch: env.KILL_SWITCH === "true",
         wired: wiredOf(env),
       });
     }
     if (url.pathname === "/health") return Response.json({ ok: true, wired: wiredOf(env) });
+
+    // Read-only view of the chaos switches (KV of apf-fakes) for the operator; they are set with wrangler kv, never through the page.
+    if (url.pathname === "/chaos" && request.method === "GET") {
+      const f = await fakesInfo(env, "/chaos");
+      return Response.json(f.body ?? { error: "NO_ANSWER" }, { status: f.status || 503 });
+    }
 
     if (url.pathname === "/" && request.method === "GET") return html(renderHome(homeModel(request, env)));
 

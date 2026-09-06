@@ -1,6 +1,7 @@
 {
   // D5: test doubles of the external systems (DMS, registry, archive) behind a real network hop, with chaos switches in KV.
   // Not a component of the norm: it exists so that INT-FAIL, WF-UNK and RES-CRASH can be driven against real transport.
+  // No route and no workers.dev: only service bindings (gateway, document host) can reach it.
   "$schema": "../../../node_modules/wrangler/config-schema.json",
   "name": "apf-fakes",
   "main": "./src/index.ts",
@@ -16,9 +17,14 @@
   ],
 
   "vars": {
-    // Keys in CHAOS: dms.mode (ok|unknown-once|unknown-always|auth-fail), registry.mode (ok|timeout|unavailable|business|nonsense-range|nonsense-semantic)
+    // Keys in CHAOS, read on every call (src/adapters/fakes-http.ts):
+    //   registry.mode    ok | timeout | unavailable | business | nonsense-range | nonsense-semantic
+    //   registry.delayMs how long the double sleeps in timeout mode before answering (default 10000; the caller's deadline decides)
+    //   dms.mode         ok | unknown-once | unknown-always | crash-after-write (= unknown-always over HTTP) | auth-fail
+    //   dms.status       ok | unknown
+    // An unknown value refuses the call (CHAOS_MODE_UNKNOWN), it is never guessed. Missing key = these defaults.
     "DEFAULT_DMS_MODE": "ok",
     "DEFAULT_REGISTRY_MODE": "ok"
   }
-  // Secrets: DMS_SECRET, ARCHIVE_SECRET (the values the fakes expect; the same values the document host holds).
+  // Secrets: DMS_SECRET, ARCHIVE_SECRET (the bearer values the doubles expect; the same values the document host holds).
 }
