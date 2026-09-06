@@ -15,6 +15,7 @@
     "farm:check": "node scripts/farm-check.mjs && tsc -p deploy/cloudflare/tsconfig.json"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.124.0",
     "@cfworker/json-schema": "^4.1.1"
   },
   "devDependencies": {

@@ -69,7 +69,7 @@
   </table>
 
   <div class="kpis">
-    <div class="kpi"><b>208</b><span>testů v 11 souborech</span></div>
+    <div class="kpi"><b>210</b><span>testů v 11 souborech</span></div>
     <div class="kpi"><b>46</b><span>Test ID z verifikačního kontraktu</span></div>
     <div class="kpi"><b>5</b><span>capability ve 2 tocích</span></div>
     <div class="kpi"><b>≈ 3 h 45 min + 4,25 h</b><span>AI wall-clock M1–M4b + čas vlastníka (odhad) · limit 40 h splněn</span></div>
@@ -177,12 +177,13 @@ Orchestrátory: společný journal, review service, audit · každý jen svou de
         <li class="ok">M4b krok 3 „lite" (6. 9. 2026 odpoledne): skeleton pěti Workerů <b>nasazen na bass443</b> z generovaných configů (D1, R2 v EU, 2× KV, custom doména), <code>apf.maxferit.cz</code> za Cloudflare Access, <code>/version</code> z internetu vrací instalaci farm-bass443; hosty jen přes service bindingy; obchodní tok ještě 501</li>
         <li class="ok">M4b krok 2, celek A (6. 9. 2026 večer): stránka <code>apf.maxferit.cz</code> přijme dokument (text nebo soubor), originál do SQLite Durable Objectu instance + R2, journal a audit v objektu, kopie auditu do D1, stránka instance s kroky, artefaktem a auditem; každý krok zatím končí explicitně <code>DEPENDENCY_UNAVAILABLE</code>, protože router ještě není zapojený (W15)</li>
         <li class="ok">M4b krok 2, celek A2 (6. 9. 2026 večer): <b>PDF, fotka, docx</b> jako vstup: binární originál neměnně v R2 (klíč sha256), Workers AI <code>toMarkdown</code> z něj vytěží text jako derivaci s provenancí, tok běží nad ní; ověřeno PDF fakturou na farmě (2 s), fotka zatím jen touž konverzí bez skutečného testu</li>
+        <li class="ok">M4b krok 2, celek B (6. 9. 2026 večer): <b>podepsaný dispatch</b> (Ed25519 klíč jako secret, ověřeno ve workerd), router v objektu instance, <b>classify se skutečným modelem</b> (Workers AI Llama 3.1 8B, ≈ 1,5 s) a <b>výběrem modelů z profilu instalace</b> (free Workers AI, placené Anthropic s <code>inferenceGeo: eu</code>; nedostupné volby jmenují chybějící secret), validate s druhým signálem; faktura i PDF → INVOICE, injekce u Llamy neprošla, u fake modelu ji chytil validátor; workflow v2 (v1 neměnné); ISDOC XML jako text pro pravidla</li>
       </ul>
     </div>
     <div class="card todo-card">
       <strong>⏳ Zbývá · v pořadí priority</strong>
       <ul>
-        <li class="todo"><b>1 · M4b farma, krok 2:</b> gateway + document-host + fakes na <code>wrangler dev</code> lokálně, harness proti localhost přes <code>HttpDispatchTransport</code> (týchž 208 testů nad druhým runtime). Hotové celky 1 (instalace ve Workeru), A (příjem dokumentu, journal a audit v DO, kopie do R2 a D1, stránka instance) a A2 (PDF/fotka/docx → text přes Workers AI); zbývá B <code>/dispatch</code> s podpisem a classify (ověřit <code>node:crypto</code> Ed25519 ve workerd, jinak WebCrypto), C validate, D document-host + fakes (razítko), ověření skutečné fotky, přílohy e-mailu (krok 4) a harness proti farmě. Nezávisí na ničem.</li>
+        <li class="todo"><b>1 · M4b farma, krok 2:</b> gateway + document-host + fakes na <code>wrangler dev</code> lokálně, harness proti localhost přes <code>HttpDispatchTransport</code> (týchž 208 testů nad druhým runtime). Hotové celky 1 (instalace ve Workeru), A (příjem, journal a audit v DO, kopie do R2 a D1, stránka instance), A2 (PDF/fotka/docx → text) a B (podepsaný dispatch, classify se skutečným modelem a výběrem modelů, validate); zbývá C <code>apf-fakes</code> přes service binding (registr, DMS, archiv s chaos módy), D document-host (razítko) s podepsanou obálkou a secrets, retence podle profilu, ISDOC pole deterministicky, ověření skutečné fotky, přílohy e-mailu (krok 4), harness proti farmě. Nezávisí na ničem.</li>
         <li class="todo"><b>2 · M4b farma, krok 3–5:</b> skeleton už běží na bass443 za Access (krok 3 „lite", ověřeno přihlášením i service tokenem); zbývá secrets (`GATEWAY_SIGNING_KEY`, `DMS_SECRET`, `ARCHIVE_SECRET`) s celkem <code>/dispatch</code>, každý celek kroku 2 nasazovat rovnou na farmu, e-mail (Routing + Sending, krok 4), fronta a pád DO (krok 5). Adresy rozhodnuty.</li>
         <li class="todo"><b>3 · Pentest ADR-017</b> nad skutečnými deployables: tři otázky s očekávaným NE (SMTP z document hostu, DMS z email executoru, podpis obálky mimo gateway) plus eskalace práv nepřímými cestami. Jediný MAJOR z posudků.</li>
         <li class="todo"><b>4 · Reálný model</b> za <code>document.classify</code> s golden setem (10 faktur + 3 injection, <code>criticalFields: [documentType]</code>) a <code>AI-EVAL-REG-001</code>, <code>AI-EVAL-ADV-001</code>. Podmínka v1.0.</li>

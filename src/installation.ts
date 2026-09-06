@@ -5,6 +5,24 @@ import type { Identity } from "./platform/gateway.js";
 import type { Policy, PolicySet } from "./platform/policy.js";
 import { compileSchema } from "./platform/schemas.js";
 
+/** One AI model an installation may call. The credential is a reference only; the value comes from the SecretsSource. */
+export interface ModelOption {
+  provider: "workers-ai" | "anthropic" | "fake";
+  model: string;
+  label?: string;
+  credential?: string;
+  /** Where inference may run (provider-specific, e.g. "eu"); a compliance setting, not a tuning knob. */
+  inferenceGeo?: string;
+  /** Who processes the data and how long they keep it: written down per option (NIS2 / ISO 27001 supplier control). */
+  processor?: string;
+}
+
+/** Models per AI capability: the options the operator may pick from and the default. "Never without a model" holds per capability. */
+export interface ModelConfig {
+  default: string;
+  options: Record<string, ModelOption>;
+}
+
 export interface InstallationProfile {
   installation: string;
   description?: string;
@@ -16,6 +34,8 @@ export interface InstallationProfile {
   channels: { apiHost: string | null; intakeAddress: string | null; notifyFrom: string | null; notifyFromName?: string };
   retentionDays: { originals: number; journal: number; audit: number };
   policyRefs: string[];
+  /** capability -> models. Absent only in installations that never call a model (tests with fakes). */
+  models?: Record<string, ModelConfig>;
 }
 
 export interface Installation {
@@ -64,7 +84,36 @@ export function assembleInstallation(profileJson: unknown, policies: Policy[]): 
     }
   }
   if (!identities.has(profile.roles.orchestrator)) throw new Error(`roles.orchestrator ${profile.roles.orchestrator} is not an identity`);
+  for (const [capability, cfg] of Object.entries(profile.models ?? {})) {
+    if (!cfg.options[cfg.default]) throw new Error(`installation ${profile.installation}: default model ${cfg.default} of ${capability} is not among its options`);
+  }
   return { profile, policies: set };
+}
+
+/**
+ * Models of one capability with their credential values resolved. An option whose credential has no value is reported as
+ * unavailable (the operator sees why) but never used; the default must be available, otherwise the wiring stops (fail-closed).
+ */
+export function modelTable(
+  installation: Installation,
+  secrets: SecretsSource,
+  capability: string,
+): { default: string; available: Record<string, ModelOption & { secret?: string }>; unavailable: Record<string, string> } {
+  const cfg = installation.profile.models?.[capability];
+  if (!cfg) throw new Error(`installation ${installation.profile.installation}: no models configured for ${capability} (never without a model, fail-closed)`);
+  const available: Record<string, ModelOption & { secret?: string }> = {};
+  const unavailable: Record<string, string> = {};
+  for (const [key, opt] of Object.entries(cfg.options)) {
+    if (!opt.credential) {
+      available[key] = { ...opt };
+      continue;
+    }
+    const secret = secrets(opt.credential);
+    if (secret === undefined) unavailable[key] = `secret for ${opt.credential} not provided`;
+    else available[key] = { ...opt, secret };
+  }
+  if (!available[cfg.default]) throw new Error(`installation ${installation.profile.installation}: default model ${cfg.default} of ${capability} is unavailable: ${unavailable[cfg.default] ?? "unknown"} (fail-closed)`);
+  return { default: cfg.default, available, unavailable };
 }
 
 /**

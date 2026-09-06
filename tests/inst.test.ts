@@ -4,7 +4,7 @@ import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadInstallationFromDir } from "../src/installation-node.js";
-import { assembleInstallation, credentialTable } from "../src/installation.js";
+import { assembleInstallation, credentialTable, modelTable } from "../src/installation.js";
 import type { Policy } from "../src/platform/policy.js";
 import { parseWorkflowDef } from "../src/platform/workflow.js";
 import { createSlice, FAKE_SECRETS, LOCAL_FAKES, ORCHESTRATOR, TENANT_A, workflowDef } from "./harness/index.js";
@@ -105,5 +105,34 @@ describe("INST-004 every installation in the repo assembles", () => {
       expect(Object.keys(inst.policies).sort()).toEqual([...inst.profile.policyRefs].sort());
       expect(inst.profile.identities.map((i) => i.actorId)).toContain(inst.profile.roles.orchestrator);
     }
+  });
+});
+
+describe("INST-005 models per capability: never without a model, credentials by reference, unavailable options named", () => {
+  const withOption = (key: string, option: Record<string, unknown>) => {
+    const inst = structuredClone(LOCAL_FAKES);
+    const cfg = inst.profile.models?.["document.classify"];
+    if (!cfg) throw new Error("test installation has no classify models");
+    cfg.options[key] = option as never;
+    return inst;
+  };
+
+  it("the test installation has a usable default; an option whose secret is missing is listed as unavailable, never used", () => {
+    const t = modelTable(LOCAL_FAKES, FAKE_SECRETS, "document.classify");
+    expect(Object.keys(t.available)).toContain(t.default);
+    const paid = withOption("paid", { provider: "anthropic", model: "claude-opus-5", credential: "cred:anthropic" });
+    const t2 = modelTable(paid, FAKE_SECRETS, "document.classify");
+    expect(t2.available.paid).toBeUndefined();
+    expect(t2.unavailable.paid).toMatch(/cred:anthropic/);
+  });
+
+  it("a default that is unavailable, a capability without models, or a default outside the options stops the wiring (fail-closed)", () => {
+    const paid = withOption("paid", { provider: "anthropic", model: "claude-opus-5", credential: "cred:anthropic" });
+    (paid.profile.models?.["document.classify"] as { default: string }).default = "paid";
+    expect(() => modelTable(paid, FAKE_SECRETS, "document.classify")).toThrow(/default model paid .* unavailable/);
+    expect(() => modelTable(LOCAL_FAKES, FAKE_SECRETS, "document.validate")).toThrow(/no models configured/);
+    const bad = structuredClone(LOCAL_FAKES.profile);
+    (bad.models?.["document.classify"] as { default: string }).default = "nope";
+    expect(() => assembleInstallation(bad, Object.values(structuredClone(LOCAL_FAKES.policies)))).toThrow(/default model nope/);
   });
 });

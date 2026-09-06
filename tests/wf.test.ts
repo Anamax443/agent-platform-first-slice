@@ -167,7 +167,7 @@ describe("WF-VER-001 running instances pin their workflow version", () => {
     const slice = createSlice();
     const { instance } = await runIntake(slice, { bytes: NEWSLETTER });
     const v2 = new Orchestrator({
-      workflow: { ...slice.workflow, workflowVersion: "2" },
+      workflow: { ...slice.workflow, workflowVersion: String(Number(slice.workflow.workflowVersion) + 1) },
       transport: slice.transport,
       journal: slice.journal,
       review: slice.review,
@@ -176,12 +176,12 @@ describe("WF-VER-001 running instances pin their workflow version", () => {
       actorId: ORCHESTRATOR,
     });
     await expect(v2.run(instance.workflowId)).rejects.toThrow(/WF-VER-001/);
-    expect(slice.journal.get(instance.workflowId)?.workflowVersion).toBe("1");
+    expect(slice.journal.get(instance.workflowId)?.workflowVersion).toBe(slice.workflow.workflowVersion);
 
     const taskId = instance.waiting?.reviewTaskId as string;
     slice.review.decide(taskId, { ...reviewer, decision: "REJECT" });
     const done = await slice.orchestrator.resumeAfterReview(instance.workflowId, taskId);
     expect(done.status).toBe("FAILED");
-    expect(done.workflowVersion).toBe("1");
+    expect(done.workflowVersion).toBe(slice.workflow.workflowVersion);
   });
 });

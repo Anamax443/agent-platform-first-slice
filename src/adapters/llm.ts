@@ -10,6 +10,8 @@ const UNTRUSTED = /<untrusted>([\s\S]*?)<\/untrusted>/;
 /** Deterministic rules classifier over plain text. Also the second signal the validator uses (W4 in MEASUREMENT). */
 export function classifyByRules(text: string): string {
   const t = text.toLowerCase();
+  // ISDOC (Czech e-invoice XML, isdoc.cz): every DocumentType of the standard is an invoice-family document; no model needed to see that.
+  if (/<invoice[^>]*isdoc\.cz\/namespace/.test(t)) return "INVOICE";
   if (/(faktura|invoice|iban|dič|dph|variabilní symbol)/.test(t)) return "INVOICE";
   if (/(smlouva|contract|smluvní strany|agreement)/.test(t)) return "CONTRACT";
   return "OTHER";

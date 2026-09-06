@@ -66,6 +66,37 @@
       "uniqueItems": true,
       "items": { "$ref": "#/$defs/capabilityName" },
       "description": "Capabilities that MUST have a policy in policy/*.json of this installation (fail-closed at load)."
+    },
+    "models": {
+      "type": "object",
+      "description": "AI models per capability: the options the operator may pick from and the default. Never without a model; credentials by reference only; processor and inference geography written down per option (NIS2 / ISO 27001 supplier control).",
+      "propertyNames": { "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)+$" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["default", "options"],
+        "properties": {
+          "default": { "type": "string", "minLength": 1 },
+          "options": {
+            "type": "object",
+            "minProperties": 1,
+            "propertyNames": { "pattern": "^[a-z][a-z0-9-]*$" },
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["provider", "model"],
+              "properties": {
+                "provider": { "type": "string", "enum": ["workers-ai", "anthropic", "fake"] },
+                "model": { "type": "string", "minLength": 1 },
+                "label": { "type": "string", "maxLength": 100 },
+                "credential": { "type": "string", "pattern": "^cred:[a-z][a-z0-9-]*$" },
+                "inferenceGeo": { "type": "string", "pattern": "^[a-z]{2,8}$" },
+                "processor": { "type": "string", "maxLength": 300 }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "$defs": {

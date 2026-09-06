@@ -6,6 +6,12 @@
   "properties": {
     "artifactId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$" },
     "strategy": { "type": "string", "enum": ["llm", "keyword", "human-corrected"] },
+    "model": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "maxLength": 64,
+      "description": "Key of a model from the installation's list, chosen per document; only with strategy llm. Unknown key = STRATEGY_UNKNOWN, never a silent default."
+    },
     "documentType": {
       "type": "string",
       "enum": ["INVOICE", "CONTRACT", "OTHER"],

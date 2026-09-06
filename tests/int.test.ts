@@ -72,7 +72,8 @@ interface Scenario {
 const WORKFLOW_DIRS = readdirSync(join(CONFORMANCE_DIR, "workflows"));
 
 for (const dir of WORKFLOW_DIRS) {
-  const workflow = dir.replace(/\.v\d+$/, "");
+  // conformance/workflows/<name>.v<version> pins the definition version the golden master describes (WF-VER-001).
+  const workflow = dir.replace(/\.v(\d+)$/, "@$1");
   const scenarios = JSON.parse(readFileSync(join(CONFORMANCE_DIR, "workflows", dir, "scenarios.json"), "utf8")) as Scenario[];
   const golden = JSON.parse(readFileSync(join(CONFORMANCE_DIR, "workflows", dir, "golden.json"), "utf8")) as Record<string, Partial<Trace>>;
 

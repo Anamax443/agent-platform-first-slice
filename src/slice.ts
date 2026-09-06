@@ -29,9 +29,9 @@ import { Router } from "./platform/router.js";
 import { generateKeyPair, KeyRegistry, Signer } from "./platform/signing.js";
 import { InProcessTransport } from "./platform/transport.js";
 import type { MessageEnvelope } from "./platform/types.js";
-import { workflowDef } from "./platform/workflow.js";
+import { WORKFLOW_DEFINITIONS, workflowDef } from "./platform/workflow.js";
 
-export { WORKFLOW_DEFINITIONS, workflowDef } from "./platform/workflow.js";
+export { WORKFLOW_DEFINITIONS, WORKFLOW_NAMES, workflowDef } from "./platform/workflow.js";
 
 /** Test default for the fake clock. Not an installation value: real runtimes use SystemClock. */
 export const DEFAULT_CLOCK_START = "2026-09-06T08:00:00Z";
@@ -168,7 +168,17 @@ export function createSlice(installation: Installation, secrets: SecretsSource, 
   const shared = { transport, journal, review, audit, clock, actorId: profile.roles.orchestrator, reconcilers };
   const orchestrator = new Orchestrator({ workflow, ...shared });
   const mailOrchestrator = new Orchestrator({ workflow: mailWorkflow, ...shared });
-  const orchestrators: Record<string, Orchestrator> = { [workflow.workflow]: orchestrator, [mailWorkflow.workflow]: mailOrchestrator };
+  // One orchestrator per definition and version (`name@version`), the latest also under `name`; running instances stay pinned (WF-VER-001).
+  const orchestrators: Record<string, Orchestrator> = {};
+  const byDef = new Map<WorkflowDef, Orchestrator>([[workflow, orchestrator], [mailWorkflow, mailOrchestrator]]);
+  for (const [key, def] of Object.entries(WORKFLOW_DEFINITIONS)) {
+    let orch = byDef.get(def);
+    if (!orch) {
+      orch = new Orchestrator({ workflow: def, ...shared });
+      byDef.set(def, orch);
+    }
+    orchestrators[key] = orch;
+  }
 
   return {
     installation,

@@ -11,15 +11,23 @@ export interface Wired {
   audit: string;
   artifacts: string;
   dispatch: boolean;
+  gateway: string;
+  signing: string;
   hosts: boolean;
   accessJwtVerified: boolean;
 }
+
+/** The installation's models for classify as the operator sees them, or the reason none can be used. */
+export type ModelsInfo =
+  | { default: string; choices: Array<{ key: string; label: string; provider: string; model: string; isDefault: boolean; unavailable?: string }> }
+  | { error: string };
 
 export interface HomeModel {
   installation: string;
   user: string;
   workflows: string[];
   wired: Wired;
+  models: ModelsInfo;
 }
 
 export interface InstanceView {
@@ -58,8 +66,9 @@ const wiredList = (w: Wired): string => {
     row(true, "journal instance", w.journal),
     row(true, "audit", w.audit),
     row(true, "artefakty", w.artifacts),
-    row(w.dispatch, "dispatch: router, podpis obálky, classify a validate", w.dispatch ? "zapojeno" : "zatím ne: každý krok toku skončí DEPENDENCY_UNAVAILABLE"),
-    row(w.hosts, "hosty: document-host (stamp, archive), fakes", w.hosts ? "zapojeno" : "zatím ne"),
+    row(w.dispatch, "dispatch: router a podpis obálky", w.dispatch ? w.gateway : "zatím ne: každý krok toku skončí DEPENDENCY_UNAVAILABLE"),
+    row(!w.signing.startsWith("MISSING"), "podpisový klíč gateway (Ed25519)", w.signing),
+    row(w.hosts, "hosty: document-host (stamp, archive), fakes, mail, e-mail", w.hosts ? "zapojeno" : "zatím ne: kroky stamp a dál skončí DEPENDENCY_UNAVAILABLE"),
     row(w.accessJwtVerified, "ověření Access JWT ve Workeru", w.accessJwtVerified ? "ano" : "zatím jen hlavička od Access"),
   ].join("")}</ul>`;
 };
@@ -70,12 +79,24 @@ export function renderHome(m: HomeModel): string {
     `apf · ${m.installation}`,
     `<header><h1>agent-platform-first-slice · farma <code>${esc(m.installation)}</code></h1><small>${esc(m.user)}</small></header>
 <div class="card"><form method="post" action="/intake" enctype="multipart/form-data">
-<label for="file">Soubor: PDF, fotka (jpg, png, webp), docx, txt, md, eml (do 4 MB)</label>
-<input id="file" type="file" name="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.docx,.txt,.md,.eml,application/pdf,image/*,text/plain,message/rfc822">
+<label for="file">Soubor: PDF, fotka (jpg, png, webp), docx, ISDOC / XML, txt, md, eml (do 4 MB)</label>
+<input id="file" type="file" name="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.docx,.isdoc,.xml,.txt,.md,.eml,application/pdf,image/*,application/xml,text/xml,text/plain,message/rfc822">
 <label for="text">Nebo vložený text (faktura, smlouva, e-mail…)</label>
 <textarea id="text" name="text" placeholder="Když je nahraný soubor, text se nepoužije."></textarea>
 <label for="workflow">Tok</label>
 <select id="workflow" name="workflow">${options}</select>
+<label for="model">Model AI pro posouzení (classify)</label>
+${
+  "error" in m.models
+    ? `<div class="card err"><b>Bez modelu nelze spustit tok.</b> ${esc(m.models.error)}</div>`
+    : `<select id="model" name="model">${m.models.choices
+        .map((c) =>
+          c.unavailable
+            ? `<option value="${esc(c.key)}" disabled>${esc(c.label)} — nedostupné: ${esc(c.unavailable)}</option>`
+            : `<option value="${esc(c.key)}"${c.isDefault ? " selected" : ""}>${esc(c.label)}${c.isDefault ? " (výchozí)" : ""}</option>`,
+        )
+        .join("")}</select><small class="muted">Posouzení dělá vždy model; pravidla jsou jen druhý nezávislý signál ve validaci a záložní strategie. Použitý model a verze promptu jdou do provenance výsledku.</small>`
+}
 <label for="stampText">Text razítka (nepovinné)</label>
 <input id="stampText" type="text" name="stampText" placeholder="VALIDATED INVOICE">
 <button type="submit">Odeslat do toku</button>

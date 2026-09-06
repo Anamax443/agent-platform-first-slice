@@ -1,22 +1,26 @@
-// apf-gateway: intake + one Durable Object per workflow instance. Step 2 of docs/NAVRHOVY-LIST-farma.md, units A and A2:
-// a document handed in through the page (behind Cloudflare Access) becomes an immutable original (text in the object,
-// binary in R2 keyed by sha256), a binary original is turned into a text derivation with provenance by Workers AI
-// (toMarkdown: PDF, images, docx), a workflow instance starts in its own Durable Object (SQLite = journal, audit,
-// artifacts; R2 and D1 get async copies) and the orchestrator runs as far as the farm is wired. Until the router is
-// wired, every step ends as an explicit DEPENDENCY_UNAVAILABLE. The installation (profile + policies) comes from the
-// build-time alias apf:installation and is assembled fail-closed at import. Nothing installation-bound is written here.
+// apf-gateway: intake + one Durable Object per workflow instance, with the platform wired inside the object
+// (units A, A2, B of step 2 in docs/NAVRHOVY-LIST-farma.md): a document handed in through the page (behind Cloudflare
+// Access) becomes an immutable original (text in the object, binary in R2 keyed by sha256), a binary original is turned
+// into a text derivation with provenance by Workers AI (toMarkdown), a workflow instance starts in its own Durable
+// Object (SQLite = journal, audit, artifacts; R2 and D1 get async copies) and the orchestrator dispatches through the
+// signed gateway -> router path: document.classify with the installation's models (chosen per document) and
+// document.validate run here; hosts (stamp, archive, mail, e-mail) stay "not wired" until their units land.
+// The installation (profile + policies) comes from the build-time alias apf:installation and is assembled fail-closed at
+// import. Nothing installation-bound is written here; secrets are named, never valued.
 import { DurableObject } from "cloudflare:workers";
 import { INSTALLATION, installation } from "apf:installation";
+import type { WorkersAiBinding } from "../../../../src/adapters/workers-ai.js";
+import type { SecretsSource } from "../../../../src/installation.js";
 import { sha256Bytes } from "../../../../src/platform/artifacts.js";
 import { iso, SystemClock } from "../../../../src/platform/clock.js";
 import { platformError } from "../../../../src/platform/errors.js";
 import { newId } from "../../../../src/platform/ids.js";
 import { Orchestrator, type WorkflowDef } from "../../../../src/platform/orchestrator.js";
 import { ReviewService } from "../../../../src/platform/review.js";
-import type { DispatchTransport } from "../../../../src/platform/transport.js";
 import type { MessageEnvelope, ResultEnvelope } from "../../../../src/platform/types.js";
-import { WORKFLOW_DEFINITIONS, workflowDef } from "../../../../src/platform/workflow.js";
-import { renderError, renderHome, renderInstance, type InstanceView, type Wired } from "./page.js";
+import { WORKFLOW_NAMES, workflowDef } from "../../../../src/platform/workflow.js";
+import { renderError, renderHome, renderInstance, type InstanceView, type ModelsInfo, type Wired } from "./page.js";
+import { describeModels, wirePlatform, type Wiring } from "./platform-wiring.js";
 import { D1_AUDIT_DDL, DDL, SqliteArtifacts, SqliteAudit, SqliteJournal } from "./store.js";
 
 export interface Env {
@@ -33,19 +37,50 @@ export interface Env {
   SIGNING_KEY_ID: string;
   CONTRACTS_VERSION: string;
   WORKFLOW_DEADLINE_MS: string;
+  /** Secrets (wrangler secret put): values never appear in any file of this repo. */
   GATEWAY_SIGNING_KEY?: string;
+  ANTHROPIC_API_KEY?: string;
+  DMS_SECRET?: string;
+  ARCHIVE_SECRET?: string;
 }
 
+/** Credential references of the profile -> names of the Worker secrets that carry their values. Names only. */
+const SECRET_ENV_BY_REF: Record<string, keyof Env> = {
+  "cred:anthropic": "ANTHROPIC_API_KEY",
+  "cred:dms-stamp": "DMS_SECRET",
+  "cred:archive-store": "ARCHIVE_SECRET",
+};
+
+const secretsOf =
+  (env: Env): SecretsSource =>
+  (ref) => {
+    const name = SECRET_ENV_BY_REF[ref];
+    const value = name ? env[name] : undefined;
+    return typeof value === "string" && value.length > 0 ? value : undefined;
+  };
+
+const signingMode = (env: Env): string => (env.GATEWAY_SIGNING_KEY ? "secret (Ed25519 PKCS8)" : installation.profile.channels.apiHost === null ? "ephemeral (in-process installation)" : "MISSING: set GATEWAY_SIGNING_KEY");
+
 /** What this deployment can do. Read by /version, /health and the page; every unit of step 2 flips one entry. */
-const WIRED: Wired = {
+const wiredOf = (env: Env): Wired => ({
   intake: true,
   extract: "workers-ai toMarkdown (pdf, obrázky, docx) → derivace s provenancí",
   journal: "durable-object-sqlite",
   audit: "durable-object-sqlite + d1",
   artifacts: "durable-object-sqlite + r2",
-  dispatch: false,
+  dispatch: true,
+  gateway: "gateway + router v objektu instance: document.classify (modely z profilu, výběr per dokument), document.validate (registr = fake v procesu do celku C)",
+  signing: signingMode(env),
   hosts: false,
   accessJwtVerified: false,
+});
+
+const modelsOf = (env: Env): ModelsInfo => {
+  try {
+    return describeModels(installation, secretsOf(env));
+  } catch (e) {
+    return { error: String(e) };
+  }
 };
 
 const MAX_TEXT_CHARS = 1_000_000;
@@ -72,11 +107,13 @@ interface IntakeInput {
   original: Original;
   /** Present for a binary original: the text Workers AI derived from it. */
   extraction?: Extraction;
+  /** Key of one of the installation's models (form choice); absent = the installation's default. */
+  model?: string;
   stampText?: string;
 }
 
-/** Until the router is wired every command ends as DEPENDENCY_UNAVAILABLE: an explicit, audited FAILED, never a pretended success. */
-class NotWiredTransport implements DispatchTransport {
+/** A capability no deployable serves yet ends as DEPENDENCY_UNAVAILABLE: an explicit, audited FAILED, never a pretended success. */
+class NotWiredTransport {
   constructor(
     private readonly audit: SqliteAudit,
     private readonly clock: SystemClock,
@@ -116,6 +153,7 @@ export class WorkflowInstance extends DurableObject<Env> {
   private readonly journal: SqliteJournal;
   private readonly audit: SqliteAudit;
   private readonly artifacts: SqliteArtifacts;
+  private wiringCache: Wiring | undefined;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -125,8 +163,26 @@ export class WorkflowInstance extends DurableObject<Env> {
     this.artifacts = new SqliteArtifacts(ctx.storage.sql, this.clock);
   }
 
+  /** Built on first use so that a broken wiring (missing secret) fails the intake with a message, not the object. */
+  private wiring(): Wiring {
+    const notWired = new NotWiredTransport(this.audit, this.clock);
+    this.wiringCache ??= wirePlatform({
+      installation,
+      secrets: secretsOf(this.env),
+      ai: this.env.AI as unknown as WorkersAiBinding,
+      artifacts: this.artifacts,
+      audit: this.audit,
+      clock: this.clock,
+      keyId: this.env.SIGNING_KEY_ID,
+      signingKeyPem: this.env.GATEWAY_SIGNING_KEY,
+      notWired: (m, a) => notWired.dispatch(m, a),
+    });
+    return this.wiringCache;
+  }
+
   async intake(input: IntakeInput): Promise<InstanceView> {
     if (this.journal.list().length > 0) throw new Error(`instance ${input.workflowId} already exists`);
+    const wiring = this.wiring();
     const o = input.original;
     const original =
       o.kind === "text"
@@ -147,9 +203,9 @@ export class WorkflowInstance extends DurableObject<Env> {
       });
     }
 
-    const orchestrator = this.orchestratorFor(workflowDef(input.workflow));
+    const orchestrator = this.orchestratorFor(workflowDef(input.workflow), wiring);
     const inst = orchestrator.start(
-      { tenantId: input.tenantId, artifactId: subject.artifactId, ...(input.stampText ? { stampText: input.stampText } : {}) },
+      { tenantId: input.tenantId, artifactId: subject.artifactId, ...(input.model ? { model: input.model } : {}), ...(input.stampText ? { stampText: input.stampText } : {}) },
       undefined,
       input.workflowId,
     );
@@ -158,7 +214,17 @@ export class WorkflowInstance extends DurableObject<Env> {
       workflowId: inst.workflowId,
       correlationId: inst.correlationId,
       tenantId: inst.tenantId,
-      details: { status: "RUNNING", receivedFrom: input.receivedFrom, originalId: original.artifactId, artifactId: subject.artifactId, sha256: original.sha256, contentType: original.contentType },
+      details: {
+        status: "RUNNING",
+        receivedFrom: input.receivedFrom,
+        originalId: original.artifactId,
+        artifactId: subject.artifactId,
+        sha256: original.sha256,
+        contentType: original.contentType,
+        ...(input.model ? { model: input.model } : {}),
+        signing: wiring.signing,
+        keyId: wiring.keyId,
+      },
     });
     await orchestrator.run(inst.workflowId);
     this.ctx.waitUntil(this.copyOut());
@@ -207,10 +273,10 @@ export class WorkflowInstance extends DurableObject<Env> {
     return { workflowId: inst.workflowId, artifacts: artifacts.length, r2Deleted };
   }
 
-  private orchestratorFor(def: WorkflowDef): Orchestrator {
+  private orchestratorFor(def: WorkflowDef, wiring: Wiring): Orchestrator {
     return new Orchestrator({
       workflow: def,
-      transport: new NotWiredTransport(this.audit, this.clock),
+      transport: wiring.transport,
       journal: this.journal,
       review: new ReviewService(this.clock, this.audit),
       audit: this.audit,
@@ -271,6 +337,9 @@ const BY_EXTENSION: Record<string, string> = {
   eml: "message/rfc822",
   csv: "text/csv",
   json: "application/json",
+  xml: "application/xml",
+  // ISDOC (Czech e-invoice standard, isdoc.cz): structured XML, read by code, never by a model.
+  isdoc: "application/xml",
 };
 
 const contentTypeOf = (file: File): string => {
@@ -278,9 +347,10 @@ const contentTypeOf = (file: File): string => {
   return file.type && file.type !== "application/octet-stream" ? file.type : (BY_EXTENSION[ext] ?? "application/octet-stream");
 };
 
-const isText = (contentType: string): boolean => contentType.startsWith("text/") || contentType === "message/rfc822" || contentType === "application/json";
+const isText = (contentType: string): boolean =>
+  contentType.startsWith("text/") || contentType === "message/rfc822" || contentType === "application/json" || contentType === "application/xml";
 
-const homeModel = (request: Request) => ({ installation: INSTALLATION, user: receivedFrom(request), workflows: Object.keys(WORKFLOW_DEFINITIONS), wired: WIRED });
+const homeModel = (request: Request, env: Env) => ({ installation: INSTALLATION, user: receivedFrom(request), workflows: [...WORKFLOW_NAMES], wired: wiredOf(env), models: modelsOf(env) });
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -296,25 +366,36 @@ export default {
         tenants: installation.profile.tenants.length,
         identities: installation.profile.identities.length,
         policies: Object.keys(installation.policies).length,
-        workflows: Object.keys(WORKFLOW_DEFINITIONS),
+        workflows: WORKFLOW_NAMES,
+        models: modelsOf(env),
         contracts: env.CONTRACTS_VERSION,
         killSwitch: env.KILL_SWITCH === "true",
-        wired: WIRED,
+        wired: wiredOf(env),
       });
     }
-    if (url.pathname === "/health") return Response.json({ ok: true, wired: WIRED });
+    if (url.pathname === "/health") return Response.json({ ok: true, wired: wiredOf(env) });
 
-    if (url.pathname === "/" && request.method === "GET") return html(renderHome(homeModel(request)));
+    if (url.pathname === "/" && request.method === "GET") return html(renderHome(homeModel(request, env)));
 
     if (url.pathname === "/intake" && request.method === "POST") {
       if (env.KILL_SWITCH === "true") return Response.json({ error: "KILL_SWITCH" }, { status: 503 });
       const form = await request.formData();
       const workflow = String(form.get("workflow") ?? "document-intake");
-      if (!(workflow in WORKFLOW_DEFINITIONS)) return Response.json({ error: "UNKNOWN_WORKFLOW", workflow }, { status: 400 });
+      if (!WORKFLOW_NAMES.includes(workflow)) return Response.json({ error: "UNKNOWN_WORKFLOW", workflow }, { status: 400 });
       const stampText = String(form.get("stampText") ?? "").trim();
       const tenantId = intakeTenant();
       const from = receivedFrom(request);
       const file = form.get("file");
+
+      // The model is a choice among the installation's options; an unavailable or unknown key is refused here, not silently replaced.
+      const modelKey = String(form.get("model") ?? "").trim();
+      const models = modelsOf(env);
+      if ("error" in models) return html(renderError("Modely nejsou k dispozici", "Instalace nemá použitelný výchozí model; tok se nespustí (nikdy bez modelu).", { error: models.error }), 503);
+      if (modelKey) {
+        const choice = models.choices.find((c) => c.key === modelKey);
+        if (!choice) return html(renderError("Neznámý model", "Klíč modelu není v seznamu instalace.", { model: modelKey }), 400);
+        if (choice.unavailable) return html(renderError("Model není dostupný", choice.unavailable, { model: modelKey }), 400);
+      }
 
       let original: Original;
       let extraction: Extraction | undefined;
@@ -348,7 +429,7 @@ export default {
         }
       } else {
         const text = String(form.get("text") ?? "");
-        if (!text.trim()) return html(renderHome(homeModel(request)), 400);
+        if (!text.trim()) return html(renderHome(homeModel(request, env)), 400);
         original = { kind: "text", bytes: text, contentType: "text/plain" };
       }
       if (original.kind === "text" && original.bytes.length > MAX_TEXT_CHARS) return Response.json({ error: "DOCUMENT_TOO_LARGE", max: MAX_TEXT_CHARS }, { status: 413 });
@@ -356,7 +437,20 @@ export default {
 
       const workflowId = newId("wf");
       const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(workflowId));
-      await stub.intake({ workflowId, workflow, tenantId, receivedFrom: from, original, ...(extraction ? { extraction } : {}), ...(stampText ? { stampText } : {}) });
+      try {
+        await stub.intake({
+          workflowId,
+          workflow,
+          tenantId,
+          receivedFrom: from,
+          original,
+          ...(extraction ? { extraction } : {}),
+          ...(modelKey ? { model: modelKey } : {}),
+          ...(stampText ? { stampText } : {}),
+        });
+      } catch (e) {
+        return html(renderError("Tok se nespustil", "Zapojení platformy v objektu instance selhalo (fail-closed); originál zůstal uložený.", { workflowId, error: String(e) }), 500);
+      }
       return Response.redirect(new URL(`/workflow/${workflowId}`, url).toString(), 303);
     }
 
@@ -386,7 +480,7 @@ export default {
     }
 
     if (url.pathname === "/dispatch") {
-      return Response.json({ error: "NOT_WIRED", message: "apf-gateway: router and signed dispatch are the next unit of step 2 (NAVRHOVY-LIST-farma.md)" }, { status: 501 });
+      return Response.json({ error: "NOT_WIRED", message: "apf-gateway: the HTTP /dispatch endpoint for remote callers (harness, hosts) is a later unit; the page and the orchestrator dispatch inside the instance object" }, { status: 501 });
     }
     return Response.json({ error: "NOT_FOUND" }, { status: 404 });
   },

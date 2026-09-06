@@ -93,8 +93,9 @@ export function checkFile(relPath, source, values = new Map()) {
       const ok = spec.startsWith("./") || spec === "../../platform/api.js" || /^\.\.\/\.\.\/adapters\/[a-z-]+\.js$/.test(spec);
       if (!ok) out.push(`${p}: forbidden import "${spec}" (components may import ./, platform/api, adapters/*; no node:*)`);
     } else if (inAdapters) {
-      const ok = spec.startsWith("./") || spec === "../platform/errors.js" || spec.startsWith("node:");
-      if (!ok) out.push(`${p}: adapter imports "${spec}" (adapters know platform/errors only)`);
+      // Adapters are the boundary to external systems: vendor packages (bare specifiers) belong here and nowhere else.
+      const ok = spec.startsWith("./") || spec === "../platform/errors.js" || spec.startsWith("node:") || !spec.startsWith(".");
+      if (!ok) out.push(`${p}: adapter imports "${spec}" (adapters know platform/errors, node:* and vendor packages only)`);
     } else if (inPlatform) {
       if (spec.startsWith("../components/") || spec.startsWith("../adapters/")) out.push(`${p}: platform imports component or adapter "${spec}"`);
     }

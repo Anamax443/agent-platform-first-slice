@@ -1,5 +1,9 @@
 {
   "$comment": "Per-deployable overlay merged onto deploy/cloudflare/<deployable>/wrangler.jsonc by scripts/farm-config.mjs. Everything here is installation-specific (routes, addresses, ids of resources created in the account bass443 on 2026-09-06); the base configs stay free of it and keep placeholder ids. The generator itself adds vars.INSTALLATION and the apf:installation alias, so only what differs from the base belongs here. Arrays replace the base array whole, so a binding list must be complete.",
+  "$signingPublicKeys": {
+    "$comment": "Public keys of the gateway signing key(s). The private key lives only as the Worker secret GATEWAY_SIGNING_KEY (set 2026-09-06, never in a file). Hosts get this map as SIGNING_PUBLIC_KEYS when they are wired (unit D); rotation = new key id here + new secret.",
+    "k1": { "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAhNvowyNPhlEB3A/yZF7uSePNNL1ukLeVpPQUik7oo7A=\n-----END PUBLIC KEY-----", "validFrom": "2026-09-06T00:00:00Z" }
+  },
   "apf-gateway": {
     "routes": [{ "pattern": "apf.maxferit.cz", "custom_domain": true }],
     "d1_databases": [{ "binding": "AUDIT", "database_name": "apf-audit", "database_id": "ee8b714e-1574-406a-99ce-f5c0bb83055d" }]

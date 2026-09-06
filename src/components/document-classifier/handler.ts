@@ -23,6 +23,8 @@ interface Input {
   artifactId: string;
   strategy?: string;
   documentType?: string;
+  /** Model key from the installation's list, chosen per document (form). Only meaningful for the "llm" strategy. */
+  model?: string;
 }
 
 const TAG = /<\/?untrusted>/gi;
@@ -65,15 +67,18 @@ export function createDocumentClassifier(deps: ClassifierDeps): Handler {
       return { status: "SUCCEEDED", payload: { artifactId: art.artifactId, sha256: art.sha256, documentType }, provenance: base };
     }
 
-    const model = deps.models[strategy];
-    if (!model) return failed(capabilityError("STRATEGY_UNKNOWN", "VALIDATION", false, "no model configured for strategy", { strategy }));
+    // The "llm" strategy may name one of the installation's models; an unknown key is a validation failure, never a silent default.
+    const modelKey = strategy === "llm" && p.model ? p.model : strategy;
+    const model = deps.models[modelKey];
+    if (!model) return failed(capabilityError("STRATEGY_UNKNOWN", "VALIDATION", false, "no model configured for strategy", { strategy, ...(p.model ? { model: p.model } : {}) }));
 
     let raw: string;
     try {
       raw = await withTimeout(model.complete(buildPrompt(art.bytes, DOCUMENT_TYPES)), deps.modelTimeoutMs ?? 5_000);
     } catch (e) {
       if (e instanceof DependencyTimeout) return failed(platformError("DEPENDENCY_TIMEOUT", "model did not answer before the deadline", { strategy, ms: e.ms }));
-      return failed(capabilityError("MODEL_UNAVAILABLE", "DEPENDENCY", true, "model call failed", { strategy }));
+      // The reason is evidence for the operator (wrong model id, quota, network); truncated, never the document.
+      return failed(capabilityError("MODEL_UNAVAILABLE", "DEPENDENCY", true, "model call failed", { strategy, modelId: model.modelId, reason: String(e).slice(0, 200) }));
     }
 
     // F2: the model answer is data. Only an exact allowlist member becomes a value; everything else is a QUALITY failure
