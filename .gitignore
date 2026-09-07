@@ -32,3 +32,6 @@ __pycache__/
 .DS_Store
 Thumbs.db
 *.log
+
+# === Ruční testovací dokumenty (ne fixtures, ne conformance) ===
+testdata/
