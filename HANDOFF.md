@@ -2,6 +2,26 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-07 (27) — W23 nalezen a opraven: audit relay `document-host → gateway` ztrácel záznamy potichu (otevřené pozorování ze (25) dořešeno)
+
+**Pokyn vlastníka:** vrátit se k nedořešenému pozorování ze (25) („Canceled" u `POST .../audit`), s výslovným požadavkem na „silně stabilní, takřka neprůstřelné prostředí" — tedy řešit to jako skutečnou opravu, ne jen zapsat jako otevřenou položku.
+
+**Reprodukce (jiný počítač, čerstvý `wrangler login` už autentizovaný jako `bass443@gmail.com`):** `wrangler tail` puštěný souběžně na `apf-gateway` i `apf-document-host`, vlastník poslal jeden reálný dokument (svoji fakturu TS HYDRO) přes `https://apf.maxferit.cz/`. Nález potvrzen ze tří nezávislých zdrojů najednou: (a) `apf-document-host` zalogoval tři `audit.append()` pro `document.stamp` (`dispatch`, `write-intent`, `write-done`); (b) `apf-gateway` zaznamenal tři odpovídající `POST https://apf-gateway.internal/audit` se stavem **`Canceled`**; (c) skutečný JSON instance (`/workflow/<id>.json`) měl `audit[]` bez jediného z těchto tří záznamů — přeskakoval rovnou z `dispatch document.validate` na finální `state SUCCEEDED`. `document.stamp` sám proběhl v pořádku (`stampedArtifactId`, `dmsRef` v journalu DO), ale auditní stopa v D1 pro tenhle write byla **trvale prázdná**, ne jen opožděná. V `RelayAudit.append()` má `.then()`/`.catch()` vlastní `console.error` na chybu — ani jeden se nespustil, což znamená, že isolát `apf-document-host` byl recyklován dřív, než `ctx.waitUntil` slib vůbec doběhl k rozhodnutí. Přesný opak toho, co popsal záznam (25) („/audit.json obsahoval vše") — nespolehlivé, ne stabilně rozbité ani stabilně funkční.
+
+**Zapsáno jako W23 do `docs/MEASUREMENT.md`** (tabulka nálezů + samostatný odstavec s opravou).
+
+**Oprava:** `RelayAudit` přesunuta z `apf-document-host/src/index.ts` do vlastního `deploy/cloudflare/apf-document-host/src/relay-audit.ts` (mj. proto, aby šla přímo importovat do testu bez wrangler-only aliasu `apf:installation`, který se přes vitest nedá resolvovat — `Fetcher`/`ExecutionContext` nahrazeny strukturálními rozhraními `GatewayFetcher`/`WaitUntilContext`, aby soubor prošel typecheckem pod root `tsconfig.json` i pod `deploy/cloudflare/tsconfig.json`). `append()` zůstává synchronní (`AuditTrail` kontrakt, FOUNDATION-core §7, beze změny), ale eviduje každý relay do `pending[]`; nová `flush(): Promise<void>` je čeká. `/dispatch` handler volá `await audit.flush()` těsně před odpovědí v obou větvích (úspěch i `catch`) — odpověď se teď nikdy nevrátí, dokud audit doopravdy nedorazí (nebo viditelně neselže). `ctx.waitUntil` zůstává jako záloha.
+
+**Nový test `DH-AUDIT-RELAY-001`** (`tests/dh.test.ts`): fake `Fetcher`/`ExecutionContext` s ručně řízeným `resolve`; dokazuje, že `flush()` nevrátí řízení, dokud jsou relaye rozjeté, a teprve po jejich vyřešení ano.
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare/tsconfig.json` přes `farm:check`), **232 testů / 13 souborů**, `npm run arch`, `npm run farm:check`. `npm ci` proběhlo poprvé na tomhle PC (node_modules chyběly).
+
+**Vedlejší poznámka k severce:** stejná session založila `docs/SEVERKA.md` (živý dokument dlouhodobé vize centrálního bloku — Registry, Planner, Policy/Risk, Marketplace, Memory, event-driven, scheduler, lifecycle) a opravila předchozí mylný předpoklad, že multi-tenant je na `farm-bass443` živý bug: `NAVRHOVY-LIST-farma.md` řekl `CLOUD_SINGLE_TENANT`, `tenant-7` je jen protistrana v testech.
+
+**Nasazeno na farmu:** ne, zatím jen v repu — čeká na rozhodnutí vlastníka. Testovací instance s vlastníkovou reálnou fakturou (`wf-mtr1o5es00173c82a`) zůstává na farmě, čeká na smazání přes tlačítko „Smazat" na stránce instance (ne přes API).
+
+**Další:** nasadit W23 opravu na `farm-bass443` a ověřit živě (nový test dokument + `wrangler tail` na obou Workerech, tentokrát očekávat `Ok` místo `Canceled`), pak pokračovat „Pořadí dalších celků" z (19)/(23)/(25): retence podle profilu → krok 8 formáty faktur → krok 4 e-mail → harness proti farmě → krok 5 fronta → krok 6 pentest → krok 7 reálný model AI-EVAL.
+
 ## 2026-09-07 (26) — Jméno platformy: Erwin; směr pro admin konzoli farmy (bez kódu)
 
 **Pokyn vlastníka:** odklon od ladění celku D2 (viz (25), otevřené pozorování `waitUntil`/„Canceled" zůstává nedořešené beze změny) k pojmenování platformy a k tomu, co bude potřeba, až farma poroste za jeden dokumentový tok.

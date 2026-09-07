@@ -19,8 +19,7 @@ import * as host from "../../../../src/components/document-executor-host/stamp-h
 import { credentialTable, type SecretsSource } from "../../../../src/installation.js";
 import type { Artifact, ArtifactWriter } from "../../../../src/platform/artifacts.js";
 import { sha256 } from "../../../../src/platform/artifacts.js";
-import type { AuditRecord, AuditTrail } from "../../../../src/platform/audit.js";
-import { iso, SystemClock, type Clock } from "../../../../src/platform/clock.js";
+import { SystemClock } from "../../../../src/platform/clock.js";
 import { CredentialResolver } from "../../../../src/platform/credentials.js";
 import { ExecutorHost } from "../../../../src/platform/executor-host.js";
 import { newId } from "../../../../src/platform/ids.js";
@@ -29,6 +28,7 @@ import { Router } from "../../../../src/platform/router.js";
 import { KeyRegistry } from "../../../../src/platform/signing.js";
 import { transportFailure } from "../../../../src/platform/transport.js";
 import type { DispatchEnvelope } from "../../../../src/platform/types.js";
+import { GATEWAY_ORIGIN, RelayAudit } from "./relay-audit.js";
 
 export interface Env {
   ARTIFACTS: R2Bucket;
@@ -45,7 +45,6 @@ export interface Env {
   ARCHIVE_SECRET?: string;
 }
 
-const GATEWAY_ORIGIN = "https://apf-gateway.internal";
 const SECRET_ENV_BY_REF: Record<string, keyof Env> = { "cred:dms-stamp": "DMS_SECRET", "cred:archive-store": "ARCHIVE_SECRET" };
 
 const secretsOf =
@@ -75,40 +74,6 @@ function keyRegistryFrom(json: string): { registry: KeyRegistry; keyIds: string[
     }
   }
   return { registry, keyIds };
-}
-
-/** Appends locally (for this request's evidence) and relays to the gateway's shared trail; never blocks the caller. */
-class RelayAudit implements AuditTrail {
-  private readonly records: AuditRecord[] = [];
-  constructor(
-    private readonly clock: Clock,
-    private readonly gateway: Fetcher,
-    private readonly ctx: ExecutionContext,
-  ) {}
-
-  append(record: Omit<AuditRecord, "auditId" | "at">): AuditRecord {
-    const full: AuditRecord = { auditId: newId("aud"), at: iso(this.clock.now()), ...record };
-    this.records.push(full);
-    console.log(`[apf-document-host] ${full.kind} ${full.capability ?? ""} workflowId=${full.workflowId ?? "-"} correlationId=${full.correlationId ?? "-"} :: ${JSON.stringify(full.details ?? {})}`);
-    this.ctx.waitUntil(
-      this.gateway
-        .fetch(`${GATEWAY_ORIGIN}/audit`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(full) })
-        .then((res) => {
-          if (!res.ok) console.error(`[apf-document-host] audit relay to gateway answered HTTP ${res.status} for ${full.auditId}`);
-        })
-        .catch((e) => console.error(`[apf-document-host] audit relay to gateway unreachable for ${full.auditId}: ${e instanceof Error ? e.message : String(e)}`)),
-    );
-    return full;
-  }
-  all(): readonly AuditRecord[] {
-    return [...this.records];
-  }
-  byKind(kind: AuditRecord["kind"]): AuditRecord[] {
-    return this.records.filter((r) => r.kind === kind);
-  }
-  byCorrelation(correlationId: string): AuditRecord[] {
-    return this.records.filter((r) => r.correlationId === correlationId);
-  }
 }
 
 interface FetchedArtifact {
@@ -244,9 +209,11 @@ export default {
 
         const result = await router.route(envelope);
         console.log(`[apf-document-host] /dispatch done ${envelope.message.capability} status=${result.status} correlationId=${envelope.message.correlationId} (${Date.now() - t0}ms)`);
+        await audit.flush();
         return Response.json(result);
       } catch (e) {
         console.error(`[apf-document-host] /dispatch wiring threw for ${envelope.message.capability} correlationId=${envelope.message.correlationId} (${Date.now() - t0}ms): ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
+        await audit.flush();
         return Response.json(transportFailure(envelope.message, "DEPENDENCY_UNAVAILABLE", `apf-document-host wiring failed: ${e instanceof Error ? e.message : String(e)}`));
       }
     }

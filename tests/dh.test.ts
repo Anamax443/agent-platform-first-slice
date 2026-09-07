@@ -22,6 +22,7 @@ import type { MessageEnvelope } from "../src/platform/types.js";
 import * as archiveHandler from "../src/components/document-executor-host/archive-handler.js";
 import * as host from "../src/components/document-executor-host/stamp-handler.js";
 import { world } from "./harness/fakes-world.js";
+import { RelayAudit } from "../deploy/cloudflare/apf-document-host/src/relay-audit.js";
 
 const START = "2026-09-06T08:00:00Z";
 
@@ -269,5 +270,38 @@ describe("DH-TRANSPORT-001 RemoteHostTransport never throws (found running celek
     const r3 = await garbage.dispatch(message, "svc-test");
     expect(r3.status).toBe("FAILED");
     expect(r3.error?.code).toBe("DEPENDENCY_UNAVAILABLE");
+  });
+});
+
+describe("DH-AUDIT-RELAY-001 RelayAudit.flush() never lets the caller move on while a relay POST is still in flight (found live on farm-bass443 2026-09-07: ctx.waitUntil alone silently lost 3 document.stamp audit records, no error logged anywhere)", () => {
+  it("flush() does not resolve until every append()'s relay fetch has settled", async () => {
+    const settle: Array<() => void> = [];
+    const posted: unknown[] = [];
+    const fakeGateway = {
+      fetch: (_url: string, init?: RequestInit) => {
+        posted.push(init?.body ? JSON.parse(String(init.body)) : undefined);
+        return new Promise<Response>((resolve) => settle.push(() => resolve(new Response(null, { status: 204 }))));
+      },
+    };
+    const waited: Promise<unknown>[] = [];
+    const fakeCtx = { waitUntil: (p: Promise<unknown>) => waited.push(p) };
+
+    const audit = new RelayAudit(new FakeClock(START), fakeGateway, fakeCtx);
+    audit.append({ kind: "write-intent", workflowId: "wf-1", correlationId: "cor-1", capability: "document.stamp", details: {} });
+    audit.append({ kind: "write-done", workflowId: "wf-1", correlationId: "cor-1", capability: "document.stamp", details: {} });
+    expect(posted).toHaveLength(2); // both relays started immediately, append() itself never blocks
+    expect(waited).toHaveLength(2); // ctx.waitUntil still gets them too, as a backstop
+
+    let flushed = false;
+    const flushDone = audit.flush().then(() => {
+      flushed = true;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(flushed).toBe(false); // must NOT resolve while a relay is still pending — this is exactly what ctx.waitUntil alone failed to guarantee
+
+    settle.forEach((resolve) => resolve());
+    await flushDone;
+    expect(flushed).toBe(true);
   });
 });
