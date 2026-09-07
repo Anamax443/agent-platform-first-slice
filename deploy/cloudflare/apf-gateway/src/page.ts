@@ -201,8 +201,20 @@ export function renderFarm(m: FarmModel): string {
     })
     .join("");
 
-  const bodyHtml = `<div class="ui" data-layout="side-nav" data-style="saas-modern">
+  const icon = (paths: string): string => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
+  const ICONS = {
+    menu: icon('<line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/>'),
+    prehled: icon('<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>'),
+    kravicky: icon('<rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/>'),
+    instance: icon('<line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="14" y2="18"/>'),
+    denik: icon('<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/>'),
+    novy: icon('<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>'),
+    json: icon('<polyline points="8 6 3 12 8 18"/><polyline points="16 6 21 12 16 18"/>'),
+  };
+
+  const bodyHtml = `<div class="ui" id="ui" data-layout="side-nav" data-style="saas-modern">
   <div class="p-title">
+    <button type="button" class="p-titlebtn" id="railToggle" title="Sbalit/rozbalit menu" aria-label="Sbalit/rozbalit menu">${ICONS.menu}</button>
     <span class="p-brand"><span class="mark"></span>Farmář<span class="sub">— farma ${esc(m.installation)}</span></span>
     <span class="vsep"></span>
     <span class="p-field">podpis ${esc(m.gatewaySigning)}</span>
@@ -211,44 +223,52 @@ export function renderFarm(m: FarmModel): string {
   </div>
 
   <nav class="p-nav">
-    <a class="p-navitem" href="#prehled" aria-current="true"><span class="lbl">Přehled</span></a>
-    <a class="p-navitem" href="#kravicky"><span class="lbl">Kravičky</span></a>
-    <a class="p-navitem" href="#instance"><span class="lbl">Poslední instance</span></a>
-    <a class="p-navitem" href="#denik"><span class="lbl">Deník</span></a>
+    <a class="p-navitem" href="#prehled" data-view="prehled" title="Přehled">${ICONS.prehled}<span class="lbl">Přehled</span></a>
+    <a class="p-navitem" href="#kravicky" data-view="kravicky" title="Kravičky">${ICONS.kravicky}<span class="lbl">Kravičky</span></a>
+    <a class="p-navitem" href="#instance" data-view="instance" title="Poslední instance">${ICONS.instance}<span class="lbl">Poslední instance</span></a>
+    <a class="p-navitem" href="#denik" data-view="denik" title="Deník">${ICONS.denik}<span class="lbl">Deník</span></a>
     <div class="p-navsec">Farma</div>
-    <a class="p-navitem" href="/"><span class="lbl">Nový dokument</span></a>
-    <a class="p-navitem" href="/audit.json"><span class="lbl">/audit.json</span></a>
+    <a class="p-navitem" href="/" title="Nový dokument">${ICONS.novy}<span class="lbl">Nový dokument</span></a>
+    <a class="p-navitem" href="/audit.json" title="/audit.json">${ICONS.json}<span class="lbl">/audit.json</span></a>
   </nav>
 
   <main class="p-main">
-    <div class="p-panehead" id="prehled"><span>Přehled</span><span class="n">farma ${esc(m.installation)}</span></div>
-    <div class="p-toolbar">
-      <span class="meta">instalace ${esc(m.installation)}</span>
-      <span class="vsep"></span>
-      <span class="meta">podpis ${esc(m.gatewaySigning)}</span>
-      <span class="vsep"></span>
-      <span class="meta">${up}/${m.deployables.length} Workerů OK · ${m.instances.length} instancí · ${m.auditLog.length} v deníku</span>
-      <span class="grow"></span>
-      <a class="p-btn" href="/">Nový dokument</a>
+    <div id="view-prehled">
+      <div class="p-panehead"><span>Přehled</span><span class="n">farma ${esc(m.installation)}</span></div>
+      <div class="p-toolbar">
+        <span class="meta">instalace ${esc(m.installation)}</span>
+        <span class="vsep"></span>
+        <span class="meta">podpis ${esc(m.gatewaySigning)}</span>
+        <span class="vsep"></span>
+        <span class="meta">${up}/${m.deployables.length} Workerů OK · ${m.instances.length} instancí · ${m.auditLog.length} v deníku</span>
+        <span class="grow"></span>
+        <a class="p-btn" href="/">Nový dokument</a>
+      </div>
     </div>
 
-    <div class="p-panehead" id="kravicky"><span>Kravičky</span><span class="n">${m.deployables.length} Workerů</span></div>
-    <div class="p-gridwrap"><table class="p-table">
-      <thead><tr><th>Worker</th><th class="c-state">Stav</th><th>Isolation</th><th>Detail</th></tr></thead>
-      <tbody>${kravickyRows}</tbody>
-    </table></div>
+    <div id="view-kravicky" hidden>
+      <div class="p-panehead"><span>Kravičky</span><span class="n">${m.deployables.length} Workerů</span></div>
+      <div class="p-gridwrap"><table class="p-table">
+        <thead><tr><th>Worker</th><th class="c-state">Stav</th><th>Isolation</th><th>Detail</th></tr></thead>
+        <tbody>${kravickyRows}</tbody>
+      </table></div>
+    </div>
 
-    <div class="p-panehead" id="instance"><span>Poslední instance</span><span class="n">${m.instances.length}</span></div>
-    <div class="p-gridwrap"><table class="p-table">
-      <thead><tr><th>Krok</th><th>Capability</th><th class="c-state">Stav</th><th>Pokus</th><th>Výsledek</th></tr></thead>
-      <tbody>${m.instances.length ? instanceRows : '<tr><td colspan="5" class="dim">zatím žádná</td></tr>'}</tbody>
-    </table></div>
+    <div id="view-instance" hidden>
+      <div class="p-panehead"><span>Poslední instance</span><span class="n">${m.instances.length}</span></div>
+      <div class="p-gridwrap"><table class="p-table">
+        <thead><tr><th>Krok</th><th>Capability</th><th class="c-state">Stav</th><th>Pokus</th><th>Výsledek</th></tr></thead>
+        <tbody>${m.instances.length ? instanceRows : '<tr><td colspan="5" class="dim">zatím žádná</td></tr>'}</tbody>
+      </table></div>
+    </div>
 
-    <div class="p-panehead" id="denik"><span>Deník</span><span class="n">posledních ${m.auditLog.length}</span></div>
-    <div class="p-gridwrap"><table class="p-table">
-      <thead><tr><th class="c-date">Čas</th><th>Druh</th><th>Instance</th><th>Capability</th><th>Detail</th></tr></thead>
-      <tbody>${denikRows}</tbody>
-    </table></div>
+    <div id="view-denik" hidden>
+      <div class="p-panehead"><span>Deník</span><span class="n">posledních ${m.auditLog.length}</span></div>
+      <div class="p-gridwrap"><table class="p-table">
+        <thead><tr><th class="c-date">Čas</th><th>Druh</th><th>Instance</th><th>Capability</th><th>Detail</th></tr></thead>
+        <tbody>${denikRows}</tbody>
+      </table></div>
+    </div>
   </main>
 
   <footer class="p-status">
@@ -265,12 +285,42 @@ export function renderFarm(m: FarmModel): string {
 html,body{height:100%;margin:0}
 .ui{height:100vh}
 .ui a{color:inherit;text-decoration:none}
-.ui a:hover{text-decoration:underline}
+.ui a:hover:not(.p-navitem):not(.p-btn){text-decoration:underline}
 .ui code{font-family:var(--font-data);background:var(--bordersoft);padding:.05em .35em;border-radius:4px;font-size:.92em}
+.ui .p-titlebtn{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex:none;border:0;border-radius:var(--radius);background:none;color:var(--dim);cursor:pointer}
+.ui .p-titlebtn:hover{background:var(--hover);color:var(--text)}
 ${BANK_UI_CSS}
 ${BANK_SAAS_MODERN_CSS}
 </style>
-</head><body>${bodyHtml}</body></html>`;
+</head><body>${bodyHtml}
+<script>
+(function () {
+  var VIEWS = ["prehled", "kravicky", "instance", "denik"];
+  function applyView() {
+    var v = (location.hash || "#prehled").slice(1);
+    if (VIEWS.indexOf(v) === -1) v = "prehled";
+    VIEWS.forEach(function (id) {
+      var el = document.getElementById("view-" + id);
+      if (el) el.hidden = id !== v;
+    });
+    document.querySelectorAll(".p-nav a[data-view]").forEach(function (a) {
+      a.setAttribute("aria-current", a.dataset.view === v ? "true" : "false");
+    });
+  }
+  window.addEventListener("hashchange", applyView);
+  applyView();
+
+  var ui = document.getElementById("ui");
+  var rail = document.getElementById("railToggle");
+  function setRail(on) {
+    ui.dataset.layout = on ? "rail" : "side-nav";
+    try { localStorage.setItem("farm-rail", on ? "1" : "0"); } catch (e) {}
+  }
+  if (rail) rail.addEventListener("click", function () { setRail(ui.dataset.layout !== "rail"); });
+  try { if (localStorage.getItem("farm-rail") === "1") setRail(true); } catch (e) {}
+})();
+</script>
+</body></html>`;
 }
 
 export function renderError(title: string, message: string, details: Record<string, unknown> = {}): string {

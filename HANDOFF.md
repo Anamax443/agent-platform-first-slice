@@ -2,6 +2,16 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-07 (31) — `/farm`: sekce jako přepínané panely (ne jedna rolovací stránka) + rail toggle
+
+**Pokyn vlastníka:** čekal, že položky bočního menu ((30) je udělalo jako kotvy `#kravicky` atd. na jedné dlouhé stránce) otevřou obsah **vedle** menu, menu zůstává. Zmínil i možnost sbalit menu do úzkého režimu.
+
+**Oprava:** čtyři sekce (`view-prehled`, `view-kravicky`, `view-instance`, `view-denik`) jsou teď samostatné `<div>` v `.p-main`, přepínané přes `hidden` atribut (banka ho už stylovala — `.ui [hidden]{display:none!important}`). Malý vanilla JS (žádný framework, žádné CDN) čte `location.hash`, ukáže odpovídající sekci, nastaví `aria-current` na aktivní položce menu; poslouchá `hashchange`, takže funguje i tlačítko zpět v prohlížeči. Bez JS zůstane vidět jen Přehled — přijatelná degradace pro interní nástroj.
+
+**Sbalit menu:** banka už měla hotové `data-layout="rail"` (úzký 44px panel, jen ikony). Přidáno tlačítko (☰) v titulní liště, přepíná `data-layout` mezi `side-nav`/`rail` a pamatuje si volbu v `localStorage`. Položky menu dostaly jednoduché tahové SVG ikony (2×2 mřížka, stoh, seznam, hodiny…) podle §6 předpisu — bez nich by v rail režimu zbyly prázdné řádky.
+
+**Brány zelené:** typecheck, 232 testů, arch, farm:check, vizuálně ověřeno přes `wrangler dev` + curl (4 view kontejnery, script přítomen). Nasazeno na `farm-bass443`.
+
 ## 2026-09-07 (30) — `/farm` na banku Interface-Par (saas-modern · side-nav) + deník
 
 **Pokyn vlastníka:** vložil závazný předpis vzhledu (`saas-modern` · `side-nav`) z vlastního katalogu `Anamax443/Interface-Par` a požádal, ať `/farm` použije tenhle vzhled a přidá zobrazení deníku (sdíleného auditu).
