@@ -165,6 +165,23 @@ const STATE_CLASS: Record<string, string> = {
 const stateBadge = (label: string): string => `<span class="${STATE_CLASS[label] ?? ""}"><span class="p-state"><span class="p-dot"></span>${esc(label)}</span></span>`;
 const stateTd = (label: string): string => `<td class="c-state">${stateBadge(label)}</td>`;
 
+/** What each "kravička" actually does, in plain Czech — the raw health table alone doesn't say. */
+const DEPLOYABLE_ROLE: Record<string, string> = {
+  "apf-gateway": "Přijme dokument, rozpozná typ (AI) a řídí celý průběh",
+  "apf-document-host": "Orazítkuje a archivuje dokument po ověření",
+  "apf-email-executor": "Odesílá e-mailová upozornění",
+  "apf-mail-ingest": "Přijímá dokumenty poslané e-mailem",
+  "apf-fakes": "Testovací dvojník DMS/registru/archivu — nahrazuje skutečné externí systémy při vývoji a testech",
+};
+
+/** Isolation class → plain label + hover explanation (LOGICAL/PRINCIPAL are jargon on their own). */
+const isolationLabel = (raw: string): { label: string; title?: string } => {
+  if (raw === "self") return { label: "gateway", title: "toto je samotná gateway, hlásí vlastní zdraví" };
+  if (raw === "LOGICAL") return { label: "sdílený proces", title: "LOGICAL: běží ve stejném Workeru jako další úkol, ale s odděleným přístupovým klíčem" };
+  if (raw === "PRINCIPAL") return { label: "vlastní proces", title: "PRINCIPAL: běží zcela odděleně, s vlastním přístupovým klíčem — nejsilnější izolace" };
+  return { label: raw };
+};
+
 /**
  * Farmář na banku Interface-Par (Anamax443/Interface-Par, styl saas-modern, rozvržení side-nav — viz
  * docs/UI/predpis-saas-modern-side-nav.txt). Vlastní stránka, ne shell() — jiný vizuální jazyk než zbytek gatewaye.
@@ -177,8 +194,10 @@ export function renderFarm(m: FarmModel): string {
     .map((d) => {
       const b = (d.body ?? {}) as Record<string, unknown>;
       const caps = Array.isArray(b.capabilities) ? (b.capabilities as unknown[]).join(", ") : undefined;
-      const detail = caps ?? (b.wired === false ? "not wired" : b.error ? String(b.error) : "");
-      return `<tr><td><b>${esc(d.name)}</b></td>${stateTd(d.ok ? "OK" : "DOWN")}<td>${esc(b.isolation ?? "")}</td><td class="dim">${esc(detail)}</td></tr>`;
+      const detail = caps ? `umí: ${caps}` : b.wired === false ? "zatím nezapojeno do toku" : b.error ? String(b.error) : "";
+      const role = DEPLOYABLE_ROLE[d.name];
+      const iso = isolationLabel(String(b.isolation ?? ""));
+      return `<tr><td><b>${esc(d.name)}</b>${role ? `<br><small class="dim">${esc(role)}</small>` : ""}</td>${stateTd(d.ok ? "OK" : "DOWN")}<td${iso.title ? ` title="${esc(iso.title)}"` : ""}>${esc(iso.label)}</td><td class="dim">${esc(detail)}</td></tr>`;
     })
     .join("");
 
@@ -249,7 +268,7 @@ export function renderFarm(m: FarmModel): string {
     <div id="view-kravicky" hidden>
       <div class="p-panehead"><span>Kravičky</span><span class="n">${m.deployables.length} Workerů</span></div>
       <div class="p-gridwrap"><table class="p-table">
-        <thead><tr><th>Worker</th><th class="c-state">Stav</th><th>Isolation</th><th>Detail</th></tr></thead>
+        <thead><tr><th>Worker</th><th class="c-state">Stav</th><th title="Jak přísně je oddělený od ostatních">Izolace</th><th>Umí</th></tr></thead>
         <tbody>${kravickyRows}</tbody>
       </table></div>
     </div>

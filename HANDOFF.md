@@ -2,6 +2,14 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-07 (33) — Kravičky v `/farm`: k čemu který Worker vlastně je
+
+**Pokyn vlastníka:** u tabulky Kravičky „vůbec nevím co jednotlivé kravičky dělají" — stav (OK/DOWN), izolace (`LOGICAL`/`PRINCIPAL`) a syrový detail (`not wired`, seznam capabilities) nikde neříkaly, jakou roli daný Worker v toku hraje.
+
+**Oprava:** pod jméno každého Workeru přidán jednořádkový lidský popis role (`apf-gateway` „Přijme dokument, rozpozná typ (AI) a řídí celý průběh", `apf-document-host` „Orazítkuje a archivuje…", `apf-fakes` „Testovací dvojník DMS/registru/archivu…" atd.). Sloupec `Isolation` přejmenován na „Izolace" s lidským popiskem místo holého `LOGICAL`/`PRINCIPAL` (hover vysvětlí rozdíl), `not wired` česky jako „zatím nezapojeno do toku", seznam capabilities uvozen „umí:".
+
+**Brány zelené:** typecheck, 232 testů, arch, farm:check. Nasazeno na `farm-bass443`.
+
 ## 2026-09-07 (32) — Dokumentace aktualizovaná na aktuální stav (232 testů, 6 posudků, D2/W23/Farmář); nový manažerský výstup
 
 **Pokyn vlastníka:** aktualizovat veškerou dokumentaci (HANDOFF, STATUS, vývojový diagram, ostatní) a vytvořit jednostránkový manažerský výstup pro vedení.
