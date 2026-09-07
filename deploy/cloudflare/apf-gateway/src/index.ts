@@ -410,15 +410,166 @@ const BY_EXTENSION: Record<string, string> = {
   isdoc: "application/xml",
 };
 
-const contentTypeOf = (file: File): string => {
-  const ext = file.name.toLowerCase().split(".").pop() ?? "";
-  return file.type && file.type !== "application/octet-stream" ? file.type : (BY_EXTENSION[ext] ?? "application/octet-stream");
+const contentTypeOf = (name: string, type: string): string => {
+  const ext = name.toLowerCase().split(".").pop() ?? "";
+  return type && type !== "application/octet-stream" ? type : (BY_EXTENSION[ext] ?? "application/octet-stream");
 };
 
 const isText = (contentType: string): boolean =>
   contentType.startsWith("text/") || contentType === "message/rfc822" || contentType === "application/json" || contentType === "application/xml";
 
 const homeModel = (request: Request, env: Env) => ({ installation: INSTALLATION, user: receivedFrom(request), workflows: [...WORKFLOW_NAMES], wired: wiredOf(env), models: modelsOf(env) });
+
+interface IntakeRequest {
+  workflow: string;
+  tenantId: string;
+  receivedFrom: string;
+  modelKey?: string;
+  stampText?: string;
+  content: { kind: "text"; bytes: string; contentType: string } | { kind: "binary"; buf: ArrayBuffer; name: string; contentType: string };
+}
+type IntakeOutcome = { ok: true; workflowId: string } | { ok: false; code: string; message: string; detail?: Record<string, unknown> };
+
+/**
+ * Everything /intake (the web form) does, minus the HTTP request/response shape — so the same fail-closed checks and
+ * the same immutable-original/extraction/dispatch sequence run for a batch pulled from the R2 inbox (scheduled()) as
+ * for someone clicking "Odeslat do toku". No second, drifting copy of this logic.
+ */
+async function startIntake(env: Env, req: IntakeRequest): Promise<IntakeOutcome> {
+  if (env.KILL_SWITCH === "true") return { ok: false, code: "KILL_SWITCH", message: "Farma je vypnutá (KILL_SWITCH)." };
+  if (!WORKFLOW_NAMES.includes(req.workflow)) return { ok: false, code: "UNKNOWN_WORKFLOW", message: `Neznámý tok ${req.workflow}.` };
+
+  const models = modelsOf(env);
+  if ("error" in models) return { ok: false, code: "NO_MODEL", message: "Instalace nemá použitelný výchozí model; tok se nespustí (nikdy bez modelu).", detail: { error: models.error } };
+  if (req.modelKey) {
+    const choice = models.choices.find((c) => c.key === req.modelKey);
+    if (!choice) return { ok: false, code: "UNKNOWN_MODEL", message: "Klíč modelu není v seznamu instalace.", detail: { model: req.modelKey } };
+    if (choice.unavailable) return { ok: false, code: "MODEL_UNAVAILABLE", message: choice.unavailable, detail: { model: req.modelKey } };
+  }
+
+  let original: Original;
+  let extraction: Extraction | undefined;
+  if (req.content.kind === "binary") {
+    const { buf, name, contentType } = req.content;
+    const digest = sha256Bytes(new Uint8Array(buf));
+    const location = `originals/${req.tenantId}/${digest}`;
+    if (!(await env.ARTIFACTS.head(location))) {
+      await env.ARTIFACTS.put(location, buf, { httpMetadata: { contentType }, customMetadata: { name, receivedFrom: req.receivedFrom, receivedAt: new Date().toISOString() } });
+    }
+    original = { kind: "external", sha256: digest, contentType, byteLength: buf.byteLength, location, name };
+    let converted: ConversionResponse;
+    try {
+      converted = await env.AI.toMarkdown({ name, blob: new Blob([buf], { type: contentType }) });
+    } catch (e) {
+      return { ok: false, code: "EXTRACTION_FAILED", message: "Workers AI konverzi neprovedla; originál je uložený, tok nebyl spuštěn.", detail: { sha256: digest, contentType, error: String(e) } };
+    }
+    if (converted.format === "error") {
+      return { ok: false, code: "EXTRACTION_FAILED", message: "Workers AI soubor odmítla; originál je uložený, tok nebyl spuštěn.", detail: { sha256: digest, contentType, error: converted.error } };
+    }
+    if (!converted.data.trim()) {
+      return { ok: false, code: "EXTRACTION_EMPTY", message: "Workers AI ze souboru nezískala žádný text; originál je uložený, tok nebyl spuštěn.", detail: { sha256: digest, contentType } };
+    }
+    extraction = { text: converted.data, format: converted.format, tokens: converted.tokens };
+  } else {
+    if (!req.content.bytes.trim()) return { ok: false, code: "EMPTY_TEXT", message: "Prázdný text." };
+    original = { kind: "text", bytes: req.content.bytes, contentType: req.content.contentType };
+  }
+  if (original.kind === "text" && original.bytes.length > MAX_TEXT_CHARS) return { ok: false, code: "DOCUMENT_TOO_LARGE", message: "Dokument je moc dlouhý.", detail: { max: MAX_TEXT_CHARS } };
+  if (extraction && extraction.text.length > MAX_TEXT_CHARS) extraction = { ...extraction, text: extraction.text.slice(0, MAX_TEXT_CHARS) };
+
+  const workflowId = newId("wf");
+  console.log(`[apf-gateway] intake start workflowId=${workflowId} workflow=${req.workflow} tenantId=${req.tenantId} from=${req.receivedFrom} model=${req.modelKey || "(default)"}`);
+  const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(workflowId));
+  const t0 = Date.now();
+  try {
+    await stub.intake({
+      workflowId,
+      workflow: req.workflow,
+      tenantId: req.tenantId,
+      receivedFrom: req.receivedFrom,
+      original,
+      ...(extraction ? { extraction } : {}),
+      ...(req.modelKey ? { model: req.modelKey } : {}),
+      ...(req.stampText ? { stampText: req.stampText } : {}),
+    });
+  } catch (e) {
+    console.error(`[apf-gateway] intake wiring threw workflowId=${workflowId} (${Date.now() - t0}ms): ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
+    return { ok: false, code: "WIRING_FAILED", message: "Zapojení platformy v objektu instance selhalo (fail-closed); originál zůstal uložený.", detail: { workflowId, error: String(e) } };
+  }
+  console.log(`[apf-gateway] intake done workflowId=${workflowId} (${Date.now() - t0}ms)`);
+  return { ok: true, workflowId };
+}
+
+const INTAKE_ERROR_STATUS: Record<string, number> = {
+  KILL_SWITCH: 503,
+  UNKNOWN_WORKFLOW: 400,
+  NO_MODEL: 503,
+  UNKNOWN_MODEL: 400,
+  MODEL_UNAVAILABLE: 400,
+  DOCUMENT_TOO_LARGE: 413,
+  EXTRACTION_FAILED: 422,
+  EXTRACTION_EMPTY: 422,
+  EMPTY_TEXT: 400,
+  WIRING_FAILED: 500,
+};
+const INTAKE_ERROR_TITLE: Record<string, string> = {
+  KILL_SWITCH: "Farma je vypnutá",
+  UNKNOWN_WORKFLOW: "Neznámý tok",
+  NO_MODEL: "Modely nejsou k dispozici",
+  UNKNOWN_MODEL: "Neznámý model",
+  MODEL_UNAVAILABLE: "Model není dostupný",
+  DOCUMENT_TOO_LARGE: "Dokument je příliš velký",
+  EXTRACTION_FAILED: "Extrakce textu selhala",
+  EXTRACTION_EMPTY: "Prázdný výsledek extrakce",
+  EMPTY_TEXT: "Prázdný text",
+  WIRING_FAILED: "Tok se nespustil",
+};
+
+/**
+ * The "adresář odkud se dávkově čerpají dokumenty" (owner's request, 2026-09-07): Workers have no filesystem, so the
+ * inbox is an R2 prefix instead — browsable and drag-and-drop uploadable straight from the Cloudflare dashboard
+ * (R2 → apf-artifacts → inbox/), no extra tooling needed. A Cron Trigger picks files up every 5 minutes, runs them
+ * through the exact same startIntake() as the web form, and either deletes the inbox copy (the real immutable
+ * original now lives under originals/, this was just the drop-off) or moves it to inbox/failed/ so a broken file
+ * doesn't retry forever and silently burn Workers AI calls — the operator sees it sitting there instead.
+ */
+const INBOX_PREFIX = "inbox/";
+const INBOX_FAILED_PREFIX = "inbox/failed/";
+const INBOX_BATCH_LIMIT = 10;
+
+async function processInbox(env: Env): Promise<{ picked: number; ok: number; failed: number }> {
+  const listed = await env.ARTIFACTS.list({ prefix: INBOX_PREFIX, limit: 1000 });
+  const pending = listed.objects.filter((o) => !o.key.startsWith(INBOX_FAILED_PREFIX)).slice(0, INBOX_BATCH_LIMIT);
+  let ok = 0;
+  let failed = 0;
+  for (const obj of pending) {
+    const name = obj.key.slice(INBOX_PREFIX.length);
+    const got = await env.ARTIFACTS.get(obj.key);
+    if (!got) continue; // listed a moment ago, gone now (raced with something else) - nothing to do
+    const buf = await got.arrayBuffer();
+    const contentType = contentTypeOf(name, got.httpMetadata?.contentType ?? "");
+    const content: IntakeRequest["content"] = isText(contentType) ? { kind: "text", bytes: new TextDecoder().decode(buf), contentType } : { kind: "binary", buf, name, contentType };
+    const result = await startIntake(env, { workflow: "document-intake", tenantId: intakeTenant(), receivedFrom: "inbox:r2", content });
+    if (result.ok) {
+      ok += 1;
+      console.log(`[apf-gateway] inbox picked up ${obj.key} -> workflowId=${result.workflowId}`);
+      await env.ARTIFACTS.delete(obj.key);
+    } else {
+      failed += 1;
+      console.error(`[apf-gateway] inbox failed for ${obj.key}: ${result.code} ${result.message}`);
+      await env.ARTIFACTS.put(`${INBOX_FAILED_PREFIX}${name}`, buf, { httpMetadata: { contentType }, customMetadata: { reason: result.code, message: result.message } });
+      await env.ARTIFACTS.delete(obj.key);
+    }
+  }
+  return { picked: pending.length, ok, failed };
+}
+
+/** Read-only counts for /farm — never triggers processing, just lists (a page view must not have side effects). */
+async function inboxStats(env: Env): Promise<{ pending: number; failed: number; batchLimit: number }> {
+  const listed = await env.ARTIFACTS.list({ prefix: INBOX_PREFIX, limit: 1000 });
+  const failed = listed.objects.filter((o) => o.key.startsWith(INBOX_FAILED_PREFIX)).length;
+  return { pending: listed.objects.length - failed, failed, batchLimit: INBOX_BATCH_LIMIT };
+}
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -452,13 +603,14 @@ export default {
 
     // "Farmář" (owner's own word for it): one page, health of all five deployables + the most recent workflow instances.
     if (url.pathname === "/farm" && request.method === "GET") {
-      const [documentHost, emailExecutor, mailIngest, fakes, instances, log] = await Promise.all([
+      const [documentHost, emailExecutor, mailIngest, fakes, instances, log, inbox] = await Promise.all([
         deployableInfo(env.DOCUMENT_HOST, "https://apf-document-host.internal"),
         deployableInfo(env.EMAIL_EXECUTOR, "https://apf-email-executor.internal"),
         deployableInfo(env.MAIL_INGEST, "https://apf-mail-ingest.internal"),
         deployableInfo(env.FAKES, FAKES_ORIGIN),
         recentInstances(env, 15),
         auditLog(env, 50),
+        inboxStats(env),
       ]);
       return html(
         renderFarm({
@@ -473,6 +625,7 @@ export default {
           ],
           instances,
           auditLog: log,
+          inbox,
         }),
       );
     }
@@ -485,84 +638,28 @@ export default {
     if (url.pathname === "/" && request.method === "GET") return html(renderHome(homeModel(request, env)));
 
     if (url.pathname === "/intake" && request.method === "POST") {
-      if (env.KILL_SWITCH === "true") return Response.json({ error: "KILL_SWITCH" }, { status: 503 });
       const form = await request.formData();
       const workflow = String(form.get("workflow") ?? "document-intake");
-      if (!WORKFLOW_NAMES.includes(workflow)) return Response.json({ error: "UNKNOWN_WORKFLOW", workflow }, { status: 400 });
       const stampText = String(form.get("stampText") ?? "").trim();
       const tenantId = intakeTenant();
       const from = receivedFrom(request);
       const file = form.get("file");
-
-      // The model is a choice among the installation's options; an unavailable or unknown key is refused here, not silently replaced.
       const modelKey = String(form.get("model") ?? "").trim();
-      const models = modelsOf(env);
-      if ("error" in models) return html(renderError("Modely nejsou k dispozici", "Instalace nemá použitelný výchozí model; tok se nespustí (nikdy bez modelu).", { error: models.error }), 503);
-      if (modelKey) {
-        const choice = models.choices.find((c) => c.key === modelKey);
-        if (!choice) return html(renderError("Neznámý model", "Klíč modelu není v seznamu instalace.", { model: modelKey }), 400);
-        if (choice.unavailable) return html(renderError("Model není dostupný", choice.unavailable, { model: modelKey }), 400);
-      }
 
-      let original: Original;
-      let extraction: Extraction | undefined;
+      let content: IntakeRequest["content"];
       if (file instanceof File && file.size > 0) {
         if (file.size > MAX_UPLOAD_BYTES) return html(renderError("Soubor je příliš velký", `Limit je ${MAX_UPLOAD_BYTES / 1024 / 1024} MB.`, { size: file.size }), 413);
-        const contentType = contentTypeOf(file);
-        if (isText(contentType)) {
-          original = { kind: "text", bytes: await file.text(), contentType };
-        } else {
-          // Binary original: into R2 first (immutable, keyed by hash), then Workers AI derives the text the workflow will see.
-          const buf = await file.arrayBuffer();
-          const digest = sha256Bytes(new Uint8Array(buf));
-          const location = `originals/${tenantId}/${digest}`;
-          if (!(await env.ARTIFACTS.head(location))) {
-            await env.ARTIFACTS.put(location, buf, { httpMetadata: { contentType }, customMetadata: { name: file.name, receivedFrom: from, receivedAt: new Date().toISOString() } });
-          }
-          original = { kind: "external", sha256: digest, contentType, byteLength: file.size, location, name: file.name };
-          let converted: ConversionResponse;
-          try {
-            converted = await env.AI.toMarkdown({ name: file.name, blob: new Blob([buf], { type: contentType }) });
-          } catch (e) {
-            return html(renderError("Extrakce textu selhala", "Workers AI konverzi neprovedla; originál je uložený, tok nebyl spuštěn.", { sha256: digest, contentType, error: String(e) }), 422);
-          }
-          if (converted.format === "error") {
-            return html(renderError("Extrakce textu selhala", "Workers AI soubor odmítla; originál je uložený, tok nebyl spuštěn.", { sha256: digest, contentType, error: converted.error }), 422);
-          }
-          if (!converted.data.trim()) {
-            return html(renderError("Prázdný výsledek extrakce", "Workers AI ze souboru nezískala žádný text (např. sken bez OCR vrstvy nebo prázdná stránka); originál je uložený, tok nebyl spuštěn.", { sha256: digest, contentType }), 422);
-          }
-          extraction = { text: converted.data, format: converted.format, tokens: converted.tokens };
-        }
+        const contentType = contentTypeOf(file.name, file.type);
+        content = isText(contentType) ? { kind: "text", bytes: await file.text(), contentType } : { kind: "binary", buf: await file.arrayBuffer(), name: file.name, contentType };
       } else {
         const text = String(form.get("text") ?? "");
         if (!text.trim()) return html(renderHome(homeModel(request, env)), 400);
-        original = { kind: "text", bytes: text, contentType: "text/plain" };
+        content = { kind: "text", bytes: text, contentType: "text/plain" };
       }
-      if (original.kind === "text" && original.bytes.length > MAX_TEXT_CHARS) return Response.json({ error: "DOCUMENT_TOO_LARGE", max: MAX_TEXT_CHARS }, { status: 413 });
-      if (extraction && extraction.text.length > MAX_TEXT_CHARS) extraction = { ...extraction, text: extraction.text.slice(0, MAX_TEXT_CHARS) };
 
-      const workflowId = newId("wf");
-      console.log(`[apf-gateway] intake start workflowId=${workflowId} workflow=${workflow} tenantId=${tenantId} from=${from} model=${modelKey || "(default)"}`);
-      const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(workflowId));
-      const t0 = Date.now();
-      try {
-        await stub.intake({
-          workflowId,
-          workflow,
-          tenantId,
-          receivedFrom: from,
-          original,
-          ...(extraction ? { extraction } : {}),
-          ...(modelKey ? { model: modelKey } : {}),
-          ...(stampText ? { stampText } : {}),
-        });
-      } catch (e) {
-        console.error(`[apf-gateway] intake wiring threw workflowId=${workflowId} (${Date.now() - t0}ms): ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
-        return html(renderError("Tok se nespustil", "Zapojení platformy v objektu instance selhalo (fail-closed); originál zůstal uložený.", { workflowId, error: String(e) }), 500);
-      }
-      console.log(`[apf-gateway] intake done workflowId=${workflowId} (${Date.now() - t0}ms)`);
-      return Response.redirect(new URL(`/workflow/${workflowId}`, url).toString(), 303);
+      const result = await startIntake(env, { workflow, tenantId, receivedFrom: from, modelKey: modelKey || undefined, stampText: stampText || undefined, content });
+      if (!result.ok) return html(renderError(INTAKE_ERROR_TITLE[result.code] ?? result.code, result.message, { ...(result.detail ?? {}) }), INTAKE_ERROR_STATUS[result.code] ?? 500);
+      return Response.redirect(new URL(`/workflow/${result.workflowId}`, url).toString(), 303);
     }
 
     const purge = /^\/workflow\/(wf-[A-Za-z0-9]+)\/purge$/.exec(url.pathname);
@@ -633,5 +730,22 @@ export default {
       return Response.json({ error: "NOT_WIRED", message: "apf-gateway: the HTTP /dispatch endpoint for remote callers (harness, hosts) is a later unit; the page and the orchestrator dispatch inside the instance object" }, { status: 501 });
     }
     return Response.json({ error: "NOT_FOUND" }, { status: 404 });
+  },
+
+  // R2 inbox batch import (owner's request, 2026-09-07): every 5 min, pick up whatever landed under inbox/ and run it
+  // through the same startIntake() as the web form. See processInbox() for the full design note.
+  async scheduled(controller, env, ctx): Promise<void> {
+    if (env.KILL_SWITCH === "true") {
+      console.log(`[apf-gateway] scheduled skipped: KILL_SWITCH cron=${controller.cron}`);
+      return;
+    }
+    const t0 = Date.now();
+    try {
+      const r = await processInbox(env);
+      console.log(`[apf-gateway] scheduled inbox picked=${r.picked} ok=${r.ok} failed=${r.failed} (${Date.now() - t0}ms) cron=${controller.cron}`);
+    } catch (e) {
+      console.error(`[apf-gateway] scheduled inbox threw (${Date.now() - t0}ms): ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
+      controller.noRetry(); // a thrown error here is a bug to look at in Workers Logs, not something an immediate retry fixes
+    }
   },
 } satisfies ExportedHandler<Env>;

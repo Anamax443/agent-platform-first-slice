@@ -2,6 +2,20 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-07 (39) — Dávkový příjem: R2 „inbox" + Cron Trigger každých 5 minut
+
+**Pokyn vlastníka:** „chtěl bych nastavení kde bude adresář odkud se bude dávkově čerpat dokumenty... a to nastavení mi tam furt chybí." Workers nemají žádný přístup k lokálnímu adresáři na disku — probrány dvě reálné varianty (lokální skript vs. R2 „inbox" + Cron), vybráno **R2 + Cron**.
+
+**Jak to funguje:** `inbox/` je prefix ve **stejném** R2 bucketu (`apf-artifacts`), co už drží originály a derivace — žádný nový binding. Nahrává se přímo z Cloudflare dashboardu (R2 → `apf-artifacts` → `inbox/`, drag-and-drop v prohlížeči), žádný S3 nástroj není potřeba. Cron Trigger (`*/5 * * * *`, na Free plánu do 3 triggerů na Worker, ověřeno skillem než se psal kód) spustí `scheduled()`, ten zavolá `processInbox()`: vezme až 10 souborů na běh, pro každý stejnou cestou jako webový formulář (`startIntake()` — vytažená sdílená logika, ne druhá kopie), a podle výsledku buď smaže z inboxu (skutečný originál už leží pod `originals/…`, tohle byl jen drop-off), nebo přesune do `inbox/failed/<jméno>` s důvodem v metadatech — ať se rozbitý soubor nezkouší dokola donekonečna a nemlátí zbytečně do Workers AI.
+
+**Refaktor:** `/intake` HTTP handler i `scheduled()` teď volají stejnou `startIntake()` — dřív by druhá cesta znamenala kopii pěti kontrol (kill switch, neznámý tok, model, extrakce, limit délky) s rizikem, že se rozjedou.
+
+**Farmář:** nová sekce v Přehledu — kolik čeká v inboxu, kolik selhalo (červeně, s návodem), kde nahrávat, jak často se to kontroluje.
+
+**Vedlejší úkol:** vygenerováno 25 testovacích dokumentů (20 faktur — plátce/neplátce DPH, 1/3/4 položky —, 3 kupní smlouvy, 2 milostné dopisy jako negativní test klasifikátoru) do scratchpadu pro ruční i dávkové testování.
+
+**Brány zelené:** typecheck, 232 testů, arch, farm:check (dry-run přes nový `triggers.crons` prošel). **Zatím nenasazeno na farmu** — commit proveden na pokyn vlastníka uprostřed práce, nasazení a živé ověření cronu (vyžaduje počkat na propagaci, až 15 min) je další krok.
+
 ## 2026-09-07 (38) — Kravičky lhaly o archivaci: „archivuje" tvrdilo něco, co se v toku nikdy nevolá
 
 **Pokyn vlastníka:** „apf-fakes píšeš že doklady archivuje" + „a že je OK" — postřeh nad popisem `apf-document-host` v tabulce Kravičky.

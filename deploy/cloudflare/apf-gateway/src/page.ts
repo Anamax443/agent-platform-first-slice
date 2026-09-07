@@ -71,6 +71,7 @@ export interface FarmModel {
   deployables: DeployableStatus[];
   instances: FarmInstanceRow[];
   auditLog: AuditLogRow[];
+  inbox: { pending: number; failed: number; batchLimit: number };
 }
 
 export interface InstanceView {
@@ -287,6 +288,13 @@ export function renderFarm(m: FarmModel): string {
         <span class="grow"></span>
         <a class="p-btn" href="/">Nový dokument</a>
       </div>
+      <div class="p-panehead"><span>Dávkový příjem (inbox)</span><span class="n">${m.inbox.pending} čeká${m.inbox.failed ? ` · ${m.inbox.failed} selhalo` : ""}</span></div>
+      <div class="p-toolbar">
+        <span class="meta">Cloudflare dashboard → R2 → <code>apf-artifacts</code> → nahraj do <code>inbox/</code></span>
+        <span class="vsep"></span>
+        <span class="meta">kontrola každých 5 minut, max ${m.inbox.batchLimit} souborů na běh</span>
+        ${m.inbox.failed ? `<span class="vsep"></span><span class="meta" style="color:var(--crit)">nezpracované soubory v <code>inbox/failed/</code> — podívej se, co je špatně, a nahraj znovu do <code>inbox/</code></span>` : ""}
+      </div>
     </div>
 
     <div id="view-kravicky" hidden>
@@ -318,6 +326,7 @@ export function renderFarm(m: FarmModel): string {
     <span><b>${up}/${m.deployables.length}</b> Workerů</span>
     <span><b>${m.instances.length}</b> instancí</span>
     <span><b>${m.auditLog.length}</b> v deníku</span>
+    <span><b>${m.inbox.pending}</b> v inboxu${m.inbox.failed ? ` <span class="dim">(${m.inbox.failed} selhalo)</span>` : ""}</span>
     <span class="grow"></span>
     <span>Farmář · ${esc(m.installation)}</span>
   </footer>
