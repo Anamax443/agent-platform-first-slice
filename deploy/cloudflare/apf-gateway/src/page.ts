@@ -294,11 +294,15 @@ export function renderFarm(m: FarmModel): string {
         <a class="p-btn" href="/">Nový dokument</a>
       </div>
       <div class="p-panehead"><span>Dávkový příjem (inbox)</span><span class="n">${m.inbox.pending} čeká${m.inbox.failed ? ` · ${m.inbox.failed} selhalo` : ""}</span></div>
-      <div class="p-toolbar">
-        <span class="meta">Cloudflare dashboard → R2 → <code>apf-artifacts</code> → nahraj do <code>inbox/</code></span>
+      <form class="p-toolbar" method="post" action="/farm/inbox" enctype="multipart/form-data">
+        <input type="file" name="files" multiple>
+        <button class="p-btn" type="submit">Nahrát do inboxu</button>
         <span class="vsep"></span>
         <span class="meta">kontrola každých 5 minut, max ${m.inbox.batchLimit} souborů na běh</span>
-        ${m.inbox.failed ? `<span class="vsep"></span><span class="meta" style="color:var(--crit)">nezpracované soubory v <code>inbox/failed/</code> — podívej se, co je špatně, a nahraj znovu do <code>inbox/</code></span>` : ""}
+        ${m.inbox.failed ? `<span class="vsep"></span><span class="meta" style="color:var(--crit)">nezpracované soubory v <code>inbox/failed/</code> — podívej se, co je špatně, a nahraj znovu</span>` : ""}
+      </form>
+      <div class="p-toolbar">
+        <span class="meta">nebo přímo Cloudflare dashboard → R2 → <code>apf-artifacts</code> → <code>inbox/</code> (stejné místo, žádný rozdíl)</span>
       </div>
     </div>
 

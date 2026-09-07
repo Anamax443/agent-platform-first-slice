@@ -2,6 +2,20 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-07 (40) — Upload do inboxu přímo na `/farm`, ne přes Cloudflare dashboard
+
+**Pokyn vlastníka:** po (39) zjistil, že popis „nahraj do Cloudflare R2" znamená doopravdy otevřít cizí dashboard — „ale já to potřebuji u farmáře a ne na Cloudflare". Ověřeno mezitím i to, že farma (`/version`) už běžela na `gitSha 8488422`, tedy dávkový příjem z (39) byl mezitím nasazen (nejspíš druhým PC) beze samostatného HANDOFF záznamu o nasazení.
+
+**Řešení:** nová route `POST /farm/inbox` na gatewayi — vezme jeden nebo víc souborů (`<input type=file name=files multiple>`), pro každý zapíše bajty přímo do stejného R2 prefixu `inbox/` (klíč `inbox/<newId>-<sanitizovaný název>`, `sanitizeInboxName()` odstraní `/`/`\` ať název souboru neuteče z prefixu) a přesměruje zpět na `/farm`. **Žádná nová pipeline** — je to jen druhé, přívětivější místo, odkud se dá zapsat do přesně téhož inboxu, který stejně jako dřív sbírá `processInbox()`/Cron Trigger každých 5 minut; oversized soubor (nad `MAX_UPLOAD_BYTES`, stejný limit jako `/intake`) se tiše přeskočí, ne zařadí rozbitý. Formulář přidán přímo do panelu „Dávkový příjem (inbox)" na `/farm` (`page.ts`), odkaz na Cloudflare dashboard zůstal jako druhá, rovnocenná cesta pod ním.
+
+**Vedlejší zjištění zapsáno vlastníkovi (ne W-položka, jde o produkt, ne o normu):** ověřeno v kódu, že `documentType` je dnes jen nálepka ze tří hodnot (`INVOICE`/`CONTRACT`/`OTHER`) a **faktura i smlouva jdou přes identický `classify → validate → stamp`** — testovací registr jim dokonce vrací stejnou dobu úschovy. Žádný „předpis" (jaká pole/pravidla se mají u které typu kontrolovat) v kódu není, ani navržený — rozpracovaný krok 8 pokrývá jen faktury (EN 16931). Otevřeno na vlastníkovi, zatím nezařazeno do pořadí.
+
+**Vlastníkův předpoklad do budoucna (zapsáno, mimo rozsah dneška):** cílové úložiště orazítkovaných/archivovaných dokumentů má být skutečný DMS (např. M-Files) nebo jiné úložiště, ne `apf-fakes` dvojník. Adaptérová hranice (`HttpDmsAdapter`/`HttpArchiveAdapter`, `src/adapters/dms.ts`/`archive.ts`) je přesně pro tuhle výměnu stavěná — až přijde na řadu, mění se jen implementace adaptéru, ne tok.
+
+**Ověřeno živě přes `wrangler dev` (local-fakes):** `POST /farm/inbox` s reálným multipart uploadem → `303` na `/farm#view-prehled` → čítač „čeká" naskočil z 0 na 1. Zbytek (cron vyzvedne soubor z inboxu) je beze změny, už otestovaný a na farmě ověřený mechanismus z (39).
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare/tsconfig.json`), 232 testů, arch, farm:check.
+
 ## 2026-09-07 (39) — Dávkový příjem: R2 „inbox" + Cron Trigger každých 5 minut
 
 **Pokyn vlastníka:** „chtěl bych nastavení kde bude adresář odkud se bude dávkově čerpat dokumenty... a to nastavení mi tam furt chybí." Workers nemají žádný přístup k lokálnímu adresáři na disku — probrány dvě reálné varianty (lokální skript vs. R2 „inbox" + Cron), vybráno **R2 + Cron**.

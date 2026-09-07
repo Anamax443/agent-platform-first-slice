@@ -539,6 +539,9 @@ const INBOX_PREFIX = "inbox/";
 const INBOX_FAILED_PREFIX = "inbox/failed/";
 const INBOX_BATCH_LIMIT = 10;
 
+/** File names become part of the R2 key (prefixed with a fresh id) — strip path separators so a crafted name can't escape inbox/. */
+const sanitizeInboxName = (name: string): string => name.replace(/[\\/]/g, "_") || "upload";
+
 async function processInbox(env: Env): Promise<{ picked: number; ok: number; failed: number }> {
   const listed = await env.ARTIFACTS.list({ prefix: INBOX_PREFIX, limit: 1000 });
   const pending = listed.objects.filter((o) => !o.key.startsWith(INBOX_FAILED_PREFIX)).slice(0, INBOX_BATCH_LIMIT);
@@ -632,6 +635,22 @@ export default {
           inbox,
         }),
       );
+    }
+
+    // Upload straight into the R2 inbox from the Farmář page (owner's request, 2026-09-07: "potřebuji to u
+    // farmáře, ne na Cloudflare") — same drop-off as dragging files into the R2 console, same processInbox()/cron
+    // pickup, no second pipeline. Key gets a fresh id prefix so two files with the same name never collide.
+    if (url.pathname === "/farm/inbox" && request.method === "POST") {
+      const form = await request.formData().catch(() => new FormData());
+      const files = form.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
+      for (const file of files) {
+        if (file.size > MAX_UPLOAD_BYTES) continue; // same limit as /intake; oversized files are skipped, not queued broken
+        const buf = await file.arrayBuffer();
+        const contentType = contentTypeOf(file.name, file.type);
+        const key = `${INBOX_PREFIX}${newId("up")}-${sanitizeInboxName(file.name)}`;
+        await env.ARTIFACTS.put(key, buf, { httpMetadata: { contentType }, customMetadata: { name: file.name, receivedFrom: "farm-upload", receivedAt: new Date().toISOString() } });
+      }
+      return Response.redirect(new URL("/farm#view-prehled", url).toString(), 303);
     }
 
     // The two diagram pages from the repo root, bundled fresh at config-generation time (scripts/farm-config.mjs) —
