@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Matice odpovědnosti — agent-platform-first-slice</title>
+<style>
+:root{color-scheme:light}
+body{margin:0;background:#f6f7f9;color:#1c1f24;font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:64rem;margin:0 auto;padding:1.5rem 1.5rem 3rem}
+h1{font-size:1.3rem;margin:0 0 .25rem}
+h2{font-size:1.05rem;margin:1.75rem 0 .5rem;padding-top:.5rem;border-top:1px solid #dde2e8}
+p.lede{color:#5b6472;margin:0 0 1.5rem}
+code{font:.9em ui-monospace,Consolas,monospace;background:#eceff3;padding:.05em .3em;border-radius:3px}
+table{width:100%;border-collapse:collapse;font-size:.9rem;background:#fff;border:1px solid #dde2e8;border-radius:8px;overflow:hidden}
+th,td{text-align:left;vertical-align:top;padding:.55rem .65rem;border-bottom:1px solid #e6e9ee}
+th{background:#eef1f5;color:#5b6472;font-weight:600;font-size:.82rem;text-transform:uppercase;letter-spacing:.02em}
+tr:last-child td{border-bottom:0}
+.tag{display:inline-block;padding:.05em .5em;border-radius:999px;font-size:.78rem;font-weight:700}
+.tag.low{background:#dcfce7;color:#166534}
+.tag.medium{background:#fef3c7;color:#92400e}
+.tag.navrh{background:#ede9fe;color:#5b21b6}
+ul.principles{background:#fff;border:1px solid #dde2e8;border-radius:8px;padding:1rem 1.25rem 1rem 2.25rem;margin:0}
+ul.principles li{margin:.4rem 0}
+nav.back{margin-bottom:1.25rem}
+nav.back a{color:#1d4ed8;text-decoration:none;font-size:.9rem}
+nav.back a:hover{text-decoration:underline}
+small.note{display:block;color:#5b6472;margin-top:1.5rem}
+</style>
+</head>
+<body>
+<main>
+<nav class="back"><a href="/farm">&larr; zpět na Farmáře</a></nav>
+<h1>Matice odpovědnosti</h1>
+<p class="lede">Kdo (jaká kapabilita/kravička) odpovídá za co. Poskládáno z existujících zdrojů (deskriptory kapabilit, policy granty, zapojení hostitelů), poprvé na jednom místě — 7. 9. 2026. Zdrojová verze pro vývojáře: <code>docs/MATICE-ODPOVEDNOSTI.md</code> v repu.</p>
+
+<h2>Univerzální kapability (běží u každého dokumentu bez ohledu na typ)</h2>
+<table>
+<thead><tr><th>Kapabilita</th><th>Kravička (Worker)</th><th>Externí systém</th><th>Kdo smí volat</th><th>Riziko</th><th>Selhání vede k</th></tr></thead>
+<tbody>
+<tr><td><code>document.classify</code></td><td><code>apf-gateway</code> (router v objektu instance)</td><td>Workers AI / Anthropic (LLM), model podle profilu</td><td><code>svc-orchestrator</code>, <code>ai-doc-classifier</code></td><td><span class="tag low">LOW</span> — jediná kapabilita, kde AI rozhoduje (jen o <code>documentType</code>)</td><td><code>MODEL_UNAVAILABLE</code>, <code>MODEL_OUTPUT_NOT_ALLOWED</code></td></tr>
+<tr><td><code>document.validate</code></td><td><code>apf-gateway</code></td><td><code>apf-fakes</code> (testovací dvojník registru)</td><td><code>svc-orchestrator</code></td><td><span class="tag low">LOW</span>, deterministické — druhý nezávislý signál (W4)</td><td><code>CLASSIFICATION_DISPUTED</code>, <code>STAMP_NOT_ALLOWED</code> → <b>review</b></td></tr>
+<tr><td><code>document.stamp</code></td><td><code>apf-document-host</code> (samostatný Worker, izolace LOGICAL)</td><td>DMS (dnes <code>apf-fakes</code> dvojník)</td><td><code>svc-orchestrator</code></td><td><span class="tag low">LOW</span>, zápisová, idempotentní</td><td><code>DMS_REJECTED</code>, <code>VALIDATION_EVIDENCE_MISSING</code></td></tr>
+</tbody>
+</table>
+
+<h2>Zapojené, ale v běžném toku nepoužité</h2>
+<table>
+<thead><tr><th>Kapabilita</th><th>Kravička</th><th>Externí systém</th><th>Poznámka</th></tr></thead>
+<tbody>
+<tr><td><code>document.archive</code></td><td><code>apf-document-host</code> (sdílený proces se <code>stamp</code>)</td><td>Archiv (dnes <code>apf-fakes</code>)</td><td>Existuje jen kvůli testu izolace — běžný tok ho nikdy nevolá</td></tr>
+</tbody>
+</table>
+
+<h2>Tok e-mailů (mail-intake)</h2>
+<table>
+<thead><tr><th>Kapabilita</th><th>Kravička</th><th>Externí systém</th><th>Riziko</th><th>Poznámka</th></tr></thead>
+<tbody>
+<tr><td><code>mail.ingest</code></td><td><code>apf-mail-ingest</code> (sdílený proces)</td><td>Cloudflare Email Routing</td><td><span class="tag low">LOW</span></td><td>Vstupní bod — volá gateway, ne opačně</td></tr>
+<tr><td><code>email.send</code></td><td><code>apf-email-executor</code> (<b>vlastní proces, izolace PRINCIPAL</b>)</td><td>SMTP (Cloudflare Email Sending)</td><td><span class="tag medium">MEDIUM</span>, nevratné</td><td>Jediná kapabilita s rizikem nad LOW a jedinou PRINCIPAL izolací</td></tr>
+</tbody>
+</table>
+
+<h2>Návrh — zatím nepostaveno (krok 8b, žádný kód)</h2>
+<table>
+<thead><tr><th>Kapabilita</th><th>Externí systém</th><th>Kdy se spustí</th><th>Poznámka</th></tr></thead>
+<tbody>
+<tr><td><code>cz.company.verify</code> <span class="tag navrh">NÁVRH</span></td><td>ARES</td><td>agendy podle konfigurace (návrh: faktura, objednávka, smlouva)</td><td>IČO, existence, právní forma, adresa</td></tr>
+<tr><td><code>cz.vat.verify</code> <span class="tag navrh">NÁVRH</span></td><td>Finanční správa (needs verification)</td><td>jen po úspěšném <code>cz.company.verify</code> u tuzemského subjektu</td><td>DPH plátcovství, nespolehlivý plátce, zveřejněný účet — „nevztahuje se" ≠ selhání</td></tr>
+</tbody>
+</table>
+
+<h2>Co z toho plyne</h2>
+<ul class="principles">
+<li><b>AI rozhoduje jen v <code>document.classify</code></b>, a jen o jedné hodnotě. Nikde jinde AI nevybírá, které kapability se spustí — to je vždy pevná workflow definice.</li>
+<li><b><code>failClosed: true</code> u všech dnešních kapabilit</b> — chybějící/neplatný grant vždy zastaví, nikdy neprojde tiše.</li>
+<li><b><code>email.send</code> je jediná s rizikem nad LOW a PRINCIPAL izolací</b> — logicky, je to jediná nevratná akce směrem ven ze systému.</li>
+<li><b>Univerzální vs. agendové kapability</b> — <code>classify</code>/<code>validate</code>/<code>stamp</code> běží vždy; <code>cz.*.verify</code> až budou postavené, poběží jen pro nakonfigurovaný seznam agend.</li>
+</ul>
+<small class="note">Živý dokument — aktualizovat při každé nové/změněné kapabilitě, stejné pravidlo jako u shody NIS2/ISO27001.</small>
+</main>
+</body>
+</html>

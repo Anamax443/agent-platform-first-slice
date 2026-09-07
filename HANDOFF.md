@@ -2,6 +2,14 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-07 (47) — Matice odpovědnosti živě na `/farm` (ne jen v repu)
+
+**Pokyn vlastníka:** „a proč to není v GUI?" — po (46) čekal, že nová matice odpovědnosti bude dostupná přímo z konzole, stejně jako `VYVOJOVY-DIAGRAM.html`.
+
+**Řešeno identickým mechanismem jako vývojový diagram (HANDOFF 36):** nový `MATICE-ODPOVEDNOSTI.html` v kořeni repa (samostatná stránka, ne z markdownu generovaná — `docs/MATICE-ODPOVEDNOSTI.md` zůstává zdrojová verze pro vývojáře, obě se udržují ručně souběžně). `scripts/farm-config.mjs` (`generateDocsModule()`) ho čte a vkládá do `.wrangler/generated/docs.ts` vedle diagramů; ambientní typ `deploy/cloudflare/types/apf-docs.d.ts` rozšířen o `MATICE_ODPOVEDNOSTI_HTML`. Nová route `GET /MATICE-ODPOVEDNOSTI.html` na gatewayi, odkaz v menu Farmáře hned vedle „Jak to funguje".
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare/tsconfig.json` — chytilo chybějící ambientní export, opraveno), 232 testů, arch, farm:check.
+
 ## 2026-09-07 (46) — Matice odpovědnosti; potvrzeno „AI nikdy nevybírá kapability, jen klasifikuje"; univerzální vs. agendové kapability
 
 **Nový `docs/MATICE-ODPOVEDNOSTI.md`** (vlastník: „nechybí nám matice odpovědnosti?", upřesněno na „která kapabilita/kravička odpovídá za co"): poprvé na jednom místě tabulka všech šesti dnešních kapabilit (`document.classify/validate/stamp/archive`, `mail.ingest`, `email.send`) + dvou návrhů z kroku 8b — kravička (Worker), externí systém, kdo smí volat (z policy grantů), riziková třída, lidský vstup, kam vede selhání. Poskládáno z existujících zdrojů (`descriptor.json`, `config/*/policy/*.json`, zapojení hostitelů), ne nový zdroj pravdy.

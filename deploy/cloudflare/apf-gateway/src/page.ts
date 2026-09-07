@@ -304,6 +304,7 @@ export function renderFarm(m: FarmModel): string {
     <a class="p-navitem" href="#novy" data-view="novy" title="Nový dokument">${ICONS.novy}<span class="lbl">Nový dokument</span></a>
     <div class="p-navsec">Farma</div>
     <a class="p-navitem" href="/VYVOJOVY-DIAGRAM.html" title="Jak to funguje — bezpečnostní řetězec a běh toku">${ICONS.diagram}<span class="lbl">Jak to funguje</span></a>
+    <a class="p-navitem" href="/MATICE-ODPOVEDNOSTI.html" title="Kdo (kravička/kapabilita) odpovídá za co">${ICONS.diagram}<span class="lbl">Matice odpovědnosti</span></a>
   </nav>
 
   <main class="p-main">
