@@ -2,6 +2,18 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-07 (34) — `/farm`: syrový JSON pryč z výchozího pohledu, text se zalamuje
+
+**Pokyn vlastníka:** „vůbec nevím o co tady jde. ani text to nemá zalomený" (Poslední instance i Deník) a „`/audit.json` nevím k čemu je". Tabulky (bank `.p-table`) mají záměrně `white-space:nowrap` + výpustku pro hustá tabulková data — u buněk s výsledkem kroku a detailem auditu to ale znamenalo, že syrový `JSON.stringify` zmizel mimo obrazovku beze stopy.
+
+**Oprava — dvě věci:**
+1. **Lidský překlad namísto syrového JSON.** Nové `humanStepResult()` (Poslední instance) a `auditSummary()` (Deník) překládají známé capability/druhy auditu do věty („typ: FAKTURA, jistota 0.9", „zápis dokončen SUCCEEDED", „čeká na schválení…"). Neznámý tvar padá do `rawJson()` — sbalené `<details>`, ne vnucené na očích.
+2. **Buňky s výsledkem/detailem teď zalamují** (`td.wrap` přebíjí bankovní `nowrap` vyšší specificitou), rozbalený JSON má `pre.wrap` s `word-break`.
+
+**`/audit.json` odstraněn z bočního menu Farmáře** — byl to matoucí odkaz na syrová data bez vysvětlení; Deník teď pokrývá totéž čitelně. Route `/audit.json` samotná zůstává (programový přístup), jen se v UI neproduje jako cíl navigace.
+
+**Brány zelené:** typecheck, 232 testů, arch, farm:check. Nasazeno na `farm-bass443`.
+
 ## 2026-09-07 (33) — Kravičky v `/farm`: k čemu který Worker vlastně je
 
 **Pokyn vlastníka:** u tabulky Kravičky „vůbec nevím co jednotlivé kravičky dělají" — stav (OK/DOWN), izolace (`LOGICAL`/`PRINCIPAL`) a syrový detail (`not wired`, seznam capabilities) nikde neříkaly, jakou roli daný Worker v toku hraje.

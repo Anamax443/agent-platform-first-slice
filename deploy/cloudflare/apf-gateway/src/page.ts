@@ -206,7 +206,7 @@ export function renderFarm(m: FarmModel): string {
       if (i.purged) return `<tr class="group-head"><td colspan="5"><a href="/workflow/${esc(i.workflowId)}">${esc(i.workflowId)}</a> — smazáno (PURGED), poslední audit ${esc(i.at)}</td></tr>`;
       const head = `<tr class="group-head"><td colspan="5"><a href="/workflow/${esc(i.workflowId)}">${esc(i.workflowId)}</a> · ${esc(i.workflow)}/v${esc(i.workflowVersion)} · tenant ${esc(i.tenantId)} · aktér ${esc(i.actorId)} · ${stateBadge(i.status)} · založeno ${esc(i.createdAt)}, změněno ${esc(i.updatedAt)}</td></tr>`;
       const steps = i.steps
-        .map((s) => `<tr><td>${esc(s.stepId)}</td><td>${esc(s.capability)}/v${esc(s.capabilityVersion)}</td>${stateTd(s.status)}<td>${s.attempt} / ${s.logicalAttempt} <span class="dim">${esc(s.strategy)}</span></td><td>${fmtResult(s)}</td></tr>`)
+        .map((s) => `<tr><td>${esc(s.stepId)}</td><td>${esc(s.capability)}/v${esc(s.capabilityVersion)}</td>${stateTd(s.status)}<td>${s.attempt} / ${s.logicalAttempt} <span class="dim">${esc(s.strategy)}</span></td><td class="wrap">${humanStepResult(s)}</td></tr>`)
         .join("");
       return head + steps;
     })
@@ -215,8 +215,7 @@ export function renderFarm(m: FarmModel): string {
   const denikRows = m.auditLog
     .map((r) => {
       const link = r.workflowId ? `<a href="/workflow/${esc(r.workflowId)}">${esc(r.workflowId)}</a>` : "—";
-      const detail = JSON.stringify(r.details ?? {});
-      return `<tr><td class="c-date">${esc(r.at)}</td><td>${esc(r.kind)}</td><td>${link}</td><td>${esc(r.capability ?? "")}</td><td><code>${esc(detail.length > 200 ? `${detail.slice(0, 200)}…` : detail)}</code></td></tr>`;
+      return `<tr><td class="c-date">${esc(r.at)}</td><td>${esc(r.kind)}</td><td>${link}</td><td>${esc(r.capability ?? "")}</td><td class="wrap">${auditSummary(r.kind, r.capability, r.details)}</td></tr>`;
     })
     .join("");
 
@@ -228,7 +227,6 @@ export function renderFarm(m: FarmModel): string {
     instance: icon('<line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="14" y2="18"/>'),
     denik: icon('<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/>'),
     novy: icon('<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>'),
-    json: icon('<polyline points="8 6 3 12 8 18"/><polyline points="16 6 21 12 16 18"/>'),
   };
 
   const bodyHtml = `<div class="ui" id="ui" data-layout="side-nav" data-style="saas-modern">
@@ -248,7 +246,6 @@ export function renderFarm(m: FarmModel): string {
     <a class="p-navitem" href="#denik" data-view="denik" title="Deník">${ICONS.denik}<span class="lbl">Deník</span></a>
     <div class="p-navsec">Farma</div>
     <a class="p-navitem" href="/" title="Nový dokument">${ICONS.novy}<span class="lbl">Nový dokument</span></a>
-    <a class="p-navitem" href="/audit.json" title="/audit.json">${ICONS.json}<span class="lbl">/audit.json</span></a>
   </nav>
 
   <main class="p-main">
@@ -308,6 +305,11 @@ html,body{height:100%;margin:0}
 .ui code{font-family:var(--font-data);background:var(--bordersoft);padding:.05em .35em;border-radius:4px;font-size:.92em}
 .ui .p-titlebtn{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex:none;border:0;border-radius:var(--radius);background:none;color:var(--dim);cursor:pointer}
 .ui .p-titlebtn:hover{background:var(--hover);color:var(--text)}
+.ui .p-table tbody td.wrap{white-space:normal;overflow:visible;text-overflow:clip;word-break:break-word;line-height:1.4;padding-top:8px;padding-bottom:8px}
+.ui details{margin-top:3px}
+.ui details summary{cursor:pointer;font-size:.85em;color:var(--dim)}
+.ui details summary:hover{color:var(--text)}
+.ui pre.wrap{white-space:pre-wrap;word-break:break-word;margin:4px 0 0;font-size:.82em;max-width:100%;background:var(--bordersoft);padding:.5em .6em;border-radius:6px}
 ${BANK_UI_CSS}
 ${BANK_SAAS_MODERN_CSS}
 </style>
@@ -373,6 +375,57 @@ const artifactCard = (a: Artifact): string => {
 };
 
 const pick = (o: unknown, ...path: string[]): unknown => path.reduce<unknown>((cur, k) => (cur && typeof cur === "object" ? (cur as Record<string, unknown>)[k] : undefined), o);
+
+/** Raw JSON, but never dumped inline unwrapped — collapsed behind a toggle, wraps if opened. Used where a payload has no known human phrasing. */
+const rawJson = (value: unknown, cap = 600): string => {
+  const s = JSON.stringify(value ?? {});
+  return `<details><summary class="dim">podrobnosti (JSON)</summary><pre class="wrap">${esc(s.length > cap ? `${s.slice(0, cap)}…` : s)}</pre></details>`;
+};
+
+/** Step result in plain Czech, per capability — for /farm, where there's no renderOutput() above it to carry the human summary. Falls back to collapsed raw JSON for an unknown capability. */
+const humanStepResult = (s: Instance["steps"][number]): string => {
+  const r = s.result;
+  if (!r) return "";
+  if (r.error) return `<span class="dim">${esc(r.error.code)}</span>${r.error.retryable ? " <small>(lze zopakovat)</small>" : ""}`;
+  if (r.status === "WAITING") return `čeká na ${esc(r.waitReason ?? "schválení")}`;
+  const p = r.payload as Record<string, unknown> | undefined;
+  if (!p) return esc(r.status);
+  switch (s.capability) {
+    case "document.classify":
+      return `typ: <b>${esc(pick(p, "documentType", "value"))}</b> <small class="dim">jistota ${esc(pick(p, "documentType", "confidence"))}</small>`;
+    case "document.validate":
+      return `${esc(pick(p, "documentType", "validation", "status"))} <small class="dim">razítko ${pick(p, "stampAllowed") ? "povoleno" : "zamítnuto"}</small>`;
+    case "document.stamp":
+      return `<b>${esc(pick(p, "stampText"))}</b> <small class="dim">DMS ${esc(pick(p, "dmsRef"))}</small>`;
+    case "document.archive":
+      return "archivováno";
+    case "mail.ingest":
+      return "e-mail přijat";
+    case "email.send":
+      return `odesláno · příjemce <code>${esc(pick(p, "recipientRef"))}</code>`;
+    default:
+      return rawJson(p);
+  }
+};
+
+/** Audit "deník" row detail in plain Czech, falling back to collapsed raw JSON when a kind has no phrasing here. */
+const auditSummary = (kind: string, capability: string | null, details: unknown): string => {
+  const d = (details ?? {}) as Record<string, unknown>;
+  switch (kind) {
+    case "dispatch":
+      return `požadavek odeslán${capability ? ` na <code>${esc(capability)}</code>` : ""}`;
+    case "write-intent":
+      return "zápis začíná";
+    case "write-done":
+      return `zápis dokončen <small class="dim">${esc(d.status)}</small>`;
+    case "state":
+      return d.status ? `stav: <b>${esc(d.status)}</b>` : rawJson(d);
+    case "review-created":
+      return `čeká na schválení <small class="dim">${esc(d.reasonCode ?? "")}</small>`;
+    default:
+      return rawJson(d);
+  }
+};
 
 /** What the flow produced so far, in the owner's words: input, text, type, validation, stamp, notification, state. */
 const renderOutput = (v: InstanceView): string => {
