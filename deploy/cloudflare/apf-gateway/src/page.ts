@@ -177,6 +177,7 @@ const STATE_CLASS: Record<string, string> = {
   CANCELLED: "st-warn",
   RUNNING: "st-man",
   PENDING: "st-man",
+  NÁVRH: "st-man",
 };
 const stateBadge = (label: string): string => `<span class="${STATE_CLASS[label] ?? ""}"><span class="p-state"><span class="p-dot"></span>${esc(label)}</span></span>`;
 const stateTd = (label: string): string => `<td class="c-state">${stateBadge(label)}</td>`;
@@ -189,6 +190,16 @@ const DEPLOYABLE_ROLE: Record<string, string> = {
   "apf-mail-ingest": "Přijímá dokumenty poslané e-mailem",
   "apf-fakes": "Testovací dvojník DMS/registru/archivu — jeho „OK“ znamená jen, že dvojník odpovídá, ne že je napojený skutečný systém",
 };
+
+/**
+ * Ideas from docs/NAVRHOVY-LIST-farma.md that have no code yet (owner's request, 2026-09-07: "do seznamu agentů
+ * dávej i nápady co mám v režimu návrh") — kept here by hand, in sync with the design doc, not parsed from it.
+ */
+const PLANNED_DEPLOYABLES: { name: string; role: string }[] = [
+  { name: "cz.company.verify", role: "Ověří IČO v ARES (existence, právní forma, adresa) — krok 8b, návrh 7. 9. 2026, žádný kód" },
+  { name: "cz.vat.verify", role: "Ověří DPH plátcovství, nespolehlivého plátce a zveřejněný bankovní účet u Finanční správy — krok 8b, návrh 7. 9. 2026, žádný kód" },
+];
+const plannedRow = (p: { name: string; role: string }): string => `<tr><td><b>${esc(p.name)}</b><br><small class="dim">${esc(p.role)}</small></td><td class="c-state">${stateBadge("NÁVRH")}</td><td class="dim">—</td><td class="dim">zatím nepostaveno</td></tr>`;
 
 /** "Reachable" (HTTP 200 on /version) and "actually wired into the flow" are different claims — a skeleton answers fine but does nothing yet. */
 const workerReady = (d: DeployableStatus): boolean => d.ok && (d.body as Record<string, unknown> | null)?.wired !== false;
@@ -238,7 +249,9 @@ export function renderFarm(m: FarmModel): string {
       .filter((d): d is DeployableStatus => !!d)
       .map(deployableRow)
       .join("") +
-    (byName("apf-fakes") ? groupHead("Testovací dvojník (jen pro vývoj a testy)") + deployableRow(byName("apf-fakes") as DeployableStatus) : "");
+    (byName("apf-fakes") ? groupHead("Testovací dvojník (jen pro vývoj a testy)") + deployableRow(byName("apf-fakes") as DeployableStatus) : "") +
+    groupHead("Návrh — zatím nepostaveno, jen v docs/NAVRHOVY-LIST-farma.md") +
+    PLANNED_DEPLOYABLES.map(plannedRow).join("");
 
   const instanceRows = m.instances
     .map((i) => {

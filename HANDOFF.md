@@ -2,6 +2,16 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-07 (45) — Krok 8b rozdělen (cz.company.verify + cz.vat.verify), obojí v Kravičkách jako „Návrh"
+
+**Vlastníkovo doplnění k dnešnímu krok 8b:** potvrdil rozdělení `cz.subject.verify` na dvě samostatné kapability — `cz.company.verify` (ARES, IČO) a `cz.vat.verify` (DPH plátcovství, nespolehlivý plátce, zveřejněný účet). Důvod zapsán do `docs/NAVRHOVY-LIST-farma.md`: jiný externí systém pro každou, `cz.company.verify` má širší použití než jen faktury, subjekt nemusí být plátce DPH (jiná sémantika „nevztahuje se" vs. selhání).
+
+**Nové na `/farm`:** tabulka Kravičky dostala čtvrtou skupinu **„Návrh — zatím nepostaveno"** (vlastník: „do seznamu agentů dávej i nápady co mám v režimu návrh") — `PLANNED_DEPLOYABLES` v `page.ts`, ručně udržovaný seznam v souladu s návrhovým listem (ne parsovaný z markdownu), oba nové návrhy jako řádky se stavem „NÁVRH".
+
+**Vysvětleno vlastníkovi (zapsáno, protože to není samozřejmé):** budoucí `cz.company.verify` se nespustí heuristicky nad libovolným textem, co obsahuje IČO — bude to explicitní krok ve workflow definici pro faktury, navazující na strukturované pole z `invoice.extract` (krok 8). Smlouva, co mimochodem zmíní IČO, kontrolu nespustí, protože neprochází fakturačním tokem vůbec.
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare/tsconfig.json`), 232 testů, arch, farm:check.
+
 ## 2026-09-07 (44) — Diakritika v orazítkovaném textu, DPH substring bug, „Nový dokument" jako sekce na /farm
 
 **Tři nezávislé nálezy/požadavky ze stejné session:**
