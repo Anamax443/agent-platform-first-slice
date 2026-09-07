@@ -2,6 +2,21 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-07 (28) — Nová stránka „Farmář": zdraví pěti Workerů + poslední instance na jednom místě
+
+**Pokyn vlastníka** (jeho vlastní slova, ponechána jako název): „chtěl bych nějakou stránku která mi bude ukazovat stav farmáře a stav kraviček" → upřesněno na dotaz: obojí na jedné stránce (zdraví Workerů + přehled instancí).
+
+**Nová route `GET /farm` na `apf-gateway`:**
+- **Farmář** (souhrn nahoře): kolik z pěti Workerů odpovídá (`X/5 OK`), podpisový režim gateway, počty posledních instancí podle stavu.
+- **Kravičky** (tabulka): `apf-gateway` (vždy „self"), `apf-document-host`, `apf-email-executor`, `apf-mail-ingest`, `apf-fakes` — každý přes `/version` na svém service bindingu, chyba/timeout je řádek „DOWN", nikdy pád stránky (`deployableInfo()`, stejný vzor jako `fakesInfo()`).
+- **Poslední instance**: nejnovější auditní záznam per `workflow_id` z D1 (`ROW_NUMBER() OVER (PARTITION BY workflow_id ORDER BY at DESC)`), bez nové tabulky — sdílený `audit` je jediný zdroj. Odkaz na `/workflow/<id>`.
+
+**Nový service binding `MAIL_INGEST` na gateway** (`wrangler.jsonc`) — dřív gateway neměla k mail-ingestu žádnou cestu (ten volá gateway, ne naopak); teď je to jednosměrné jen pro status, router ho dál nedispatchuje.
+
+**Ověřeno:** `farm:check` (dry-run + `tsc -p deploy/cloudflare/tsconfig.json`, chytí i překlep v novém binding jménu), a navíc ručně `wrangler dev` jen nad `apf-gateway` (ostatní čtyři neběžely) + `curl /farm` — stránka vykreslila čistě, 4 Workery „DOWN" (neběžely), D1 dotaz na instance proběhl bez chyby (`zatím žádná`). Bez automatizovaného testu (je to render, ne logika s Test ID) — ověřeno pohledem, ne CI branou.
+
+**Brány zelené:** typecheck, 232 testů, arch, farm:check.
+
 ## 2026-09-07 (27) — W23 nalezen a opraven: audit relay `document-host → gateway` ztrácel záznamy potichu (otevřené pozorování ze (25) dořešeno)
 
 **Pokyn vlastníka:** vrátit se k nedořešenému pozorování ze (25) („Canceled" u `POST .../audit`), s výslovným požadavkem na „silně stabilní, takřka neprůstřelné prostředí" — tedy řešit to jako skutečnou opravu, ne jen zapsat jako otevřenou položku.

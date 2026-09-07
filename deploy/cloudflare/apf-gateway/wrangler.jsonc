@@ -27,9 +27,11 @@
   "ai": { "binding": "AI" },
 
   // Hosts are separate deployables: the router reaches them through service bindings, never through shared code.
+  // MAIL_INGEST is read-only here (status page, /farm): the router never dispatches to it, it's the one that dispatches to gateway.
   "services": [
     { "binding": "DOCUMENT_HOST", "service": "apf-document-host" },
     { "binding": "EMAIL_EXECUTOR", "service": "apf-email-executor" },
+    { "binding": "MAIL_INGEST", "service": "apf-mail-ingest" },
     { "binding": "FAKES", "service": "apf-fakes" }
   ],
 

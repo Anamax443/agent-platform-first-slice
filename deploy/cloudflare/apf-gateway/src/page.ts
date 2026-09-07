@@ -31,6 +31,29 @@ export interface HomeModel {
   models: ModelsInfo;
 }
 
+export interface DeployableStatus {
+  name: string;
+  ok: boolean;
+  status: number;
+  body: unknown;
+}
+
+export interface FarmInstanceRow {
+  workflowId: string;
+  tenantId: string | null;
+  at: string;
+  kind: string;
+  capability: string | null;
+  status?: string;
+}
+
+export interface FarmModel {
+  installation: string;
+  gatewaySigning: string;
+  deployables: DeployableStatus[];
+  instances: FarmInstanceRow[];
+}
+
 export interface InstanceView {
   workflowId: string;
   installation: string;
@@ -104,7 +127,56 @@ ${
 <button type="submit">Odeslat do toku</button>
 </form></div>
 <h2>Co je na farmě zapojené</h2><div class="card">${wiredList(m.wired)}</div>
-<nav><a href="/version">/version</a><a href="/audit.json">/audit.json</a></nav>`,
+<nav><a href="/farm">Farmář</a><a href="/version">/version</a><a href="/audit.json">/audit.json</a></nav>`,
+  );
+}
+
+/** Known badge colors from the CSS (see .SUCCEEDED/.FAILED/… above); anything else (a "kind (capability)" fallback for a not-yet-terminal instance) gets the neutral "in progress" color. */
+const KNOWN_STATUS_BADGES = new Set(["SUCCEEDED", "FAILED", "WAITING", "RUNNING", "PENDING", "UNKNOWN_OUTCOME", "CANCELLED"]);
+const badgeClassFor = (status: string | undefined, kind: string): string => status ?? (KNOWN_STATUS_BADGES.has(kind) ? kind : "PENDING");
+
+/** Farmář (přehled farmy nahoře) + kravičky (pět Workerů farmy) + poslední instance na jedné stránce. */
+export function renderFarm(m: FarmModel): string {
+  const up = m.deployables.filter((d) => d.ok).length;
+  const counts = new Map<string, number>();
+  for (const i of m.instances) {
+    const key = i.status ?? `${i.kind}${i.capability ? ` (${i.capability})` : ""}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+
+  const farmar = `<div class="card"><b>Farmář</b> — souhrn farmy <code>${esc(m.installation)}</code><br>
+Workery: <span class="badge ${up === m.deployables.length ? "SUCCEEDED" : "FAILED"}">${up}/${m.deployables.length} OK</span> ·
+podpis <code>${esc(m.gatewaySigning)}</code> · posledních ${m.instances.length} instancí:
+${[...counts.entries()].map(([k, n]) => `<span class="badge ${badgeClassFor(KNOWN_STATUS_BADGES.has(k) ? k : undefined, k)}">${esc(k)} × ${n}</span>`).join(" ")}
+</div>`;
+
+  const kravicky = m.deployables
+    .map((d) => {
+      const b = (d.body ?? {}) as Record<string, unknown>;
+      const caps = Array.isArray(b.capabilities) ? (b.capabilities as unknown[]).join(", ") : undefined;
+      return `<tr><td><b>${esc(d.name)}</b></td><td><span class="badge ${d.ok ? "SUCCEEDED" : "FAILED"}">${d.ok ? "OK" : "DOWN"}</span> <small>HTTP ${d.status || "—"}</small></td><td><small>${esc(b.isolation ?? "")}</small></td><td><small>${caps ? esc(caps) : b.wired === false ? "not wired" : b.error ? esc(String(b.error)) : ""}</small></td></tr>`;
+    })
+    .join("");
+
+  const instances = m.instances
+    .map((i) => {
+      const cls = badgeClassFor(i.status, i.kind);
+      const label = i.status ?? `${i.kind}${i.capability ? ` · ${i.capability}` : ""}`;
+      return `<tr><td><a href="/workflow/${esc(i.workflowId)}">${esc(i.workflowId)}</a></td><td><code>${esc(i.tenantId ?? "—")}</code></td><td><span class="badge ${esc(cls)}">${esc(label)}</span></td><td><small>${esc(i.at)}</small></td></tr>`;
+    })
+    .join("");
+
+  return shell(
+    `Farmář · ${m.installation}`,
+    `<header><h1>Farmář · farma <code>${esc(m.installation)}</code></h1></header>
+${farmar}
+<h2>Kravičky</h2><div class="card"><table><tr><th>Worker</th><th>Stav</th><th>Isolation</th><th>Detail</th></tr>${kravicky}</table></div>
+<h2>Poslední instance</h2><div class="card">${
+      m.instances.length
+        ? `<table><tr><th>Instance</th><th>Tenant</th><th>Stav</th><th>Poslední aktivita</th></tr>${instances}</table>`
+        : '<span class="muted">zatím žádná</span>'
+    }</div>
+<nav><a href="/">Nový dokument</a><a href="/audit.json">Společný audit (D1)</a></nav>`,
   );
 }
 

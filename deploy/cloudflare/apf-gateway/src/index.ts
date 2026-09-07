@@ -22,7 +22,7 @@ import { Orchestrator, type WorkflowDef } from "../../../../src/platform/orchest
 import { ReviewService } from "../../../../src/platform/review.js";
 import type { MessageEnvelope, ResultEnvelope } from "../../../../src/platform/types.js";
 import { WORKFLOW_NAMES, workflowDef } from "../../../../src/platform/workflow.js";
-import { renderError, renderHome, renderInstance, type InstanceView, type ModelsInfo, type Wired } from "./page.js";
+import { renderError, renderFarm, renderHome, renderInstance, type FarmInstanceRow, type InstanceView, type ModelsInfo, type Wired } from "./page.js";
 import { describeModels, wirePlatform, type Wiring } from "./platform-wiring.js";
 import { D1_AUDIT_DDL, DDL, SqliteArtifacts, SqliteAudit, SqliteJournal } from "./store.js";
 
@@ -33,6 +33,7 @@ export interface Env {
   AI: Ai;
   DOCUMENT_HOST: Fetcher;
   EMAIL_EXECUTOR: Fetcher;
+  MAIL_INGEST: Fetcher;
   FAKES: Fetcher;
   /** Set by scripts/farm-config.mjs; must equal the installation the bundle was built from. */
   INSTALLATION: string;
@@ -95,6 +96,33 @@ const fakesInfo = async (env: Env, path = "/version"): Promise<{ status: number;
   } catch (e) {
     return { status: 0, body: { error: String(e) } };
   }
+};
+
+/** Same shape as fakesInfo, generalized for /farm: any bound deployable's /version, never thrown — a down Worker is a row, not a crash. */
+const deployableInfo = async (fetcher: Fetcher, origin: string): Promise<{ ok: boolean; status: number; body: unknown }> => {
+  try {
+    const r = await fetcher.fetch(`${origin}/version`);
+    return { ok: r.ok, status: r.status, body: await r.json().catch(() => undefined) };
+  } catch (e) {
+    return { ok: false, status: 0, body: { error: String(e) } };
+  }
+};
+
+/** The latest audit record per workflow (any kind, not just terminal "state") — a lightweight instance list without a separate index. */
+const recentInstances = async (env: Env, limit = 30): Promise<FarmInstanceRow[]> => {
+  await ensureD1Audit(env.AUDIT);
+  const rows = await env.AUDIT.prepare(
+    `SELECT workflow_id, tenant_id, at, kind, capability, json FROM
+       (SELECT *, ROW_NUMBER() OVER (PARTITION BY workflow_id ORDER BY at DESC) AS rn FROM audit WHERE workflow_id IS NOT NULL)
+     WHERE rn = 1 ORDER BY at DESC LIMIT ?`,
+  )
+    .bind(limit)
+    .all<{ workflow_id: string; tenant_id: string | null; at: string; kind: string; capability: string | null; json: string }>();
+  return rows.results.map((r) => {
+    const full = JSON.parse(r.json) as AuditRecord;
+    const status = full.kind === "state" ? (full.details as { status?: string } | undefined)?.status : undefined;
+    return { workflowId: r.workflow_id, tenantId: r.tenant_id, at: r.at, kind: r.kind, capability: r.capability, status };
+  });
 };
 
 const MAX_TEXT_CHARS = 1_000_000;
@@ -406,6 +434,31 @@ export default {
     if (url.pathname === "/chaos" && request.method === "GET") {
       const f = await fakesInfo(env, "/chaos");
       return Response.json(f.body ?? { error: "NO_ANSWER" }, { status: f.status || 503 });
+    }
+
+    // "Farmář" (owner's own word for it): one page, health of all five deployables + the most recent workflow instances.
+    if (url.pathname === "/farm" && request.method === "GET") {
+      const [documentHost, emailExecutor, mailIngest, fakes, instances] = await Promise.all([
+        deployableInfo(env.DOCUMENT_HOST, "https://apf-document-host.internal"),
+        deployableInfo(env.EMAIL_EXECUTOR, "https://apf-email-executor.internal"),
+        deployableInfo(env.MAIL_INGEST, "https://apf-mail-ingest.internal"),
+        deployableInfo(env.FAKES, FAKES_ORIGIN),
+        recentInstances(env, 30),
+      ]);
+      return html(
+        renderFarm({
+          installation: INSTALLATION,
+          gatewaySigning: signingMode(env),
+          deployables: [
+            { name: "apf-gateway", ok: true, status: 200, body: { isolation: "self", wired: wiredOf(env) } },
+            { name: "apf-document-host", ...documentHost },
+            { name: "apf-email-executor", ...emailExecutor },
+            { name: "apf-mail-ingest", ...mailIngest },
+            { name: "apf-fakes", ...fakes },
+          ],
+          instances,
+        }),
+      );
     }
 
     if (url.pathname === "/" && request.method === "GET") return html(renderHome(homeModel(request, env)));
