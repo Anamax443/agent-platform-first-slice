@@ -5,6 +5,15 @@ import type { AuditRecord } from "../../../../src/platform/audit.js";
 import type { Instance } from "../../../../src/platform/journal.js";
 import { BANK_SAAS_MODERN_CSS, BANK_UI_CSS } from "./bank.js";
 
+export interface InboxItem {
+  key: string;
+  name: string;
+  size: number;
+  uploaded: string;
+  reason?: string;
+  message?: string;
+}
+
 export interface Wired {
   intake: boolean;
   extract: string;
@@ -73,7 +82,7 @@ export interface FarmModel {
   deployables: DeployableStatus[];
   instances: FarmInstanceRow[];
   auditLog: AuditLogRow[];
-  inbox: { pending: number; failed: number; batchLimit: number };
+  inbox: { pending: InboxItem[]; failed: InboxItem[]; batchLimit: number };
 }
 
 export interface InstanceView {
@@ -294,17 +303,38 @@ export function renderFarm(m: FarmModel): string {
         <span class="grow"></span>
         <a class="p-btn" href="/">Nový dokument</a>
       </div>
-      <div class="p-panehead"><span>Dávkový příjem (inbox)</span><span class="n">${m.inbox.pending} čeká${m.inbox.failed ? ` · ${m.inbox.failed} selhalo` : ""}</span></div>
+      <div class="p-panehead"><span>Dávkový příjem (inbox)</span><span class="n">${m.inbox.pending.length} čeká${m.inbox.failed.length ? ` · ${m.inbox.failed.length} selhalo` : ""}</span></div>
       <form class="p-toolbar" method="post" action="/farm/inbox" enctype="multipart/form-data">
         <input type="file" name="files" multiple>
         <button class="p-btn" type="submit">Nahrát do inboxu</button>
         <span class="vsep"></span>
         <span class="meta">kontrola každých 5 minut, max ${m.inbox.batchLimit} souborů na běh</span>
-        ${m.inbox.failed ? `<span class="vsep"></span><span class="meta" style="color:var(--crit)">nezpracované soubory v <code>inbox/failed/</code> — podívej se, co je špatně, a nahraj znovu</span>` : ""}
       </form>
       <div class="p-toolbar">
         <span class="meta">nebo přímo Cloudflare dashboard → R2 → <code>apf-artifacts</code> → <code>inbox/</code> (stejné místo, žádný rozdíl)</span>
       </div>
+      ${
+        m.inbox.pending.length
+          ? `<div class="p-gridwrap"><table class="p-table">
+        <thead><tr><th>Soubor</th><th>Velikost</th><th>Nahráno</th></tr></thead>
+        <tbody>${m.inbox.pending.map((it) => `<tr><td class="wrap">${esc(it.name)}</td><td>${kb(it.size)}</td><td class="c-date">${esc(it.uploaded)}</td></tr>`).join("")}</tbody>
+      </table></div>`
+          : ""
+      }
+      ${
+        m.inbox.failed.length
+          ? `<div class="p-panehead"><span style="color:var(--crit)">Selhalo v inbox/failed/</span><span class="n">podívej se, co je špatně, a zkus znovu</span></div>
+      <div class="p-gridwrap"><table class="p-table">
+        <thead><tr><th>Soubor</th><th>Velikost</th><th>Důvod</th><th></th></tr></thead>
+        <tbody>${m.inbox.failed
+          .map(
+            (it) =>
+              `<tr><td class="wrap">${esc(it.name)}</td><td>${kb(it.size)}</td><td class="wrap">${esc(it.reason ?? "")}${it.message ? ` <small class="dim">${esc(it.message)}</small>` : ""}</td><td><form method="post" action="/farm/inbox/retry"><input type="hidden" name="key" value="${esc(it.key)}"><button class="p-btn" type="submit">Zkusit znovu</button></form></td></tr>`,
+          )
+          .join("")}</tbody>
+      </table></div>`
+          : ""
+      }
     </div>
 
     <div id="view-kravicky" hidden>
@@ -336,7 +366,7 @@ export function renderFarm(m: FarmModel): string {
     <span><b>${up}/${m.deployables.length}</b> Workerů</span>
     <span><b>${m.instances.length}</b> instancí</span>
     <span><b>${m.auditLog.length}</b> v deníku</span>
-    <span><b>${m.inbox.pending}</b> v inboxu${m.inbox.failed ? ` <span class="dim">(${m.inbox.failed} selhalo)</span>` : ""}</span>
+    <span><b>${m.inbox.pending.length}</b> v inboxu${m.inbox.failed.length ? ` <span class="dim">(${m.inbox.failed.length} selhalo)</span>` : ""}</span>
     <span class="grow"></span>
     <span>Farmář · ${esc(m.installation)}</span>
   </footer>
@@ -499,7 +529,7 @@ const renderOutput = (v: InstanceView): string => {
     [
       "Vstup",
       original
-        ? `${original.name ? `<b>${esc(original.name)}</b> · ` : ""}${esc(original.contentType ?? "text/plain")} · ${kb(original.byteLength ?? original.bytes.length)} · od <code>${esc(original.receivedFrom)}</code>${original.location ? ` · <a href="/workflow/${esc(v.workflowId)}/original" target="_blank" rel="noopener">zobrazit originál</a>` : ""}`
+        ? `${original.name ? `<b>${esc(original.name)}</b> · ` : ""}${esc(original.contentType ?? "text/plain")} · ${kb(original.byteLength ?? original.bytes.length)} · od <code>${esc(original.receivedFrom)}</code>${original.location ? ` · <a href="/workflow/${esc(v.workflowId)}/original" target="_blank" rel="noopener">zobrazit originál</a> · <a href="/workflow/${esc(v.workflowId)}/original-stamped" target="_blank" rel="noopener">zobrazit vizuálně orazítkovaný originál</a>` : ""}`
         : '<span class="muted">žádný</span>',
     ],
     [

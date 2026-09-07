@@ -1,0 +1,6 @@
+{
+  "$comment": "Per-deployable overlay merged onto deploy/cloudflare/<deployable>/wrangler.jsonc by scripts/farm-config.mjs, same mechanism as config/farm-bass443/farm.json. local-fakes needed none of this until the visual-stamp font URL (2026-09-07) — a public, non-installation-specific value that still can't be a literal in src/** (ARCH-DEP-001 hostname check), so it lives here like every other var.",
+  "apf-gateway": {
+    "vars": { "STAMP_FONT_URL": "https://fonts.gstatic.com/s/roboto/v51/KFOMCnqEu92Fr1ME7kSn66aGLdTylUAMQXC89YmC2DPNWuYjammT.ttf" }
+  }
+}

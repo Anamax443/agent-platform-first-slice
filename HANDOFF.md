@@ -2,6 +2,24 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-07 (42) — Vizuální razítko (PDF + obrázky), inbox nesmí zablokovat jeden na druhém, tabulky místo počtů, návrh krok 8b
+
+**Čtyři věci v jednom nasazení, vlastníkovy pokyny za sebou ve stejné session:**
+
+**1) Vizuální razítko na originál — additivní, „vedle sebe" s dnešním textovým zápisem do DMS (vlastníkovo rozhodnutí, ne nahrazení).** Reálný přiklad z praxe („účetní vezme fakturu, napíše na ni razítko/poznámku a pak to dá scanovat") — teď dělá systém totéž digitálně. Nový modul `visual-stamp.ts`:
+- **PDF** → `pdf-lib` (čistý JS, žádné nativní závislosti), červený rámeček + text (ZPRACOVANO, čas, ref) natočený -8°, **na každou stránku** (vlastník: „je to informace o zpracování systémem", ne jen titulní).
+- **JPG/PNG** → Cloudflare `IMAGES` binding: **`.text()` umí renderovat text nativně** (žádná WASM knihovna typu resvg-wasm potřeba, ověřeno v aktuální dokumentaci), `.draw()` ho složí na originál. Kompromis: `ImageDrawOptions` nemá `rotate`, takže razítko na obrázku je rovné, ne natočené jako u PDF. Font: veřejná Google Fonts URL (`fonts.gstatic.com`, content-hash, ověřeno že nevyprší) — **ne literál v kódu**, `arch-dep.mjs` to správně odchytil jako "public hostname"; opraveno přes `config/<instalace>/farm.json` → `apf-gateway.vars.STAMP_FONT_URL` (nový `config/local-fakes/farm.json`, dřív neexistoval).
+- Spouští se v `WorkflowInstance.intake()` přes `ctx.waitUntil()` hned po úspěšném `document.stamp`, píše do `stamped-visual/<tenant>/<sha256>` (originál sám zůstává nedotčen). Nová route `GET /workflow/:id/original-stamped`, odkaz na stránce instance vedle „zobrazit originál".
+- Design ověřen napřed na skutečných testdokumentech mimo Worker (lokální `pdf-lib`/Pillow skripty ve scratchpadu), teprve po vlastníkově schválení vzhledu zapojeno do ostrého kódu.
+
+**2) Dávkové zpracování: jeden vadný soubor nesmí zablokovat zbytek dávky (vlastníkův požadavek).** `processInbox()` neměl try/catch kolem těla smyčky — výjimka (ne jen normální `{ok:false}` výsledek) by vyhodila ven z `for` a **nechala nezpracované všechny soubory za tím, co spadl**, navíc by vadný soubor zůstal v `inbox/` a při příštím běhu cronu spadl znovu se stejným efektem. Opraveno: každý soubor ve vlastním try/catch, i neočekávaná výjimka teď skončí přesunem do `inbox/failed/` (`reason: UNEXPECTED_ERROR`) a smyčka pokračuje na další soubor.
+
+**3) `/farm` ukazuje skutečné soubory, ne jen počty (vlastník: „inbox mi chybí na zobrazení a /failed také").** Nová `inboxDetail()` (nahrazuje `inboxStats`) vrací pole souborů, ne jen čísla. Panel „Dávkový příjem" teď má dvě tabulky: čekající (jméno, velikost, čas nahrání) a selhané (jméno, velikost, důvod + zpráva, tlačítko **„Zkusit znovu"** — nová route `POST /farm/inbox/retry`, přesune soubor zpět do `inbox/` pod čerstvým klíčem).
+
+**4) Návrh krok 8b zapsán do `docs/NAVRHOVY-LIST-farma.md` (jen plán, žádný kód):** vlastníkův detailní návrh polí `invoice.v1` s provenancí per pole (`value/confidence/sourcePage/sourceBoundingBox/normalizedValue/validationStatus`, stejný vzor jako dnešní `FieldValue<T>`) a **samostatná capability `cz.subject.verify`** (nebo `cz.company.verify`/`cz.vat.verify`) ověřující IČO/DIČ/plátcovství DPH/nespolehlivého plátce/zveřejněný bankovní účet proti ARES a Finanční správě — vlastníkovo zdůvodnění „určitě bych to nemíchal do OCR/extraction agenta, je to deterministický kontrolní worker, ne volná úvaha AI" zapsáno doslovně. **Needs verification**, než se začne psát kód: přesný název/kontrakt webové služby Finanční správy pro SW třetích stran.
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare/tsconfig.json`), 232 testů, arch (font URL teď čistý), farm:check. Ověřeno `wrangler dev` (local-fakes): `/farm` s novými tabulkami vykresluje bez pádu; `document.stamp` v samostatném gatewayi bez `apf-fakes`/`apf-document-host` logicky nedoběhne (DEPENDENCY_UNAVAILABLE už na validate) — vizuální razítko end-to-end ověřeno až přímo na farmě po nasazení.
+
 ## 2026-09-07 (41) — Název souboru a skutečný vizuál originálu na stránce instance
 
 **Pokyn vlastníka:** po (40) nahrál přes nový upload 10 skutečných testovacích dokumentů (PDF, JPG, PNG, JSON, XML, TXT — faktury, smlouva, účtenka, záruční list, návod, lístek ze šatny, poznámka). Zeptal se „proč to nevidím v konzoli" a upřesnil na screenshotu z `/farm`: chybí název souboru (nejde poznat, který řádek je který dokument) a chybí možnost vidět skutečný vizuál dokladu (jen vytěžený text).

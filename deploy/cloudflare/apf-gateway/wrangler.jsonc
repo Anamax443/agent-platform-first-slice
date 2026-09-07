@@ -30,6 +30,10 @@
   // First real LlmAdapter behind document.classify (free tier); a Claude key comes later and only here.
   "ai": { "binding": "AI" },
 
+  // Compositing the generated stamp overlay onto a JPG/PNG original (owner's request, 2026-09-07: visual stamp,
+  // same idea as an accountant's rubber stamp before scanning). Free plan: 5000 transformations/month, plenty for this volume.
+  "images": { "binding": "IMAGES" },
+
   // Hosts are separate deployables: the router reaches them through service bindings, never through shared code.
   // MAIL_INGEST is read-only here (status page, /farm): the router never dispatches to it, it's the one that dispatches to gateway.
   "services": [

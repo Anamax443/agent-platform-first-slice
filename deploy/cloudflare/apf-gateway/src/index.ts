@@ -15,7 +15,7 @@ import { FAKES_ORIGIN, HttpRegistryAdapter } from "../../../../src/adapters/regi
 import type { WorkersAiBinding } from "../../../../src/adapters/workers-ai.js";
 import type { SecretsSource } from "../../../../src/installation.js";
 import type { AuditRecord } from "../../../../src/platform/audit.js";
-import { sha256Bytes } from "../../../../src/platform/artifacts.js";
+import { sha256Bytes, type Artifact } from "../../../../src/platform/artifacts.js";
 import { iso, SystemClock } from "../../../../src/platform/clock.js";
 import { platformError } from "../../../../src/platform/errors.js";
 import { newId } from "../../../../src/platform/ids.js";
@@ -23,15 +23,19 @@ import { Orchestrator, type WorkflowDef } from "../../../../src/platform/orchest
 import { ReviewService } from "../../../../src/platform/review.js";
 import type { MessageEnvelope, ResultEnvelope } from "../../../../src/platform/types.js";
 import { WORKFLOW_NAMES, workflowDef } from "../../../../src/platform/workflow.js";
-import { renderError, renderFarm, renderHome, renderInstance, type AuditLogRow, type FarmInstanceRow, type InstanceView, type ModelsInfo, type Wired } from "./page.js";
+import { renderError, renderFarm, renderHome, renderInstance, type AuditLogRow, type FarmInstanceRow, type InboxItem, type InstanceView, type ModelsInfo, type Wired } from "./page.js";
 import { describeModels, wirePlatform, type Wiring } from "./platform-wiring.js";
 import { D1_AUDIT_DDL, DDL, SqliteArtifacts, SqliteAudit, SqliteJournal } from "./store.js";
+import { visuallyStamp } from "./visual-stamp.js";
 
 export interface Env {
   WORKFLOW: DurableObjectNamespace<WorkflowInstance>;
   AUDIT: D1Database;
   ARTIFACTS: R2Bucket;
   AI: Ai;
+  IMAGES: ImagesBinding;
+  /** Set by config/<installation>/farm.json (apf-gateway.vars): public Google Fonts URL used to render the visual stamp text. */
+  STAMP_FONT_URL: string;
   DOCUMENT_HOST: Fetcher;
   EMAIL_EXECUTOR: Fetcher;
   MAIL_INGEST: Fetcher;
@@ -258,7 +262,34 @@ export class WorkflowInstance extends DurableObject<Env> {
     });
     await orchestrator.run(inst.workflowId);
     this.ctx.waitUntil(this.copyOut());
+    this.ctx.waitUntil(this.visualStampIfApplicable(original, input.workflowId));
     return this.view() as InstanceView;
+  }
+
+  /**
+   * Additive visual stamp on the original binary (owner's decision 2026-09-07: "vedle sebe", not instead of the
+   * existing text-based DMS write). Only runs when document.stamp actually succeeded and the original is a format
+   * visual-stamp.ts knows how to handle (PDF, JPG, PNG) — never blocks or changes the outcome of the workflow itself.
+   */
+  private async visualStampIfApplicable(original: Artifact, workflowId: string): Promise<void> {
+    if (!original.location) return; // text intake: nothing to stamp visually
+    const inst = this.journal.get(workflowId);
+    const stampStep = inst?.steps.find((s) => s.capability === "document.stamp" && s.status === "SUCCEEDED");
+    if (!stampStep) return;
+    const payload = stampStep.result?.payload as { dmsRef?: unknown } | undefined;
+    const dmsRef = typeof payload?.dmsRef === "string" ? payload.dmsRef : "unknown";
+    try {
+      const obj = await this.env.ARTIFACTS.get(original.location);
+      if (!obj) return;
+      const bytes = await obj.arrayBuffer();
+      const stamped = await visuallyStamp(bytes, original.contentType ?? "application/octet-stream", { label: "ZPRACOVANO", at: iso(this.clock.now()), ref: dmsRef }, this.env.IMAGES, this.env.STAMP_FONT_URL);
+      if (!stamped) return; // content type has no visual-stamp recipe yet
+      const key = `stamped-visual/${original.tenantId}/${original.sha256}`;
+      await this.env.ARTIFACTS.put(key, stamped.bytes, { httpMetadata: { contentType: stamped.contentType } });
+      console.log(`[apf-gateway] visual stamp written workflowId=${workflowId} key=${key}`);
+    } catch (e) {
+      console.error(`[apf-gateway] visual stamp failed workflowId=${workflowId}: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
+    }
   }
 
   view(): InstanceView | null {
@@ -549,32 +580,60 @@ async function processInbox(env: Env): Promise<{ picked: number; ok: number; fai
   let ok = 0;
   let failed = 0;
   for (const obj of pending) {
+    // One file's exception must never abort the batch (owner's requirement, 2026-09-07: a check first, and a failure
+    // in file N can't block N+1..10) — everything about this file, including an unexpected throw, stays inside this
+    // try so the loop always reaches the next object.
     const name = obj.key.slice(INBOX_PREFIX.length);
-    const got = await env.ARTIFACTS.get(obj.key);
-    if (!got) continue; // listed a moment ago, gone now (raced with something else) - nothing to do
-    const buf = await got.arrayBuffer();
-    const contentType = contentTypeOf(name, got.httpMetadata?.contentType ?? "");
-    const content: IntakeRequest["content"] = isText(contentType) ? { kind: "text", bytes: new TextDecoder().decode(buf), contentType } : { kind: "binary", buf, name, contentType };
-    const result = await startIntake(env, { workflow: "document-intake", tenantId: intakeTenant(), receivedFrom: "inbox:r2", content });
-    if (result.ok) {
-      ok += 1;
-      console.log(`[apf-gateway] inbox picked up ${obj.key} -> workflowId=${result.workflowId}`);
-      await env.ARTIFACTS.delete(obj.key);
-    } else {
+    try {
+      const got = await env.ARTIFACTS.get(obj.key);
+      if (!got) continue; // listed a moment ago, gone now (raced with something else) - nothing to do
+      const buf = await got.arrayBuffer();
+      const contentType = contentTypeOf(name, got.httpMetadata?.contentType ?? "");
+      const content: IntakeRequest["content"] = isText(contentType) ? { kind: "text", bytes: new TextDecoder().decode(buf), contentType } : { kind: "binary", buf, name, contentType };
+      const result = await startIntake(env, { workflow: "document-intake", tenantId: intakeTenant(), receivedFrom: "inbox:r2", content });
+      if (result.ok) {
+        ok += 1;
+        console.log(`[apf-gateway] inbox picked up ${obj.key} -> workflowId=${result.workflowId}`);
+        await env.ARTIFACTS.delete(obj.key);
+      } else {
+        failed += 1;
+        console.error(`[apf-gateway] inbox failed for ${obj.key}: ${result.code} ${result.message}`);
+        await env.ARTIFACTS.put(`${INBOX_FAILED_PREFIX}${name}`, buf, { httpMetadata: { contentType }, customMetadata: { reason: result.code, message: result.message, name } });
+        await env.ARTIFACTS.delete(obj.key);
+      }
+    } catch (e) {
       failed += 1;
-      console.error(`[apf-gateway] inbox failed for ${obj.key}: ${result.code} ${result.message}`);
-      await env.ARTIFACTS.put(`${INBOX_FAILED_PREFIX}${name}`, buf, { httpMetadata: { contentType }, customMetadata: { reason: result.code, message: result.message } });
-      await env.ARTIFACTS.delete(obj.key);
+      const message = e instanceof Error ? e.message : String(e);
+      console.error(`[apf-gateway] inbox threw for ${obj.key}: ${message}`);
+      try {
+        const buf = await (await env.ARTIFACTS.get(obj.key))?.arrayBuffer();
+        if (buf) await env.ARTIFACTS.put(`${INBOX_FAILED_PREFIX}${name}`, buf, { customMetadata: { reason: "UNEXPECTED_ERROR", message, name } });
+        await env.ARTIFACTS.delete(obj.key);
+      } catch (e2) {
+        // Moving the file itself failed too (e.g. R2 unavailable) — leave it in inbox/, next tick will try again
+        // rather than lose it; the object never blocks the objects after it in this loop either way.
+        console.error(`[apf-gateway] inbox could not quarantine ${obj.key} after throw: ${e2 instanceof Error ? e2.message : String(e2)}`);
+      }
     }
   }
   return { picked: pending.length, ok, failed };
 }
 
-/** Read-only counts for /farm — never triggers processing, just lists (a page view must not have side effects). */
-async function inboxStats(env: Env): Promise<{ pending: number; failed: number; batchLimit: number }> {
-  const listed = await env.ARTIFACTS.list({ prefix: INBOX_PREFIX, limit: 1000 });
-  const failed = listed.objects.filter((o) => o.key.startsWith(INBOX_FAILED_PREFIX)).length;
-  return { pending: listed.objects.length - failed, failed, batchLimit: INBOX_BATCH_LIMIT };
+/** What /farm shows under "Dávkový příjem" — actual files, not just counts (owner's request, 2026-09-07: "inbox mi chybí na zobrazení a /failed také"). Read-only, never triggers processing. */
+async function inboxDetail(env: Env): Promise<{ pending: InboxItem[]; failed: InboxItem[]; batchLimit: number }> {
+  const listed = await env.ARTIFACTS.list({ prefix: INBOX_PREFIX, limit: 500, include: ["customMetadata"] });
+  const toItem = (o: (typeof listed.objects)[number], prefix: string): InboxItem => ({
+    key: o.key,
+    name: o.customMetadata?.name ?? o.key.slice(prefix.length),
+    size: o.size,
+    uploaded: typeof o.uploaded === "string" ? o.uploaded : new Date(o.uploaded).toISOString(),
+    ...(o.customMetadata?.reason ? { reason: o.customMetadata.reason } : {}),
+    ...(o.customMetadata?.message ? { message: o.customMetadata.message } : {}),
+  });
+  const pending: InboxItem[] = [];
+  const failed: InboxItem[] = [];
+  for (const o of listed.objects) (o.key.startsWith(INBOX_FAILED_PREFIX) ? failed : pending).push(toItem(o, o.key.startsWith(INBOX_FAILED_PREFIX) ? INBOX_FAILED_PREFIX : INBOX_PREFIX));
+  return { pending, failed, batchLimit: INBOX_BATCH_LIMIT };
 }
 
 export default {
@@ -608,6 +667,20 @@ export default {
       return Response.json(f.body ?? { error: "NO_ANSWER" }, { status: f.status || 503 });
     }
 
+    // Move one failed file back to inbox/ under a fresh key, for the "podívej se, co je špatně, a nahraj znovu" link.
+    if (url.pathname === "/farm/inbox/retry" && request.method === "POST") {
+      const form = await request.formData().catch(() => new FormData());
+      const key = String(form.get("key") ?? "");
+      if (!key.startsWith(INBOX_FAILED_PREFIX)) return Response.json({ error: "INVALID_KEY" }, { status: 400 });
+      const obj = await env.ARTIFACTS.get(key);
+      if (!obj) return Response.json({ error: "NOT_FOUND", key }, { status: 404 });
+      const buf = await obj.arrayBuffer();
+      const name = obj.customMetadata?.name ?? key.slice(INBOX_FAILED_PREFIX.length);
+      await env.ARTIFACTS.put(`${INBOX_PREFIX}${newId("up")}-${sanitizeInboxName(name)}`, buf, { httpMetadata: obj.httpMetadata, customMetadata: { name, receivedFrom: "farm-retry", receivedAt: new Date().toISOString() } });
+      await env.ARTIFACTS.delete(key);
+      return Response.redirect(new URL("/farm#view-prehled", url).toString(), 303);
+    }
+
     // "Farmář" (owner's own word for it): one page, health of all five deployables + the most recent workflow instances.
     if (url.pathname === "/farm" && request.method === "GET") {
       const [documentHost, emailExecutor, mailIngest, fakes, instances, log, inbox] = await Promise.all([
@@ -617,7 +690,7 @@ export default {
         deployableInfo(env.FAKES, FAKES_ORIGIN),
         recentInstances(env, 15),
         auditLog(env, 50),
-        inboxStats(env),
+        inboxDetail(env),
       ]);
       return html(
         renderFarm({
@@ -733,6 +806,21 @@ export default {
       if (!original?.location) return Response.json({ error: "NOT_FOUND", message: "instance has no binary original (text intake, or already purged)" }, { status: 404 });
       const obj = await env.ARTIFACTS.get(original.location);
       if (!obj) return Response.json({ error: "NOT_FOUND", message: "not in R2 (already purged)", key: original.location }, { status: 404 });
+      return new Response(obj.body, { headers: { "content-type": obj.httpMetadata?.contentType ?? "application/octet-stream", "cache-control": "no-store" } });
+    }
+
+    // The visual stamp (owner's decision 2026-09-07: "vedle sebe" alongside the text-based DMS write) — written
+    // asynchronously by visualStampIfApplicable() right after document.stamp succeeds, so this can 404 briefly.
+    const originalStampedRoute = /^\/workflow\/(wf-[A-Za-z0-9]+)\/original-stamped$/.exec(url.pathname);
+    if (originalStampedRoute && request.method === "GET") {
+      const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(originalStampedRoute[1] as string));
+      const view = (await stub.view()) as InstanceView | null;
+      if (!view) return Response.json({ error: "NOT_FOUND", workflowId: originalStampedRoute[1] }, { status: 404 });
+      const original = view.artifacts.find((a) => !a.derivedFrom);
+      if (!original?.location) return Response.json({ error: "NOT_FOUND", message: "instance has no binary original" }, { status: 404 });
+      const key = `stamped-visual/${view.instance.tenantId}/${original.sha256}`;
+      const obj = await env.ARTIFACTS.get(key);
+      if (!obj) return Response.json({ error: "NOT_FOUND", message: "not written yet (async), not applicable for this content type, or already purged", key }, { status: 404 });
       return new Response(obj.body, { headers: { "content-type": obj.httpMetadata?.contentType ?? "application/octet-stream", "cache-control": "no-store" } });
     }
 
