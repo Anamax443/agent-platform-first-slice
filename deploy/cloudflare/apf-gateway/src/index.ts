@@ -38,6 +38,8 @@ export interface Env {
   FAKES: Fetcher;
   /** Set by scripts/farm-config.mjs; must equal the installation the bundle was built from. */
   INSTALLATION: string;
+  /** Set by scripts/farm-config.mjs: short commit hash of the checkout the bundle was generated from. */
+  GIT_SHA: string;
   KILL_SWITCH: string;
   SIGNING_KEY_ID: string;
   CONTRACTS_VERSION: string;
@@ -582,6 +584,7 @@ export default {
       return Response.json({
         deployable: "apf-gateway",
         installation: INSTALLATION,
+        gitSha: env.GIT_SHA,
         tenants: installation.profile.tenants.length,
         identities: installation.profile.identities.length,
         policies: Object.keys(installation.policies).length,
@@ -615,6 +618,7 @@ export default {
       return html(
         renderFarm({
           installation: INSTALLATION,
+          gitSha: env.GIT_SHA,
           gatewaySigning: signingMode(env),
           deployables: [
             { name: "apf-gateway", ok: true, status: 200, body: { isolation: "self", wired: wiredOf(env) } },

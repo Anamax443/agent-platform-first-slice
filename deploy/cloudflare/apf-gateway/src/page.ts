@@ -67,6 +67,7 @@ export interface AuditLogRow {
 
 export interface FarmModel {
   installation: string;
+  gitSha: string;
   gatewaySigning: string;
   deployables: DeployableStatus[];
   instances: FarmInstanceRow[];
@@ -263,6 +264,10 @@ export function renderFarm(m: FarmModel): string {
     <span class="vsep"></span>
     <span class="p-field">podpis ${esc(m.gatewaySigning)}</span>
     <span class="grow"></span>
+    <span class="p-field" id="clock" title="Živý čas prohlížeče"></span>
+    <span class="vsep"></span>
+    <span class="p-field"><code title="Commit, ze kterého je tento build">${esc(m.gitSha)}</code></span>
+    <span class="vsep"></span>
     <span class="p-field">${up}/${m.deployables.length} Workerů OK</span>
   </div>
 
@@ -375,6 +380,12 @@ ${BANK_SAAS_MODERN_CSS}
   }
   if (rail) rail.addEventListener("click", function () { setRail(ui.dataset.layout !== "rail"); });
   try { if (localStorage.getItem("farm-rail") === "1") setRail(true); } catch (e) {}
+
+  var clock = document.getElementById("clock");
+  function tick() {
+    if (clock) clock.textContent = new Date().toLocaleTimeString("cs-CZ");
+  }
+  if (clock) { tick(); setInterval(tick, 1000); }
 })();
 </script>
 </body></html>`;

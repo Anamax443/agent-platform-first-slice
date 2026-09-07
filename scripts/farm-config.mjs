@@ -7,6 +7,7 @@
 // A base config cannot be built alone: code + installation = deployable. Output is git-ignored; deploy and dry-run from there.
 // Usage: node scripts/farm-config.mjs [installation ...]   (default: every installation with a profile)
 
+import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,6 +18,17 @@ const farmDir = join(repoRoot, "deploy", "cloudflare");
 const configDir = join(repoRoot, "config");
 export const ALIAS = "apf:installation";
 export const DOCS_ALIAS = "apf:docs";
+
+// The commit this bundle was built from, read fresh at every config generation (i.e. at deploy time) so the header
+// never shows a stale ref that happened to be checked out earlier. "unknown" off a checkout without git history
+// (e.g. a shallow CI export) rather than failing the whole build over a cosmetic value.
+export function gitSha(root = repoRoot) {
+  try {
+    return execSync("git rev-parse --short HEAD", { cwd: root, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+  } catch {
+    return "unknown";
+  }
+}
 
 const posix = (p) => p.split("\\").join("/");
 const relFrom = (fromDir, target) => {
@@ -118,7 +130,7 @@ export function generateFarmConfigs(installation, root = repoRoot) {
     // apf:docs only wired for the one deployable that actually serves the diagram pages; everyone else stays untouched.
     const bound = {
       ...base,
-      vars: { ...(base.vars ?? {}), INSTALLATION: installation, ...(signingPublicKeys ? { SIGNING_PUBLIC_KEYS: signingPublicKeys } : {}) },
+      vars: { ...(base.vars ?? {}), INSTALLATION: installation, GIT_SHA: gitSha(root), ...(signingPublicKeys ? { SIGNING_PUBLIC_KEYS: signingPublicKeys } : {}) },
       alias: { ...(base.alias ?? {}), [ALIAS]: relFrom(targetDir, moduleFile), ...(d === "apf-gateway" ? { [DOCS_ALIAS]: relFrom(targetDir, docsFile) } : {}) },
     };
     const merged = merge(bound, overlay[d] ?? {});
