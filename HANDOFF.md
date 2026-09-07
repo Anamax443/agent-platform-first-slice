@@ -2,6 +2,16 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-07 (46) — Matice odpovědnosti; potvrzeno „AI nikdy nevybírá kapability, jen klasifikuje"; univerzální vs. agendové kapability
+
+**Nový `docs/MATICE-ODPOVEDNOSTI.md`** (vlastník: „nechybí nám matice odpovědnosti?", upřesněno na „která kapabilita/kravička odpovídá za co"): poprvé na jednom místě tabulka všech šesti dnešních kapabilit (`document.classify/validate/stamp/archive`, `mail.ingest`, `email.send`) + dvou návrhů z kroku 8b — kravička (Worker), externí systém, kdo smí volat (z policy grantů), riziková třída, lidský vstup, kam vede selhání. Poskládáno z existujících zdrojů (`descriptor.json`, `config/*/policy/*.json`, zapojení hostitelů), ne nový zdroj pravdy.
+
+**Vlastníkův postřeh, potvrzeno a zapsáno:** kapability se dělí na **univerzální** (`classify`/`validate`/`stamp` — běží u každého dokumentu) a **agendové** (budoucí `cz.company.verify`/`cz.vat.verify` — poběží jen pro nakonfigurovaný seznam agend, ne pro každý dokument). Zapsáno i do `docs/NAVRHOVY-LIST-farma.md` u kroku 8b: seznam agend, pro které se `cz.*.verify` spouští, má být **konfigurovatelný** (`config/<instalace>/`), ne zadrátovaný v jedné workflow definici.
+
+**Otázka vlastníka „mohla by AI sama rozhodnout, jaké agendy/kapability se pro zvláštní dokument spustí?" — zodpovězeno jasně NE, se souhlasem vlastníka.** Důvod zapsán jako princip (ne nová norma, jen zdůraznění existující): AI rozhoduje jen o `documentType` (jedna hodnota, allowlist), nikdy o tom, které kapability se dispatchují — to je vždy pevná workflow definice. Bezpečnostní důvod: kdyby AI směla dynamicky vybírat akce, injekce v neznámém dokumentu by mohla přimět AI přiřadit si nepovolené právo (např. `email.send`), místo dnešního nejhoršího důsledku (špatná nálepka typu, chycená druhým signálem/review). „Zvláštní" dokument dnes správně padá do `OTHER` → review, ne do AI-vymyšlené kombinace kroků.
+
+**Beze změny kódu tento záznam** — jen dokumentace, žádné nasazení potřeba.
+
 ## 2026-09-07 (45) — Krok 8b rozdělen (cz.company.verify + cz.vat.verify), obojí v Kravičkách jako „Návrh"
 
 **Vlastníkovo doplnění k dnešnímu krok 8b:** potvrdil rozdělení `cz.subject.verify` na dvě samostatné kapability — `cz.company.verify` (ARES, IČO) a `cz.vat.verify` (DPH plátcovství, nespolehlivý plátce, zveřejněný účet). Důvod zapsán do `docs/NAVRHOVY-LIST-farma.md`: jiný externí systém pro každou, `cz.company.verify` má širší použití než jen faktury, subjekt nemusí být plátce DPH (jiná sémantika „nevztahuje se" vs. selhání).
