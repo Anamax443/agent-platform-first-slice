@@ -5,6 +5,13 @@ import type { AuditRecord } from "../../../../src/platform/audit.js";
 import type { Instance } from "../../../../src/platform/journal.js";
 import { BANK_SAAS_MODERN_CSS, BANK_UI_CSS } from "./bank.js";
 
+export interface FarmStats {
+  totalProcessed: number;
+  processedToday: number;
+  avgProcessingMs: number | null;
+  byType: { type: string; count: number }[];
+}
+
 export interface InboxItem {
   key: string;
   name: string;
@@ -85,6 +92,7 @@ export interface FarmModel {
   inbox: { pending: InboxItem[]; failed: InboxItem[]; batchLimit: number };
   workflows: string[];
   models: ModelsInfo;
+  stats: FarmStats;
 }
 
 export interface InstanceView {
@@ -319,6 +327,18 @@ export function renderFarm(m: FarmModel): string {
         <span class="grow"></span>
         <a class="p-btn" href="#novy">Nový dokument</a>
       </div>
+      <div class="p-panehead"><span>Statistiky</span><span class="n">za celou dobu</span></div>
+      <div class="p-stats">
+        <div class="p-stat"><b>${m.stats.totalProcessed}</b><span>zpracováno celkem</span></div>
+        <div class="p-stat"><b>${m.stats.processedToday}</b><span>dnes</span></div>
+        <div class="p-stat"><b>${formatDuration(m.stats.avgProcessingMs)}</b><span>průměrný čas zpracování</span></div>
+      </div>
+      ${
+        m.stats.byType.length
+          ? `<div class="p-toolbar"><span class="meta">Podle typu dokumentu (classify)</span></div>
+      <div class="p-bars">${barChart(m.stats.byType)}</div>`
+          : ""
+      }
       <div class="p-panehead"><span>Dávkový příjem (inbox)</span><span class="n">${m.inbox.pending.length} čeká${m.inbox.failed.length ? ` · ${m.inbox.failed.length} selhalo` : ""}</span></div>
       <form class="p-toolbar" method="post" action="/farm/inbox" enctype="multipart/form-data">
         <input type="file" name="files" multiple>
@@ -438,6 +458,16 @@ html,body{height:100%;margin:0}
 .ui .p-form textarea{min-height:8rem;font-family:var(--font-data)}
 .ui .p-form input[type=file]{margin-top:.2rem;max-width:100%}
 .ui .p-form .p-btn{margin-top:1rem;border-color:var(--border)}
+.ui .p-stats{display:flex;gap:1px;background:var(--border);border-bottom:var(--border-w) solid var(--border)}
+.ui .p-stat{flex:1;background:var(--pane);padding:14px 16px;display:flex;flex-direction:column;gap:2px}
+.ui .p-stat b{font-size:1.6rem;font-family:var(--font-display)}
+.ui .p-stat span{color:var(--dim);font-size:calc(var(--fs-ui) - .5px)}
+.ui .p-bars{padding:10px 14px 14px;background:var(--pane);border-bottom:var(--border-w) solid var(--border)}
+.ui .p-bar-row{display:flex;align-items:center;gap:10px;margin:6px 0}
+.ui .p-bar-label{width:6rem;flex:none;font-size:.85em;color:var(--dim)}
+.ui .p-bar-track{flex:1;height:14px;background:var(--bordersoft);border-radius:4px;overflow:hidden}
+.ui .p-bar-fill{height:100%;background:var(--accent);border-radius:4px}
+.ui .p-bar-count{width:2.5rem;flex:none;text-align:right;font:.85em var(--font-data)}
 ${BANK_UI_CSS}
 ${BANK_SAAS_MODERN_CSS}
 </style>
@@ -489,6 +519,24 @@ export function renderError(title: string, message: string, details: Record<stri
 }
 
 const kb = (n: number | undefined): string => (n === undefined ? "?" : n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} kB`);
+
+const formatDuration = (ms: number | null): string => {
+  if (ms === null) return "—";
+  if (ms < 1000) return "< 1 s";
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`;
+  return `${Math.floor(ms / 60_000)} min ${Math.round((ms % 60_000) / 1000)} s`;
+};
+
+/** No SVG, no JS, no chart library — CSS width bars, same "server-rendered evidence" ethos as the rest of /farm. */
+const barChart = (rows: { type: string; count: number }[]): string => {
+  const max = Math.max(1, ...rows.map((r) => r.count));
+  return rows
+    .map(
+      (r) =>
+        `<div class="p-bar-row"><span class="p-bar-label">${esc(r.type)}</span><div class="p-bar-track"><div class="p-bar-fill" style="width:${Math.round((r.count / max) * 100)}%"></div></div><span class="p-bar-count">${r.count}</span></div>`,
+    )
+    .join("");
+};
 
 const fmtResult = (s: Instance["steps"][number]): string => {
   const r = s.result;

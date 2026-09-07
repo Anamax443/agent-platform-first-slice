@@ -2,6 +2,20 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-07 (48) — Statistiky v Přehledu: celkem/dnes/průměrný čas + graf podle typu dokumentu
+
+**Pokyn vlastníka:** „v přehledu by měly být grafy jak si stojíme, kolik zpracováno celkem kolik to zabírá kolik zpracováno dnes a jaké agendy" — odloženo v (44), dnes dotaženo.
+
+**Zjištění před psaním dotazů:** rozdělení podle typu dokumentu nešlo spočítat vůbec — `document.classify` má `sideEffects: none`, takže nikdy nedostal `write-intent`/`write-done` pár (ten je vyhrazený pro zápisové kapability); výsledek (`documentType`) žil jen uvnitř každé jednotlivé Durable Object instance, ne ve sdíleném D1 auditu. Vlastník zvolil **přidat audit záznam pro classify** (ne stavět dashboard bez agend).
+
+**`recordClassifyResult()`** (nová metoda `WorkflowInstance`, volaná hned po `orchestrator.run()`): najde úspěšný krok `document.classify`, zapíše jeho výsledek do sdíleného auditu pod existující `kind: "state"` (žádný nový `AuditKind` — přidání nové hodnoty do core platform enumu by byl větší zásah, než tahle statistika potřebuje), odlišeno od instance-úrovňových `state` záznamů (RUNNING/SUCCEEDED) přítomností `capability: "document.classify"`.
+
+**`farmStats()`**: tři SQL dotazy přímo nad sdíleným D1 (ne přes jednotlivé Durable Objecty — neškáluje se to, ale pro dnešní objem stačí): celkem zpracováno (`COUNT WHERE kind='state' AND capability IS NULL AND status='SUCCEEDED'`), dnes (totéž + `substr(at,1,10)=date('now')`, UTC den — může se lišit od CZ půlnoci o hodinu/dvě, nepřesnost zapsána, ne skryta), průměrný čas (pár RUNNING→SUCCEEDED časových razítek na `workflow_id`), rozdělení podle typu (`GROUP BY json_extract(documentType) WHERE capability='document.classify'`). **Všechny tři dotazy ověřeny přímo přes `wrangler d1 execute --remote` proti skutečné databázi před nasazením** (19 dokumentů celkem, časové rozpětí ~1–2,5 s na dokument) — typové rozdělení zatím prázdné, protože `recordClassifyResult()` je nový, poběží až pro dokumenty od tohoto nasazení dál, ne zpětně.
+
+**UI:** tři dlaždice (Celkem/Dnes/Průměrný čas) + jednoduchý CSS sloupcový graf podle typu (žádná JS knihovna, stejná zásada jako zbytek Farmáře — server-rendered, ne aplikace).
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare/tsconfig.json`), 232 testů, arch, farm:check.
+
 ## 2026-09-07 (47) — Matice odpovědnosti živě na `/farm` (ne jen v repu)
 
 **Pokyn vlastníka:** „a proč to není v GUI?" — po (46) čekal, že nová matice odpovědnosti bude dostupná přímo z konzole, stejně jako `VYVOJOVY-DIAGRAM.html`.

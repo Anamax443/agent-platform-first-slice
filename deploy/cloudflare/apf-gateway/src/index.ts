@@ -23,7 +23,7 @@ import { Orchestrator, type WorkflowDef } from "../../../../src/platform/orchest
 import { ReviewService } from "../../../../src/platform/review.js";
 import type { MessageEnvelope, ResultEnvelope } from "../../../../src/platform/types.js";
 import { WORKFLOW_NAMES, workflowDef } from "../../../../src/platform/workflow.js";
-import { renderError, renderFarm, renderHome, renderInstance, type AuditLogRow, type FarmInstanceRow, type InboxItem, type InstanceView, type ModelsInfo, type Wired } from "./page.js";
+import { renderError, renderFarm, renderHome, renderInstance, type AuditLogRow, type FarmInstanceRow, type FarmStats, type InboxItem, type InstanceView, type ModelsInfo, type Wired } from "./page.js";
 import { describeModels, wirePlatform, type Wiring } from "./platform-wiring.js";
 import { D1_AUDIT_DDL, DDL, SqliteArtifacts, SqliteAudit, SqliteJournal } from "./store.js";
 import { visuallyStamp } from "./visual-stamp.js";
@@ -261,9 +261,33 @@ export class WorkflowInstance extends DurableObject<Env> {
       },
     });
     await orchestrator.run(inst.workflowId);
+    this.recordClassifyResult(input.workflowId, input.tenantId, inst.correlationId);
     this.ctx.waitUntil(this.copyOut());
     this.ctx.waitUntil(this.visualStampIfApplicable(original, input.workflowId));
     return this.view() as InstanceView;
+  }
+
+  /**
+   * document.classify has sideEffects: none, so it never gets a write-intent/write-done pair (that pattern is only
+   * for proving idempotent writes happened) — its result lived only inside this one Durable Object, unreadable in
+   * bulk across instances. Owner's request 2026-09-07 ("kolik zpracováno, jaké agendy" dashboard on /farm): mirror
+   * the result into the shared audit trail too, under the existing "state" kind (there is no dedicated kind for a
+   * read-only capability's result, and adding one is a bigger norm change than this needs), tagged with
+   * capability so it's distinguishable from the instance-level RUNNING/SUCCEEDED "state" records.
+   */
+  private recordClassifyResult(workflowId: string, tenantId: string, correlationId: string): void {
+    const inst = this.journal.get(workflowId);
+    const step = inst?.steps.find((s) => s.capability === "document.classify" && s.status === "SUCCEEDED");
+    const payload = step?.result?.payload as { documentType?: { value?: unknown; confidence?: unknown; source?: unknown } } | undefined;
+    if (!payload?.documentType?.value) return;
+    this.audit.append({
+      kind: "state",
+      workflowId,
+      tenantId,
+      correlationId,
+      capability: "document.classify",
+      details: { status: "SUCCEEDED", documentType: payload.documentType.value, confidence: payload.documentType.confidence, source: payload.documentType.source },
+    });
   }
 
   /**
@@ -412,6 +436,37 @@ const auditLog = async (env: Env, limit = 50): Promise<AuditLogRow[]> => {
     const full = JSON.parse(r.json) as AuditRecord;
     return { at: full.at, kind: full.kind, workflowId: full.workflowId ?? null, tenantId: full.tenantId ?? null, capability: full.capability ?? null, details: full.details };
   });
+};
+
+/**
+ * Přehled dashboard (owner's request, 2026-09-07: "kolik zpracováno celkem, kolik dnes, kolik to zabírá, jaké
+ * agendy"). Reads the shared D1 audit trail directly with SQL, not per-instance Durable Object calls — the same
+ * "state" (capability IS NULL) records already written for every instance's RUNNING/SUCCEEDED transitions, plus the
+ * document.classify result mirrored there by recordClassifyResult() (added the same day, for exactly this).
+ */
+const farmStats = async (env: Env): Promise<FarmStats> => {
+  await ensureD1Audit(env.AUDIT);
+  const succeededFilter = `kind = 'state' AND capability IS NULL AND json_extract(json, '$.details.status') = 'SUCCEEDED'`;
+  const [totalRow, todayRow, typeRows, durationRows] = await Promise.all([
+    env.AUDIT.prepare(`SELECT COUNT(*) as n FROM audit WHERE ${succeededFilter}`).first<{ n: number }>(),
+    env.AUDIT.prepare(`SELECT COUNT(*) as n FROM audit WHERE ${succeededFilter} AND substr(at, 1, 10) = date('now')`).first<{ n: number }>(),
+    env.AUDIT.prepare(
+      `SELECT json_extract(json, '$.details.documentType') as type, COUNT(*) as n FROM audit WHERE kind = 'state' AND capability = 'document.classify' GROUP BY type ORDER BY n DESC`,
+    ).all<{ type: string | null; n: number }>(),
+    env.AUDIT.prepare(
+      `SELECT workflow_id,
+         MIN(CASE WHEN json_extract(json, '$.details.status') = 'RUNNING' THEN at END) as started,
+         MAX(CASE WHEN json_extract(json, '$.details.status') = 'SUCCEEDED' THEN at END) as ended
+       FROM audit WHERE kind = 'state' AND capability IS NULL GROUP BY workflow_id HAVING started IS NOT NULL AND ended IS NOT NULL`,
+    ).all<{ workflow_id: string; started: string; ended: string }>(),
+  ]);
+  const durations = durationRows.results.map((r) => Date.parse(r.ended) - Date.parse(r.started)).filter((n) => Number.isFinite(n) && n >= 0);
+  return {
+    totalProcessed: totalRow?.n ?? 0,
+    processedToday: todayRow?.n ?? 0,
+    avgProcessingMs: durations.length ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) : null,
+    byType: typeRows.results.map((r) => ({ type: r.type ?? "?", count: r.n })),
+  };
 };
 
 /** Who handed the document in, as data: the Access-authenticated e-mail, or the service token path. JWT verification is a later unit. */
@@ -683,7 +738,7 @@ export default {
 
     // "Farmář" (owner's own word for it): one page, health of all five deployables + the most recent workflow instances.
     if (url.pathname === "/farm" && request.method === "GET") {
-      const [documentHost, emailExecutor, mailIngest, fakes, instances, log, inbox] = await Promise.all([
+      const [documentHost, emailExecutor, mailIngest, fakes, instances, log, inbox, stats] = await Promise.all([
         deployableInfo(env.DOCUMENT_HOST, "https://apf-document-host.internal"),
         deployableInfo(env.EMAIL_EXECUTOR, "https://apf-email-executor.internal"),
         deployableInfo(env.MAIL_INGEST, "https://apf-mail-ingest.internal"),
@@ -691,6 +746,7 @@ export default {
         recentInstances(env, 15),
         auditLog(env, 50),
         inboxDetail(env),
+        farmStats(env),
       ]);
       return html(
         renderFarm({
@@ -709,6 +765,7 @@ export default {
           inbox,
           workflows: [...WORKFLOW_NAMES],
           models: modelsOf(env),
+          stats,
         }),
       );
     }
