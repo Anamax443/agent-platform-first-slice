@@ -83,6 +83,8 @@ export interface FarmModel {
   instances: FarmInstanceRow[];
   auditLog: AuditLogRow[];
   inbox: { pending: InboxItem[]; failed: InboxItem[]; batchLimit: number };
+  workflows: string[];
+  models: ModelsInfo;
 }
 
 export interface InstanceView {
@@ -286,8 +288,8 @@ export function renderFarm(m: FarmModel): string {
     <a class="p-navitem" href="#kravicky" data-view="kravicky" title="Kravičky">${ICONS.kravicky}<span class="lbl">Kravičky</span></a>
     <a class="p-navitem" href="#instance" data-view="instance" title="Poslední instance">${ICONS.instance}<span class="lbl">Poslední instance</span></a>
     <a class="p-navitem" href="#denik" data-view="denik" title="Deník">${ICONS.denik}<span class="lbl">Deník</span></a>
+    <a class="p-navitem" href="#novy" data-view="novy" title="Nový dokument">${ICONS.novy}<span class="lbl">Nový dokument</span></a>
     <div class="p-navsec">Farma</div>
-    <a class="p-navitem" href="/" title="Nový dokument">${ICONS.novy}<span class="lbl">Nový dokument</span></a>
     <a class="p-navitem" href="/VYVOJOVY-DIAGRAM.html" title="Jak to funguje — bezpečnostní řetězec a běh toku">${ICONS.diagram}<span class="lbl">Jak to funguje</span></a>
   </nav>
 
@@ -301,7 +303,7 @@ export function renderFarm(m: FarmModel): string {
         <span class="vsep"></span>
         <span class="meta">${up}/${m.deployables.length} Workerů OK · ${m.instances.length} instancí · ${m.auditLog.length} v deníku</span>
         <span class="grow"></span>
-        <a class="p-btn" href="/">Nový dokument</a>
+        <a class="p-btn" href="#novy">Nový dokument</a>
       </div>
       <div class="p-panehead"><span>Dávkový příjem (inbox)</span><span class="n">${m.inbox.pending.length} čeká${m.inbox.failed.length ? ` · ${m.inbox.failed.length} selhalo` : ""}</span></div>
       <form class="p-toolbar" method="post" action="/farm/inbox" enctype="multipart/form-data">
@@ -339,6 +341,7 @@ export function renderFarm(m: FarmModel): string {
 
     <div id="view-kravicky" hidden>
       <div class="p-panehead"><span>Kravičky</span><span class="n">${m.deployables.length} Workerů</span></div>
+      <div class="p-toolbar"><span class="meta">Zdraví a role jednotlivých Workerů farmy — kdo co dělá a jestli běží</span></div>
       <div class="p-gridwrap"><table class="p-table">
         <thead><tr><th>Worker</th><th class="c-state">Stav</th><th title="Jak přísně je oddělený od ostatních">Izolace</th><th>Umí</th></tr></thead>
         <tbody>${kravickyRows}</tbody>
@@ -347,6 +350,7 @@ export function renderFarm(m: FarmModel): string {
 
     <div id="view-instance" hidden>
       <div class="p-panehead"><span>Poslední instance</span><span class="n">${m.instances.length}</span></div>
+      <div class="p-toolbar"><span class="meta">Pohled na dokument: každý zpracovaný dokument jako blok se všemi kroky (classify → validate → stamp) a jejich výsledkem</span></div>
       <div class="p-gridwrap"><table class="p-table">
         <thead><tr><th>Krok</th><th>Capability</th><th class="c-state">Stav</th><th>Pokus</th><th>Výsledek</th></tr></thead>
         <tbody>${m.instances.length ? instanceRows : '<tr><td colspan="5" class="dim">zatím žádná</td></tr>'}</tbody>
@@ -355,10 +359,38 @@ export function renderFarm(m: FarmModel): string {
 
     <div id="view-denik" hidden>
       <div class="p-panehead"><span>Deník</span><span class="n">posledních ${m.auditLog.length}</span></div>
+      <div class="p-toolbar"><span class="meta">Pohled na události: syrový auditní záznam napříč celou farmou, jeden řádek = jedna událost, chronologicky (ne seskupené podle dokumentu)</span></div>
       <div class="p-gridwrap"><table class="p-table">
         <thead><tr><th class="c-date">Čas</th><th>Druh</th><th>Instance</th><th>Capability</th><th>Detail</th></tr></thead>
         <tbody>${denikRows}</tbody>
       </table></div>
+    </div>
+    <div id="view-novy" hidden>
+      <div class="p-panehead"><span>Nový dokument</span><span class="n">document-intake</span></div>
+      <div class="p-toolbar"><span class="meta">Ruční jednotlivé podání — stejná cesta (startIntake) jako dávkový příjem, jen výsledek uvidíš hned, ne až po dalším běhu cronu</span></div>
+      <form class="p-form" method="post" action="/intake" enctype="multipart/form-data">
+        <label for="novy-file">Soubor: PDF, fotka (jpg, png, webp), docx, ISDOC / XML, txt, md, eml (do 4 MB)</label>
+        <input id="novy-file" type="file" name="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.docx,.isdoc,.xml,.txt,.md,.eml,application/pdf,image/*,application/xml,text/xml,text/plain,message/rfc822">
+        <label for="novy-text">Nebo vložený text (faktura, smlouva, e-mail…)</label>
+        <textarea id="novy-text" name="text" placeholder="Když je nahraný soubor, text se nepoužije."></textarea>
+        <label for="novy-workflow">Tok</label>
+        <select id="novy-workflow" name="workflow">${m.workflows.map((w) => `<option value="${esc(w)}"${w === "document-intake" ? " selected" : ""}>${esc(w)}</option>`).join("")}</select>
+        <label for="novy-model">Model AI pro posouzení (classify)</label>
+        ${
+          "error" in m.models
+            ? `<div class="meta" style="color:var(--crit)">Bez modelu nelze spustit tok. ${esc(m.models.error)}</div>`
+            : `<select id="novy-model" name="model">${m.models.choices
+                .map((c) =>
+                  c.unavailable
+                    ? `<option value="${esc(c.key)}" disabled>${esc(c.label)} — nedostupné: ${esc(c.unavailable)}</option>`
+                    : `<option value="${esc(c.key)}"${c.isDefault ? " selected" : ""}>${esc(c.label)}${c.isDefault ? " (výchozí)" : ""}</option>`,
+                )
+                .join("")}</select>`
+        }
+        <label for="novy-stampText">Text razítka (nepovinné)</label>
+        <input id="novy-stampText" type="text" name="stampText" placeholder="VALIDATED INVOICE">
+        <button class="p-btn" type="submit">Odeslat do toku</button>
+      </form>
     </div>
   </main>
 
@@ -386,13 +418,19 @@ html,body{height:100%;margin:0}
 .ui details summary{cursor:pointer;font-size:.85em;color:var(--dim)}
 .ui details summary:hover{color:var(--text)}
 .ui pre.wrap{white-space:pre-wrap;word-break:break-word;margin:4px 0 0;font-size:.82em;max-width:100%;background:var(--bordersoft);padding:.5em .6em;border-radius:6px}
+.ui .p-form{padding:0 14px 14px}
+.ui .p-form label{display:block;font-weight:600;margin:.9rem 0 .3rem}
+.ui .p-form textarea,.ui .p-form input[type=text],.ui .p-form select{width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:var(--radius);padding:.5rem;font:inherit;background:var(--pane);color:var(--text)}
+.ui .p-form textarea{min-height:8rem;font-family:var(--font-data)}
+.ui .p-form input[type=file]{margin-top:.2rem;max-width:100%}
+.ui .p-form .p-btn{margin-top:1rem;border-color:var(--border)}
 ${BANK_UI_CSS}
 ${BANK_SAAS_MODERN_CSS}
 </style>
 </head><body>${bodyHtml}
 <script>
 (function () {
-  var VIEWS = ["prehled", "kravicky", "instance", "denik"];
+  var VIEWS = ["prehled", "kravicky", "instance", "denik", "novy"];
   function applyView() {
     var v = (location.hash || "#prehled").slice(1);
     if (VIEWS.indexOf(v) === -1) v = "prehled";
@@ -517,6 +555,10 @@ const renderOutput = (v: InstanceView): string => {
   const subject = v.artifacts.find((a) => a.artifactId === i.input.artifactId) ?? derived ?? original;
   const lastOf = (capability: string) => [...i.steps].reverse().find((s) => s.capability === capability);
   const planned = new Set(i.steps.map((s) => s.capability));
+  // Visual stamp is additive to document.stamp (owner's decision 2026-09-07): if the real stamp never succeeded
+  // (still WAITING on review, or the flow ended before reaching it), there is nothing to show — don't offer a link
+  // that can only 404.
+  const stampSucceeded = lastOf("document.stamp")?.status === "SUCCEEDED";
   const stepCell = (capability: string, ok: (payload: Record<string, unknown>) => string): string => {
     const s = lastOf(capability);
     if (!s) return planned.size === 0 ? '<span class="muted">tok ještě nezačal</span>' : '<span class="muted">nedosaženo, tok skončil dřív</span>';
@@ -529,7 +571,7 @@ const renderOutput = (v: InstanceView): string => {
     [
       "Vstup",
       original
-        ? `${original.name ? `<b>${esc(original.name)}</b> · ` : ""}${esc(original.contentType ?? "text/plain")} · ${kb(original.byteLength ?? original.bytes.length)} · od <code>${esc(original.receivedFrom)}</code>${original.location ? ` · <a href="/workflow/${esc(v.workflowId)}/original" target="_blank" rel="noopener">zobrazit originál</a> · <a href="/workflow/${esc(v.workflowId)}/original-stamped" target="_blank" rel="noopener">zobrazit vizuálně orazítkovaný originál</a>` : ""}`
+        ? `${original.name ? `<b>${esc(original.name)}</b> · ` : ""}${esc(original.contentType ?? "text/plain")} · ${kb(original.byteLength ?? original.bytes.length)} · od <code>${esc(original.receivedFrom)}</code>${original.location ? ` · <a href="/workflow/${esc(v.workflowId)}/original" target="_blank" rel="noopener">zobrazit originál</a>` : ""}${original.location && stampSucceeded ? ` · <a href="/workflow/${esc(v.workflowId)}/original-stamped" target="_blank" rel="noopener">zobrazit vizuálně orazítkovaný originál</a>` : ""}`
         : '<span class="muted">žádný</span>',
     ],
     [

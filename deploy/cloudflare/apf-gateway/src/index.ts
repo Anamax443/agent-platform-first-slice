@@ -362,7 +362,7 @@ export class WorkflowInstance extends DurableObject<Env> {
       const key = `${a.derivedFrom ? "derived" : "originals"}/${a.tenantId}/${a.sha256}`;
       if (!(await this.env.ARTIFACTS.head(key))) {
         await this.env.ARTIFACTS.put(key, a.bytes, {
-          httpMetadata: { contentType: a.contentType ?? "text/plain" },
+          httpMetadata: { contentType: a.contentType ?? "text/plain; charset=utf-8" },
           customMetadata: { artifactId: a.artifactId, receivedFrom: a.receivedFrom, receivedAt: a.receivedAt, ...(a.derivedFrom ? { derivedFrom: a.derivedFrom } : {}) },
         });
       }
@@ -707,6 +707,8 @@ export default {
           instances,
           auditLog: log,
           inbox,
+          workflows: [...WORKFLOW_NAMES],
+          models: modelsOf(env),
         }),
       );
     }
@@ -818,9 +820,15 @@ export default {
       if (!view) return Response.json({ error: "NOT_FOUND", workflowId: originalStampedRoute[1] }, { status: 404 });
       const original = view.artifacts.find((a) => !a.derivedFrom);
       if (!original?.location) return Response.json({ error: "NOT_FOUND", message: "instance has no binary original" }, { status: 404 });
+      // The three real reasons this can be missing, told apart — a generic "maybe async, maybe not applicable" left
+      // the owner unable to tell a genuine bug from the (much more common) case of a document still waiting on review.
+      const stampStep = [...view.instance.steps].reverse().find((s) => s.capability === "document.stamp");
+      if (stampStep?.status !== "SUCCEEDED") {
+        return Response.json({ error: "NOT_FOUND", message: "document.stamp never succeeded for this instance (still waiting on review, or the flow ended before reaching it) — there is nothing to visually stamp yet", stampStepStatus: stampStep?.status ?? "not reached" }, { status: 404 });
+      }
       const key = `stamped-visual/${view.instance.tenantId}/${original.sha256}`;
       const obj = await env.ARTIFACTS.get(key);
-      if (!obj) return Response.json({ error: "NOT_FOUND", message: "not written yet (async), not applicable for this content type, or already purged", key }, { status: 404 });
+      if (!obj) return Response.json({ error: "NOT_FOUND", message: "document.stamp succeeded but the visual stamp isn't in R2 yet — either still writing asynchronously (try again in a few seconds) or this content type has no visual-stamp recipe (visual-stamp.ts only knows PDF, JPG, PNG)", key }, { status: 404 });
       return new Response(obj.body, { headers: { "content-type": obj.httpMetadata?.contentType ?? "application/octet-stream", "cache-control": "no-store" } });
     }
 

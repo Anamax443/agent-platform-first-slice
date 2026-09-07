@@ -130,7 +130,7 @@ class SingleArtifactStore implements ArtifactWriter {
     return this.derived.get(artifactId);
   }
 
-  derive(originalId: string, bytes: string, producer: string, contentType = "text/plain"): Artifact {
+  derive(originalId: string, bytes: string, producer: string, contentType = "text/plain; charset=utf-8"): Artifact {
     const orig = this.get(originalId);
     if (!orig) throw new Error(`original ${originalId} not found`);
     const a: Artifact = { artifactId: newId("art"), tenantId: orig.tenantId, sha256: sha256(bytes), bytes, receivedAt: new Date().toISOString(), receivedFrom: producer, derivedFrom: originalId, producer, contentType };

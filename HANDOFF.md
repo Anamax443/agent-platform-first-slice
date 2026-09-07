@@ -2,6 +2,33 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-07 (44) — Diakritika v orazítkovaném textu, DPH substring bug, „Nový dokument" jako sekce na /farm
+
+**Tři nezávislé nálezy/požadavky ze stejné session:**
+
+**1) Diakritika se kazila v `/workflow/:id/stamped` (vlastník, přes reálný test).** Kořen: `SingleArtifactStore.derive()` v `apf-document-host` měla výchozí `contentType = "text/plain"` **bez `charset=utf-8`** (stejně tak `SqliteArtifacts`/gateway `copyOut()`). Bez explicitního charsetu prohlížeč hádá kódování a u české diakritiky typicky uhodne špatně (UTF-8 bajty vykreslené jako Windows-1250 → „Ã¡" místo „á"). Opraveno na obou místech (`deploy/cloudflare/apf-document-host/src/index.ts`, `deploy/cloudflare/apf-gateway/src/index.ts` `copyOut()`) — vždy `text/plain; charset=utf-8`, ne holé `text/plain`.
+
+**2) Skutečný klasifikační bug, ne teoretický: `objednavka.json` prošla jako `INVOICE` a rovnou se orazítkovala** (vlastník to našel klikáním, ne já). Příčina ověřená v kódu: JSON má pole `"celkemBezDph": 29600` — v malých písmenech `celkembezdph` obsahuje podřetězec `dph`, takže naivní `classifyByRules()` (deterministický druhý signál) řeklo INVOICE **z názvu pole**, ne z obsahu. LLM řeklo INVOICE taky (položky/množství/ceny vypadají fakturovitě). Oba signály se shodly na špatné odpovědi → nic to nezachytilo (druhý signál chrání jen před **neshodou**, ne před shodnou chybou). Horší varianta stejného jevu jako dřívější nález se smlouvou zmiňující DPH (ta aspoň skončila v review). Opraveno: `\bdph\b` (hranice slova) místo holého podřetězce v `src/adapters/llm.ts`. Neopravuje obecný problém (shodná chyba obou signálů), jen tenhle konkrétní, potvrzený případ.
+
+**3) „Nový dokument" byl odkaz pryč ze `/farm` na jinou stránku (`/`), ne sekce jako ostatní čtyři (vlastník: „na přidávání je samostatná sekce, ne?").** Přesunuto: pátá karta v hash-routovaném menu (`#novy`, `VIEWS` pole v klientském JS), formulář identický s `renderHome()` (soubor/text/tok/model/text razítka → `POST /intake`), jen v bankovním vizuálu — přidána CSS pro `label/textarea/select/input/button` pod `.p-form` (banka dosud řešila jen tabulky a tlačítka, ne formulářová pole). Tlačítko „Nový dokument" v Přehledu teď vede na `#novy`, ne na `/`.
+
+**Odloženo, vlastníkovy další požadavky ve frontě (ne v tomhle záznamu):** grafy/statistiky v Přehledu (kolik zpracováno celkem/dnes, jaké typy dokumentů, čas zpracování) — potřebuje nové agregační dotazy nad D1 a rozhodnutí o způsobu vykreslení (žádná externí knihovna, banka dnes nemá graf komponentu); přepínač CS/EN na `/farm` — celé UI je dnes jen česky, překlad je samostatná větší práce. Obojí zapsáno, nezačato.
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare/tsconfig.json`), 232 testů (žádný netestoval starý substring chybně, DPH fix nic nerozbil), arch, farm:check.
+
+## 2026-09-07 (43) — Odkaz na vizuální razítko jen když razítko doopravdy proběhlo; popisky sekcí na /farm
+
+**Nález (vlastník, přes reálné klikání):** stránka instance nabízela odkaz „zobrazit vizuálně orazítkovaný originál" **vždycky**, i u dokumentů, co se k `document.stamp` vůbec nedostaly (čekají na review — `CLASSIFICATION_DISPUTED`/`STAMP_NOT_ALLOWED`, což je dnes většina testovacích dokumentů). Klik vždy skončil `404` se třemi možnými důvody smíchanými do jedné věty — nešlo poznat skutečnou chybu od úplně normálního „ještě nebylo orazítkováno".
+
+**Oprava:**
+- `page.ts`: odkaz na vizuální razítko se teď zobrazí **jen** když poslední `document.stamp` krok má stav `SUCCEEDED` (`stampSucceeded`, čte se stejně jako u řádku „Razítko").
+- `index.ts` (`/workflow/:id/original-stamped`): rozlišuje teď dva různé stavy místo jedné hlášky — (1) `document.stamp` vůbec neuspěl (`stampStepStatus` v odpovědi řekne přesně jaký je/byl stav) → jasná zpráva „ještě není co orazítkovat vizuálně"; (2) `document.stamp` uspěl, ale vizuální kopie v R2 chybí → skutečná diagnóza (buď ještě dopisuje `waitUntil`, nebo typ souboru nemá recept ve `visual-stamp.ts`).
+- **Popisky sekcí na `/farm`** (vlastník: „chybí popisky, jinak se neví co to dělá" — musel se zeptat na rozdíl Poslední instance vs. Deník slovně): každá ze tří technických sekcí (Kravičky, Poslední instance, Deník) dostala jednořádkový popis pod nadpis, stejným tónem jako dřívější popisy rolí u kraviček.
+
+**Vedlejší ověření živě:** PNG (`faktura_pdf_tisk_vzor_510.png`), co poprvé spadlo na `EXTRACTION_FAILED`, po „Zkusit znovu" prošlo extrakcí (byla to přechodná chyba Workers AI, ne vadný soubor) — teď visí na `CLASSIFICATION_DISPUTED` (stejný nález jako u `smlouva-kupni.pdf`: text zmiňuje DPH i smluvní náležitosti zároveň). Retry tlačítko z (42) tedy funguje přesně jak má.
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare/tsconfig.json`), 232 testů, arch, farm:check.
+
 ## 2026-09-07 (42) — Vizuální razítko (PDF + obrázky), inbox nesmí zablokovat jeden na druhém, tabulky místo počtů, návrh krok 8b
 
 **Čtyři věci v jednom nasazení, vlastníkovy pokyny za sebou ve stejné session:**

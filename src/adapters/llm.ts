@@ -12,7 +12,8 @@ export function classifyByRules(text: string): string {
   const t = text.toLowerCase();
   // ISDOC (Czech e-invoice XML, isdoc.cz): every DocumentType of the standard is an invoice-family document; no model needed to see that.
   if (/<invoice[^>]*isdoc\.cz\/namespace/.test(t)) return "INVOICE";
-  if (/(faktura|invoice|iban|dič|dph|variabilní symbol)/.test(t)) return "INVOICE";
+  // \bdph\b, not a bare substring: "celkemBezDph" (a JSON field name, not the word "DPH") was matching before the fix.
+  if (/(faktura|invoice|iban|dič|\bdph\b|variabilní symbol)/.test(t)) return "INVOICE";
   if (/(smlouva|contract|smluvní strany|agreement)/.test(t)) return "CONTRACT";
   return "OTHER";
 }
