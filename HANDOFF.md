@@ -2,6 +2,18 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-07 (38) — Kravičky lhaly o archivaci: „archivuje" tvrdilo něco, co se v toku nikdy nevolá
+
+**Pokyn vlastníka:** „apf-fakes píšeš že doklady archivuje" + „a že je OK" — postřeh nad popisem `apf-document-host` v tabulce Kravičky.
+
+**Ověřeno přímo v `workflows/document-intake.v1.json`:** kroky jsou jen `classify → validate → stamp`. **`document.archive` tam vůbec není.** Existuje jako druhá schopnost sdíleného hostu jen kvůli testu izolace (`SEC-HOST-001`, dva handlery se dvěma credentialy v jednom hostu) — v běžném zpracování dokumentu se nikdy nezavolá. Popis „Orazítkuje a archivuje dokument po ověření" tedy netvrdil jen nepřesnost, tvrdil něco, co se prakticky neděje.
+
+**Vlastníkova doplňující otázka „a někam to zapisuje data, ne?":** ano, částečně opravdu — originál i orazítkovaný text se skutečně a trvale zapisují do R2 (Cloudflare úložiště, ne naoko). Ale **potvrzení „DMS"** je od `apf-fakes` (testovací dvojník), žádné napojení na reálný firemní DMS/ERP neexistuje.
+
+**Opraveno:** text u `apf-document-host` teď říká přesně tohle — zapisuje proti testovacímu dvojníku, `document.archive` umí, ale nevolá se. Text u `apf-fakes` doplněn o vysvětlení, co jeho „OK" vlastně znamená (dvojník odpovídá, ne že je napojený skutečný systém) a jeho badge teď píše rovnou **„OK (dvojník)"**, ne holé OK — aby to nešlo přečíst jako „hotovo naostro" ani mimo kontext řádku.
+
+**Brány zelené:** typecheck, 232 testů, arch, farm:check (cestou padla chyba — rovné uvozovky uvnitř řetězce ohraničeného rovnými uvozovkami rozbily parser; opraveno na české „…“). Nasazeno na `farm-bass443`.
+
 ## 2026-09-07 (37) — Nová route `/workflow/:id/stamped`: orazítkovaný text šel vidět jen jako ID, ne obsah
 
 **Pokyn vlastníka:** „je možno vidět dokument? co jsme zpracovali?" → „ideálně orazítkovaný". Dosud šlo přečíst jen vytěžený text originálu (`renderOutput`), samotný **orazítkovaný artefakt** byl na stránce vidět jen jako `stampedArtifactId`/`stampedSha256` — ID bez obsahu.

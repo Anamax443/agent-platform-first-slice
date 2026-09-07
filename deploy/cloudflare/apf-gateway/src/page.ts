@@ -153,6 +153,7 @@ ${
 /** State label → bank status class (docs/UI/predpis-saas-modern-side-nav.txt §8: "stav nese barvu i slovo", nikdy jen barva). */
 const STATE_CLASS: Record<string, string> = {
   OK: "st-ok",
+  "OK (dvojník)": "st-ok",
   SUCCEEDED: "st-ok",
   DOWN: "st-crit",
   FAILED: "st-crit",
@@ -169,10 +170,10 @@ const stateTd = (label: string): string => `<td class="c-state">${stateBadge(lab
 /** What each "kravička" actually does, in plain Czech — the raw health table alone doesn't say. */
 const DEPLOYABLE_ROLE: Record<string, string> = {
   "apf-gateway": "Přijme dokument, rozpozná typ (AI) a řídí celý průběh",
-  "apf-document-host": "Orazítkuje a archivuje dokument po ověření",
+  "apf-document-host": "Orazítkuje dokument po ověření a zapíše ho — dnes proti testovacímu dvojníku DMS, ne ostrému systému. Umí i „document.archive“, ale v běžném toku se nevolá (existuje jen kvůli testu izolace)",
   "apf-email-executor": "Odesílá e-mailová upozornění",
   "apf-mail-ingest": "Přijímá dokumenty poslané e-mailem",
-  "apf-fakes": "Testovací dvojník DMS/registru/archivu — nahrazuje skutečné externí systémy při vývoji a testech",
+  "apf-fakes": "Testovací dvojník DMS/registru/archivu — jeho „OK“ znamená jen, že dvojník odpovídá, ne že je napojený skutečný systém",
 };
 
 /** "Reachable" (HTTP 200 on /version) and "actually wired into the flow" are different claims — a skeleton answers fine but does nothing yet. */
@@ -180,7 +181,7 @@ const workerReady = (d: DeployableStatus): boolean => d.ok && (d.body as Record<
 const workerStateLabel = (d: DeployableStatus): string => {
   if (!d.ok) return "DOWN";
   if ((d.body as Record<string, unknown> | null)?.wired === false) return "NEZAPOJENO";
-  return "OK";
+  return d.name === "apf-fakes" ? "OK (dvojník)" : "OK";
 };
 
 /** Isolation class → plain label + hover explanation (LOGICAL/PRINCIPAL are jargon on their own). */
