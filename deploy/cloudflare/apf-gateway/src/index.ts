@@ -108,23 +108,6 @@ const deployableInfo = async (fetcher: Fetcher, origin: string): Promise<{ ok: b
   }
 };
 
-/** The latest audit record per workflow (any kind, not just terminal "state") — a lightweight instance list without a separate index. */
-const recentInstances = async (env: Env, limit = 30): Promise<FarmInstanceRow[]> => {
-  await ensureD1Audit(env.AUDIT);
-  const rows = await env.AUDIT.prepare(
-    `SELECT workflow_id, tenant_id, at, kind, capability, json FROM
-       (SELECT *, ROW_NUMBER() OVER (PARTITION BY workflow_id ORDER BY at DESC) AS rn FROM audit WHERE workflow_id IS NOT NULL)
-     WHERE rn = 1 ORDER BY at DESC LIMIT ?`,
-  )
-    .bind(limit)
-    .all<{ workflow_id: string; tenant_id: string | null; at: string; kind: string; capability: string | null; json: string }>();
-  return rows.results.map((r) => {
-    const full = JSON.parse(r.json) as AuditRecord;
-    const status = full.kind === "state" ? (full.details as { status?: string } | undefined)?.status : undefined;
-    return { workflowId: r.workflow_id, tenantId: r.tenant_id, at: r.at, kind: r.kind, capability: r.capability, status };
-  });
-};
-
 const MAX_TEXT_CHARS = 1_000_000;
 const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 const EXTRACTOR = "workers-ai:toMarkdown";
@@ -366,6 +349,26 @@ export class WorkflowInstance extends DurableObject<Env> {
 
 const html = (body: string, status = 200): Response => new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
 
+/** One row of /farm's instance list: the real instance from its own Durable Object, or a PURGED placeholder if the journal is gone. */
+const farmRowOf = async (env: Env, workflowId: string, lastAt: string): Promise<FarmInstanceRow> => {
+  const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(workflowId));
+  // stub.view()'s RPC-inferred return type collapses the InstanceView|null union to just null (workers-types quirk,
+  // same category as HANDOFF (16)'s "RPC návrat je & Disposable"); cast to what the class method actually declares.
+  const view = (await stub.view()) as InstanceView | null;
+  if (!view) return { workflowId, purged: true, at: lastAt };
+  const i = view.instance;
+  return { workflowId, workflow: i.workflow, workflowVersion: i.workflowVersion, tenantId: i.tenantId, actorId: i.actorId, status: i.status, createdAt: i.createdAt, updatedAt: i.updatedAt, steps: i.steps };
+};
+
+/** The most recently active workflow ids (D1, cheap) — then each instance's real steps[] straight from its own Durable Object (the DO journal is the source of truth, not the audit relay). */
+const recentInstances = async (env: Env, limit = 15): Promise<FarmInstanceRow[]> => {
+  await ensureD1Audit(env.AUDIT);
+  const rows = await env.AUDIT.prepare(`SELECT workflow_id, MAX(at) AS last_at FROM audit WHERE workflow_id IS NOT NULL GROUP BY workflow_id ORDER BY last_at DESC LIMIT ?`)
+    .bind(limit)
+    .all<{ workflow_id: string; last_at: string }>();
+  return Promise.all(rows.results.map((r) => farmRowOf(env, r.workflow_id, r.last_at)));
+};
+
 /** Who handed the document in, as data: the Access-authenticated e-mail, or the service token path. JWT verification is a later unit. */
 const receivedFrom = (request: Request): string => {
   const email = request.headers.get("cf-access-authenticated-user-email");
@@ -443,7 +446,7 @@ export default {
         deployableInfo(env.EMAIL_EXECUTOR, "https://apf-email-executor.internal"),
         deployableInfo(env.MAIL_INGEST, "https://apf-mail-ingest.internal"),
         deployableInfo(env.FAKES, FAKES_ORIGIN),
-        recentInstances(env, 30),
+        recentInstances(env, 15),
       ]);
       return html(
         renderFarm({

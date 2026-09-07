@@ -2,6 +2,18 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-07 (29) — W23 ověřeno naživo (s důležitou nuancí o „Canceled"); `/farm` rozšířen o detail kroků z DO
+
+**Živé ověření W23:** vlastník poslal nový testovací dokument přes `/`. Nová instance (`wf-mtr4okum...`) má v `/audit.json` **kompletní** trojici `dispatch`/`write-intent`/`write-done` pro `document.stamp`, časově plynule navazující až po `state: SUCCEEDED`. Na straně `apf-document-host` `wrangler tail` ukázal `/dispatch done ... status=SUCCEEDED (158ms)` **bez jediného `console.error`** z `RelayAudit`, což je možné jen když `flush()` čekal na všechny tři relaye a všechny odpověděly `res.ok`.
+
+**Důležitá nuance, zapsat pro příště:** `wrangler tail` na `apf-gateway` **pořád** hlásí ty samé tři `POST .../audit` jako `Canceled` — i po opravě, i když data v D1 jsou teď prokazatelně kompletní a správná. `Canceled` v tail logu je tedy **kosmetika tail streamu, ne signál o ztrátě dat** — přesně tak, jak to (25) nechávalo otevřené jako otázku. Skutečný signál spolehlivosti je vždy obsah `/audit.json`, ne stav v `wrangler tail`. (Bonus pozorování: stejná trojice, co chyběla u prvního testu z 09:34, se mezitím sama doplnila do D1 s dodatečným zpožděním ~167 ms — což naznačuje, že `waitUntil` samo o sobě požadavek nezahazovalo hned, jen nezaručeně pozdě/nikdy; `flush()` teď dělá totéž zaručeně a synchronně vůči odpovědi.)
+
+**`/farm` rozšířen** (na přání vlastníka: „bylo by dobré pokud by stránka obsahovala detailnější procesní kroky"): místo jednoho řádku se stavem teď každá z posledních 15 instancí ukazuje celou tabulku kroků (`stepsTable()`, sdílený helper se stránkou jedné instance) — capability, stav, pokus, výsledek. Zdroj je teď Durable Object (`stub.view()`), ne jen poslední D1 audit řádek, protože `steps[]` v D1 vůbec není. D1 se používá jen k rychlému výběru posledních `workflow_id` (`SELECT ... GROUP BY workflow_id`). Purgnutá instance ukáže badge `PURGED` místo pádu.
+
+**Nález mimo normu (ne W-položka, jen poznámka pro příště):** `stub.view()` (RPC na Durable Object) má návratový typ `InstanceView | null` deklarovaný na třídě, ale přes RPC stub se TypeScriptu union s `null` sesype na holé `null` — `never` po `if (!view)` větvi. Stejná kategorie jevu jako HANDOFF (16) „RPC návrat je `& Disposable`". Dosavadní použití na `/workflow/:id` to nechytilo, protože `never` tiše prošlo jako argument (bez přístupu na vlastnost). Oprava: explicitní `as InstanceView | null` cast v `farmRowOf()`. Stejné místo v `/workflow/:id` routě zůstává nedotčené (funguje správně za běhu, jen se stejnou slabší typovou zárukou) — neopraveno, mimo rozsah dnešní změny.
+
+**Brány zelené:** typecheck, 232 testů, arch, `farm:check` (+ `tsc -p deploy/cloudflare/tsconfig.json`, kde se nález objevil). Nasazeno na `farm-bass443`.
+
 ## 2026-09-07 (28) — Nová stránka „Farmář": zdraví pěti Workerů + poslední instance na jednom místě
 
 **Pokyn vlastníka** (jeho vlastní slova, ponechána jako název): „chtěl bych nějakou stránku která mi bude ukazovat stav farmáře a stav kraviček" → upřesněno na dotaz: obojí na jedné stránce (zdraví Workerů + přehled instancí).

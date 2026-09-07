@@ -38,14 +38,21 @@ export interface DeployableStatus {
   body: unknown;
 }
 
-export interface FarmInstanceRow {
-  workflowId: string;
-  tenantId: string | null;
-  at: string;
-  kind: string;
-  capability: string | null;
-  status?: string;
-}
+/** Purged instances still show up (D1 audit remembers them) but the Durable Object has nothing left to fetch. */
+export type FarmInstanceRow =
+  | { workflowId: string; purged: true; at: string }
+  | {
+      workflowId: string;
+      purged?: false;
+      workflow: string;
+      workflowVersion: string;
+      tenantId: string;
+      actorId: string;
+      status: string;
+      createdAt: string;
+      updatedAt: string;
+      steps: Instance["steps"];
+    };
 
 export interface FarmModel {
   installation: string;
@@ -135,14 +142,11 @@ ${
 const KNOWN_STATUS_BADGES = new Set(["SUCCEEDED", "FAILED", "WAITING", "RUNNING", "PENDING", "UNKNOWN_OUTCOME", "CANCELLED"]);
 const badgeClassFor = (status: string | undefined, kind: string): string => status ?? (KNOWN_STATUS_BADGES.has(kind) ? kind : "PENDING");
 
-/** Farmář (přehled farmy nahoře) + kravičky (pět Workerů farmy) + poslední instance na jedné stránce. */
+/** Farmář (přehled farmy nahoře) + kravičky (pět Workerů farmy) + poslední instance s detailem kroků na jedné stránce. */
 export function renderFarm(m: FarmModel): string {
   const up = m.deployables.filter((d) => d.ok).length;
   const counts = new Map<string, number>();
-  for (const i of m.instances) {
-    const key = i.status ?? `${i.kind}${i.capability ? ` (${i.capability})` : ""}`;
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
+  for (const i of m.instances) counts.set(i.purged ? "PURGED" : i.status, (counts.get(i.purged ? "PURGED" : i.status) ?? 0) + 1);
 
   const farmar = `<div class="card"><b>Farmář</b> — souhrn farmy <code>${esc(m.installation)}</code><br>
 Workery: <span class="badge ${up === m.deployables.length ? "SUCCEEDED" : "FAILED"}">${up}/${m.deployables.length} OK</span> ·
@@ -160,9 +164,11 @@ ${[...counts.entries()].map(([k, n]) => `<span class="badge ${badgeClassFor(KNOW
 
   const instances = m.instances
     .map((i) => {
-      const cls = badgeClassFor(i.status, i.kind);
-      const label = i.status ?? `${i.kind}${i.capability ? ` · ${i.capability}` : ""}`;
-      return `<tr><td><a href="/workflow/${esc(i.workflowId)}">${esc(i.workflowId)}</a></td><td><code>${esc(i.tenantId ?? "—")}</code></td><td><span class="badge ${esc(cls)}">${esc(label)}</span></td><td><small>${esc(i.at)}</small></td></tr>`;
+      const header = `<b><a href="/workflow/${esc(i.workflowId)}">${esc(i.workflowId)}</a></b> `;
+      if (i.purged) return `<div class="card"><small>${header}<span class="badge">PURGED</span> · smazáno, poslední audit ${esc(i.at)}</small></div>`;
+      return `<div class="card"><small>${header}<code>${esc(i.workflow)}/v${esc(i.workflowVersion)}</code> · tenant <code>${esc(i.tenantId)}</code> · aktér <code>${esc(i.actorId)}</code>
+<span class="badge ${esc(i.status)}">${esc(i.status)}</span> · založeno ${esc(i.createdAt)} · změněno ${esc(i.updatedAt)}</small>
+${stepsTable(i.steps)}</div>`;
     })
     .join("");
 
@@ -171,11 +177,7 @@ ${[...counts.entries()].map(([k, n]) => `<span class="badge ${badgeClassFor(KNOW
     `<header><h1>Farmář · farma <code>${esc(m.installation)}</code></h1></header>
 ${farmar}
 <h2>Kravičky</h2><div class="card"><table><tr><th>Worker</th><th>Stav</th><th>Isolation</th><th>Detail</th></tr>${kravicky}</table></div>
-<h2>Poslední instance</h2><div class="card">${
-      m.instances.length
-        ? `<table><tr><th>Instance</th><th>Tenant</th><th>Stav</th><th>Poslední aktivita</th></tr>${instances}</table>`
-        : '<span class="muted">zatím žádná</span>'
-    }</div>
+<h2>Poslední instance</h2>${m.instances.length ? instances : '<div class="card muted">zatím žádná</div>'}
 <nav><a href="/">Nový dokument</a><a href="/audit.json">Společný audit (D1)</a></nav>`,
   );
 }
@@ -245,14 +247,17 @@ const renderOutput = (v: InstanceView): string => {
   return `<h2>Výstup</h2><div class="card"><table>${rows.map(([k, val]) => `<tr><th style="width:14rem">${k}</th><td>${val}</td></tr>`).join("")}</table></div>`;
 };
 
-export function renderInstance(v: InstanceView): string {
-  const i = v.instance;
-  const steps = i.steps
+/** Shared by the instance page and /farm's per-instance detail: one row per step, same columns both places. */
+const stepsTable = (steps: Instance["steps"]): string =>
+  `<table><tr><th>Krok</th><th>Stav</th><th>Pokus / logický</th><th>Výsledek</th></tr>${steps
     .map(
       (s) =>
         `<tr><td><b>${esc(s.stepId)}</b><br><small>${esc(s.capability)}/v${esc(s.capabilityVersion)}</small></td><td><span class="badge ${esc(s.status)}">${esc(s.status)}</span></td><td>${s.attempt} / ${s.logicalAttempt}<br><small>${esc(s.strategy)}</small></td><td>${fmtResult(s)}</td></tr>`,
     )
-    .join("");
+    .join("")}</table>`;
+
+export function renderInstance(v: InstanceView): string {
+  const i = v.instance;
   const audit = v.audit
     .map((r) => `<tr><td><small>${esc(r.at)}</small></td><td><code>${esc(r.kind)}</code></td><td><small>${esc(r.capability ?? "")}</small></td><td><small>${esc(JSON.stringify(r.details ?? {}))}</small></td></tr>`)
     .join("");
@@ -261,7 +266,7 @@ export function renderInstance(v: InstanceView): string {
     `<header><h1>Instance toku <code>${esc(i.workflow)}/v${esc(i.workflowVersion)}</code></h1><span class="badge ${esc(i.status)}">${esc(i.status)}</span></header>
 <div class="card"><small>id <code>${esc(v.workflowId)}</code> · korelace <code>${esc(i.correlationId)}</code> · tenant <code>${esc(i.tenantId)}</code> · aktér <code>${esc(i.actorId)}</code> · založeno ${esc(i.createdAt)} · změněno ${esc(i.updatedAt)} · publikovaný stav <code>${esc(JSON.stringify(i.published))}</code>${i.waiting ? ` · čeká na <code>${esc(i.waiting.reason)}</code> do ${esc(i.waiting.deadline)}` : ""}</small></div>
 ${renderOutput(v)}
-<h2>Kroky</h2><div class="card"><table><tr><th>Krok</th><th>Stav</th><th>Pokus / logický</th><th>Výsledek</th></tr>${steps}</table>
+<h2>Kroky</h2><div class="card">${stepsTable(i.steps)}
 <small class="muted">Krok, který skončil <code>DEPENDENCY_UNAVAILABLE</code>, narazil na část farmy, která ještě není zapojená; orchestrátor ho zkusil tolikrát, kolik dovoluje definice toku, a pak instanci explicitně ukončil.</small></div>
 <h2>Artefakty</h2>${v.artifacts.map(artifactCard).join("") || '<div class="card muted">žádné</div>'}
 <h2>Audit této instance</h2><div class="card"><table><tr><th>Čas</th><th>Druh</th><th>Capability</th><th>Detail</th></tr>${audit}</table></div>
