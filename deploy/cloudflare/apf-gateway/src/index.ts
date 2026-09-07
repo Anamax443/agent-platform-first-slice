@@ -9,6 +9,7 @@
 // The installation (profile + policies) comes from the build-time alias apf:installation and is assembled fail-closed at
 // import. Nothing installation-bound is written here; secrets are named, never valued.
 import { DurableObject } from "cloudflare:workers";
+import { VYVOJOVY_DIAGRAM_EN_HTML, VYVOJOVY_DIAGRAM_HTML } from "apf:docs";
 import { INSTALLATION, installation } from "apf:installation";
 import { FAKES_ORIGIN, HttpRegistryAdapter } from "../../../../src/adapters/registry.js";
 import type { WorkersAiBinding } from "../../../../src/adapters/workers-ai.js";
@@ -475,6 +476,11 @@ export default {
         }),
       );
     }
+
+    // The two diagram pages from the repo root, bundled fresh at config-generation time (scripts/farm-config.mjs) —
+    // requested by the owner so "jak to funguje" links to the real, already-maintained explanation instead of a new one.
+    if (url.pathname === "/VYVOJOVY-DIAGRAM.html" && request.method === "GET") return html(VYVOJOVY_DIAGRAM_HTML);
+    if (url.pathname === "/VYVOJOVY-DIAGRAM.en.html" && request.method === "GET") return html(VYVOJOVY_DIAGRAM_EN_HTML);
 
     if (url.pathname === "/" && request.method === "GET") return html(renderHome(homeModel(request, env)));
 

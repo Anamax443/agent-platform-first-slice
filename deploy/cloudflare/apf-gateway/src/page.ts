@@ -146,7 +146,7 @@ ${
 <button type="submit">Odeslat do toku</button>
 </form></div>
 <h2>Co je na farmě zapojené</h2><div class="card">${wiredList(m.wired)}</div>
-<nav><a href="/farm">Farmář</a><a href="/version">/version</a><a href="/audit.json">/audit.json</a></nav>`,
+<nav><a href="/farm">Farmář</a><a href="/VYVOJOVY-DIAGRAM.html">Jak to funguje</a><a href="/version">/version</a><a href="/audit.json">/audit.json</a></nav>`,
   );
 }
 
@@ -251,6 +251,7 @@ export function renderFarm(m: FarmModel): string {
     instance: icon('<line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="14" y2="18"/>'),
     denik: icon('<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/>'),
     novy: icon('<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>'),
+    diagram: icon('<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><line x1="8" y1="7.5" x2="10.5" y2="16.2"/><line x1="16" y1="7.5" x2="13.5" y2="16.2"/><line x1="8.5" y1="6" x2="15.5" y2="6"/>'),
   };
 
   const bodyHtml = `<div class="ui" id="ui" data-layout="side-nav" data-style="saas-modern">
@@ -270,6 +271,7 @@ export function renderFarm(m: FarmModel): string {
     <a class="p-navitem" href="#denik" data-view="denik" title="Deník">${ICONS.denik}<span class="lbl">Deník</span></a>
     <div class="p-navsec">Farma</div>
     <a class="p-navitem" href="/" title="Nový dokument">${ICONS.novy}<span class="lbl">Nový dokument</span></a>
+    <a class="p-navitem" href="/VYVOJOVY-DIAGRAM.html" title="Jak to funguje — bezpečnostní řetězec a běh toku">${ICONS.diagram}<span class="lbl">Jak to funguje</span></a>
   </nav>
 
   <main class="p-main">

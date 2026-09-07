@@ -2,6 +2,16 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-07 (36) — `VYVOJOVY-DIAGRAM.html` živě na farmě (`apf:docs`), ne jen v repu
+
+**Pokyn vlastníka:** proč znovu vysvětlovat architekturu (gateway volá hostitele) do chatu, když `VYVOJOVY-DIAGRAM.html` už tohle přesně kreslí — a schválil, ať ho `/farm` nabídne přímo.
+
+**Metafora k zapsání (vlastníkova, přesnější než moje předchozí):** farmář = mozek s AI (gateway + klasifikace), kravičky = hloupí jednoúčeloví roboti (document-host, email-executor, mail-ingest — každý dělá jednu mechanickou věc), kontrolní mechanismy = hlídací psi (router permission chain, druhý signál validátoru, idempotency, audit — hlídají a štěkají, když něco nesedí).
+
+**Jak je to zapojené:** soubor `VYVOJOVY-DIAGRAM.html`/`.en.html` v kořeni repa **není instalačně vázaný** (stejný obsah pro každou instalaci) a je moc velký na to, aby se ručně kopíroval do zdrojáku jako řetězec (riziko rozjetí, stejné jako u banky z (30)). Řešeno stejným životním cyklem jako `apf:installation`: `scripts/farm-config.mjs` dostal `generateDocsModule()`, který při každé generaci configu (= při každém nasazení) přečte oba soubory z kořene repa a zapíše `.wrangler/generated/docs.ts`; nový alias `apf:docs` (jen pro `apf-gateway`, ostatní deployables ho nepotřebují) na něj ukazuje. Ambientní typ `deploy/cloudflare/types/apf-docs.d.ts` podle vzoru `apf-installation.d.ts`. Nové routy `GET /VYVOJOVY-DIAGRAM.html` a `.en.html` na gatewayi, odkaz „Jak to funguje" přidán do menu Farmáře i na domovskou stránku.
+
+**Brány zelené:** typecheck, 232 testů, arch, `farm:check` (dry-run i přes nový alias), ověřeno živě přes `wrangler dev` (skutečný obsah, 35 771 B, ne prázdná stránka). Nasazeno na `farm-bass443`.
+
 ## 2026-09-07 (35) — Kravičky: „OK" muselo znamenat i zapojeno, ne jen živé; gateway odděleně od hostitelů
 
 **Dva ostré postřehy vlastníka nad stejnou tabulkou:**
