@@ -2,6 +2,24 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-07 (32) — Dokumentace aktualizovaná na aktuální stav (232 testů, 6 posudků, D2/W23/Farmář); nový manažerský výstup
+
+**Pokyn vlastníka:** aktualizovat veškerou dokumentaci (HANDOFF, STATUS, vývojový diagram, ostatní) a vytvořit jednostránkový manažerský výstup pro vedení.
+
+**STATUS.html + STATUS.en.html:** byly stale od cca HANDOFF (19) — chyběl D2 (dokončen 6. 9., před touto session), natož dnešní práce. Doplněno: stav „M4b farma živě" místo „M1–M4 hotové, bez cloudu"; počet posudků opraven z pěti na **šest** (Posudek 6 = ověření staršího nálezu, ne nový); KPI 230→232 testů; nové položky v Hotové (D2, jméno Erwin + `docs/SEVERKA.md`, W23 nález a oprava, stránka Farmář); přepracovaný seznam Zbývá podle aktuálního pořadí z (27) (retence → formáty faktur → e-mail → harness → fronta → pentest → reálný model → …).
+
+**README.md/README.cs.md:** mlčely o tom, že dokumentový tok běží živě na Cloudflare (čtenář by si myslel, že je to pořád jen lokální fakes). Doplněna věta + odkaz na `/farm`. Počet testů opraven.
+
+**docs/ARCHITECTURE.md:** nové odstavce o celku D2 (vzdálený host jako skutečný Worker, přednačtení artefaktu, distribuce veřejného klíče), o W23 (spolehlivost cross-Worker auditu, `RelayAudit.flush()`) a o `/farm` jako operátorském pohledu nad DO a D1.
+
+**docs/SHODA-NIS2-ISO27001.md:** tenhle dokument se má aktualizovat s každým celkem (vlastní pravidlo v úvodu), a nebyl. W23 je přímo v oblasti „Logování a audit" — zapsáno jako nalezeno a opraveno, ne jako nová mezera. Řádek o kryptografii opraven: hosty **už** veřejný klíč dostávají (D2 hotovo), předtím psal opak. Počet testů opraven.
+
+**VYVOJOVY-DIAGRAM.html/.en.html:** prošlo beze změny — diagram popisuje cestu příkazu bezpečnostním řetězcem a běh workflow, obojí se dnešní prací nezměnilo (žádná nová capability, žádný nový krok, žádný nový konec toku).
+
+**Nový `docs/MANAZERSKY-VYSTUP.html`:** jednostránkový, tiskově čistý A4-na-výšku přehled pro vedení společnosti, bez žargonu. Čtyřkrokové schéma (příjem → AI rozpozná → nezávislá kontrola → zápis), proč to má smysl, bezpečnostní záruky v lidské řeči, „kde jsme dnes" **poctivě jako pilot** (živě běží, ověřeno jednou reálnou fakturou, ale ne ještě plný objem — e-mail a pentest v přípravě), další kroky. Žádné číslo v něm není vymyšlené nad rámec toho, co je doložené v STATUS/HANDOFF.
+
+**Brány:** beze změny kódu tento záznam, jen dokumentace — typecheck/testy/arch/farm:check se od (31) neměnily.
+
 ## 2026-09-07 (31) — `/farm`: sekce jako přepínané panely (ne jedna rolovací stránka) + rail toggle
 
 **Pokyn vlastníka:** čekal, že položky bočního menu ((30) je udělalo jako kotvy `#kravicky` atd. na jedné dlouhé stránce) otevřou obsah **vedle** menu, menu zůstává. Zmínil i možnost sbalit menu do úzkého režimu.

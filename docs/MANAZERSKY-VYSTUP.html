@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Erwin — zpracování dokumentů s AI a lidskou kontrolou</title>
+<style>
+  @page { size: A4 portrait; margin: 16mm 15mm; }
+  :root{
+    --ink:#1a2233; --soft:#5a6478; --line:#dbe0e8; --paper:#ffffff; --sunk:#f4f6f9;
+    --accent:#2b4c7e; --ok:#1f7a4d; --ok-bg:#e8f5ee; --warn:#a2521c; --warn-bg:#faefe5;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:#eceff3}
+  body{font:15px/1.5 "Segoe UI",system-ui,-apple-system,Arial,sans-serif;color:var(--ink)}
+  .page{max-width:190mm;margin:10mm auto;background:var(--paper);padding:16mm 15mm;box-shadow:0 2px 18px rgba(20,30,50,.12)}
+  @media print{ body{background:var(--paper)} .page{margin:0;box-shadow:none;max-width:none;padding:0} }
+  header{border-bottom:2px solid var(--ink);padding-bottom:10px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:flex-end;gap:12px}
+  h1{margin:0;font-size:23px;letter-spacing:.01em}
+  .tag{color:var(--soft);font-size:12.5px;margin-top:3px}
+  .date{color:var(--soft);font-size:12px;white-space:nowrap}
+  h2{font-size:13.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--accent);margin:20px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}
+  p{margin:0 0 8px}
+  .lead{font-size:15.5px;margin-bottom:4px}
+  ul{margin:4px 0 0;padding-left:18px}
+  li{margin:4px 0}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:0 24px}
+  .flow{display:flex;align-items:stretch;gap:8px;margin:10px 0 4px}
+  .step{flex:1;background:var(--sunk);border:1px solid var(--line);border-radius:8px;padding:9px 10px;font-size:12.5px}
+  .step b{display:block;font-size:13px;margin-bottom:2px}
+  .arrow{display:flex;align-items:center;color:var(--soft);font-size:16px}
+  .badge{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:600;margin-right:5px}
+  .badge.ok{background:var(--ok-bg);color:var(--ok)}
+  .badge.warn{background:var(--warn-bg);color:var(--warn)}
+  .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:8px 0 4px}
+  .kpi{background:var(--sunk);border:1px solid var(--line);border-radius:8px;padding:9px 10px;text-align:center}
+  .kpi b{display:block;font-size:19px;color:var(--accent)}
+  .kpi span{font-size:11px;color:var(--soft)}
+  .note{background:var(--sunk);border-left:3px solid var(--accent);border-radius:0 6px 6px 0;padding:8px 12px;font-size:13px;color:var(--soft);margin-top:6px}
+  footer{margin-top:18px;padding-top:8px;border-top:1px solid var(--line);font-size:11px;color:var(--soft);display:flex;justify-content:space-between}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header>
+    <div>
+      <h1>Erwin — automatizované zpracování dokumentů</h1>
+      <div class="tag">Pilotní provoz na platformě farmy AI agentů · vlastník: Milan Trnka</div>
+    </div>
+    <div class="date">7. září 2026</div>
+  </header>
+
+  <p class="lead"><b>Co to je:</b> systém, který sám přijme dokument (fakturu, smlouvu), pozná jeho typ pomocí umělé inteligence a — až po nezávislém potvrzení — ho orazítkuje a zaznamená. Umělá inteligence nikdy sama nerozhoduje ani nezapisuje; to dělá vždy kontrolovaný program, který je možné zpětně přezkoumat.</p>
+
+  <h2>Jak to funguje</h2>
+  <div class="flow">
+    <div class="step"><b>1 · Příjem</b>Dokument přijde (nahrání nebo e-mail), uloží se neměnně, nic se s ním „nedělá" navíc.</div>
+    <div class="arrow">→</div>
+    <div class="step"><b>2 · AI rozpozná</b>Model určí typ dokumentu (faktura, smlouva…). Jen návrh, ne rozhodnutí.</div>
+    <div class="arrow">→</div>
+    <div class="step"><b>3 · Nezávislá kontrola</b>Druhý, čistě programový test výsledek AI ověří. Neshoda jde k člověku.</div>
+    <div class="arrow">→</div>
+    <div class="step"><b>4 · Zápis a záznam</b>Teprve pak razítko/zápis. Kdo, co a kdy udělal, zůstává trvale dohledatelné.</div>
+  </div>
+
+  <h2>Proč to má smysl</h2>
+  <div class="cols">
+    <ul>
+      <li>Ušetří čas u rutinní práce s dokumenty (rozpoznání, kontrola, archivace).</li>
+      <li>Chyba se najde dřív — dvojitá kontrola místo spoléhání na jednu AI odpověď.</li>
+    </ul>
+    <ul>
+      <li>Vše je dohledatelné zpětně — kdo, kdy, co a proč, bez výjimky.</li>
+      <li>Základ pro postupné přidávání dalších agentů (e-mail, ERP) na stejném principu.</li>
+    </ul>
+  </div>
+
+  <h2>Bezpečnost a kontrola — ne jen slib</h2>
+  <ul>
+    <li><b>AI nikdy nemá poslední slovo.</b> Umělá inteligence smí jen navrhnout; zápis provádí výhradně kontrolovaný kód, a to až po nezávislém ověření.</li>
+    <li><b>Nic nezmizí beze stopy.</b> Každá akce se zapisuje do trvalého, needitovatelného záznamu — testováno a nedávno prověřeno, že se to skutečně dodržuje i při technických výpadcích.</li>
+    <li><b>Návrh prošel šesti nezávislými odbornými posouzeními</b> (skóre 8,8–9,2 z 10) a stovkami automatických testů před každým nasazením.</li>
+  </ul>
+
+  <h2>Kde jsme dnes</h2>
+  <div class="kpis">
+    <div class="kpi"><b>Živě</b><span>běží na Cloudflare, ne jen v laboratoři</span></div>
+    <div class="kpi"><b>232</b><span>automatických testů před každou změnou</span></div>
+    <div class="kpi"><b>6×</b><span>nezávislé odborné posouzení návrhu</span></div>
+  </div>
+  <p class="note"><span class="badge ok">Hotovo</span>Tok „dokument → AI → kontrola → razítko" běží end-to-end na ostrém prostředí, ověřeno reálnou fakturou.
+  <span class="badge warn">Zatím pilot</span>Zpracovává se jednotlivě, ne ještě plný provozní objem; e-mailový příjem a bezpečnostní penetrační test jsou v přípravě.</p>
+
+  <h2>Další kroky</h2>
+  <ul>
+    <li>Zapojit příjem přes e-mail a širší škálu formátů faktur (ISDOC, PDF, e-faktura).</li>
+    <li>Bezpečnostní penetrační test izolace mezi jednotlivými částmi systému.</li>
+    <li>Ověření přesnosti AI na větší sadě reálných dokumentů, než půjde do plného provozu.</li>
+    <li>Po ověření: rozhodnutí o rozsahu produkčního nasazení a napojení na další systémy (např. účetní).</li>
+  </ul>
+
+  <footer>
+    <span>Technická evidence a plný stav: interní repozitář agent-platform-first-slice (STATUS.html, HANDOFF.md).</span>
+    <span>Milan Trnka · 7. 9. 2026</span>
+  </footer>
+
+</div>
+</body>
+</html>

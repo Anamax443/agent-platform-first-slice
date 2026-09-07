@@ -14,6 +14,8 @@ Kolem obou: gateway podepisující dispatch obálky Ed25519, capability router v
 
 Nic z toho není sdílený runtime. Vše v `src/platform` je lokální pro tento projekt; balíčkem se to stane až ve chvíli, kdy totéž potřebuje druhý projekt (foundation §9, P2).
 
+Dokumentový tok navíc běží **živě na Cloudflare** (`deploy/cloudflare/`, instalace `farm-bass443`, `apf.maxferit.cz`): tři samostatné Workery, skutečný podepsaný dispatch, skutečný model a skutečná kryptografická hranice mezi hosty — ne jen fakes v jednom procesu. E-mailový tok je tam zatím jen skeleton. Aktuální stav v [STATUS.html](STATUS.html), operátorský pohled na `/farm` přímo na živé instalaci.
+
 ## Stack
 
 TypeScript, Node 20+, Vitest, `@cfworker/json-schema` (interpretační validátor: tentýž platformový kód běží i ve Workeru, který zakazuje generování kódu). Bez frameworku, bez cloudu, bez API klíče. Adaptéry (LLM, registr, DMS, archiv, SMTP) mají fakes, takže každá testovací rodina běží deterministicky a offline.
@@ -22,7 +24,7 @@ TypeScript, Node 20+, Vitest, `@cfworker/json-schema` (interpretační validáto
 
 ```bash
 npm ci
-npm test          # 12 souborů, 219 testů, 46 Test ID, názvy testů nesou Test ID
+npm test          # 13 souborů, 232 testů, 46 Test ID, názvy testů nesou Test ID
 npm run typecheck
 npm run arch      # ARCH-DEP-001: komponenta neimportuje jinou komponentu ani vnitřnosti platformy; žádný přímý systémový čas
 ```

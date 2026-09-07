@@ -14,6 +14,8 @@ Around both: a gateway that signs dispatch envelopes with Ed25519, a capability 
 
 Nothing here is a shared runtime. Everything under `src/platform` is local to this project; it becomes a package only after a second project needs the same thing (foundation §9, P2).
 
+The document flow also runs **live on Cloudflare** (`deploy/cloudflare/`, installation `farm-bass443`, `apf.maxferit.cz`): three separate Workers, a real signed dispatch, a real model, and a real cryptographic boundary between hosts — not just fakes in one process. The e-mail flow is still a skeleton there. See [STATUS.en.html](STATUS.en.html) for the current state and `/farm` on the live installation for an operator's view of it.
+
 ## Stack
 
 TypeScript, Node 20+, Vitest, `@cfworker/json-schema` (an interpreting validator: the same platform code runs in a Worker, which forbids code generation). No framework, no cloud, no API key. Adapters (LLM, registry, DMS, archive, SMTP) have fakes so every test family runs deterministically and offline.
@@ -22,7 +24,7 @@ TypeScript, Node 20+, Vitest, `@cfworker/json-schema` (an interpreting validator
 
 ```bash
 npm ci
-npm test          # 12 files, 219 tests, 46 Test IDs, named by Test ID
+npm test          # 13 files, 232 tests, 46 Test IDs, named by Test ID
 npm run typecheck
 npm run arch      # ARCH-DEP-001: no component imports another component or platform internals; no direct system clock
 ```
