@@ -2,6 +2,27 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-07 (41) — Název souboru a skutečný vizuál originálu na stránce instance
+
+**Pokyn vlastníka:** po (40) nahrál přes nový upload 10 skutečných testovacích dokumentů (PDF, JPG, PNG, JSON, XML, TXT — faktury, smlouva, účtenka, záruční list, návod, lístek ze šatny, poznámka). Zeptal se „proč to nevidím v konzoli" a upřesnil na screenshotu z `/farm`: chybí název souboru (nejde poznat, který řádek je který dokument) a chybí možnost vidět skutečný vizuál dokladu (jen vytěžený text).
+
+**Zjištění před opravou:** originální název souboru se nikdy neukládal — `startIntake()`/`intake()` ho měly k dispozici (`Original.name` u binárního vstupu), ale `SqliteArtifacts.putExternal()` ho na zápisu do SQLite tiše zahazovalo, nebyl ani sloupec v DDL.
+
+**Oprava:**
+- `src/platform/artifacts.ts`: `Artifact` dostal `name?: string` (display-only, nikdy součást identity/hashe).
+- `deploy/cloudflare/apf-gateway/src/store.ts`: DDL `artifact` tabulky dostal sloupec `name`; `ExternalOriginal`, `putExternal()`, `store()` (INSERT) a `rowToArtifact()` ho nesou. Žádná migrace: každá `WorkflowInstance` DO má vlastní čerstvou SQLite databázi (`CREATE TABLE IF NOT EXISTS` v konstruktoru), takže nový sloupec dostanou automaticky všechny instance od teď — staré instance beze změny (u nich jméno nikdy nebylo, nedá se dodělat zpětně).
+- `index.ts`: `intake()` teď posílá `name: o.name` do `putExternal()`.
+- **Nová route `GET /workflow/:id/original`** (stejný vzor jako `/stamped` z (37)): najde nederivovaný artefakt instance, přečte bajty přímo z R2 (`location`) a vrátí je se správným `content-type` — prohlížeč tedy PDF/obrázek zobrazí doopravdy, ne jen text, co z něj vytáhla Workers AI.
+- `page.ts`: řádek „Vstup" na stránce instance teď ukazuje `<b>název-souboru.pdf</b>` a odkaz „zobrazit originál" (jen když má artefakt `location`, tj. binární vstup). Group-head řádek v tabulce „Poslední instance" na `/farm` dostal stejné jméno na začátek řádku (`farmRowOf()` v `index.ts` čte `view.artifacts` navíc o `originalName`).
+
+**Vedlejší nález, zapsán ale zatím neřešen (na vlastníkovo přání „schválit/zamítnout"):** `ReviewService` (kam padají čekající review úkoly, `STAMP_NOT_ALLOWED`/`CLASSIFICATION_DISPUTED`) drží úkoly jen v paměti (`Map`), ne v Durable Objectu úložišti. Po evikci objektu (běžné, ne okrajový případ) by `decide()` skončilo `APPROVAL_MISMATCH`, protože si úkol nepamatuje. Tlačítko schválit/zamítnout se **proto staví jako samostatný příští krok**, ne dnes — nejdřív potřebuje `ReviewTask` přežít v SQLite DO, ne jen v paměti. Vlastník souhlasil s tímhle pořadím.
+
+**Živě ověřeno (vlastníkův test i vlastní):** z 10 nahraných dokumentů 6× `INVOICE` úspěšně orazítkováno, 4× `OTHER` správně zastaveno `STAMP_NOT_ALLOWED` (čeká na review), 1× (`smlouva-kupni.pdf`) reálný `CLASSIFICATION_DISPUTED` — AI řekl `CONTRACT` správně, deterministické pravidlo (`classifyByRules`) řeklo `INVOICE`, protože text smlouvy obsahoval slovo „DPH" (cenová doložka) a pravidlo kontroluje faktura-klíčová slova dřív než smlouva-klíčová. Zapsáno jako otevřený nález (ne opraveno) — vlastníkovi zbývá rozhodnout, jestli se pravidlo má zpřesnit.
+
+**Ověřeno přes `wrangler dev`:** reálné PDF nahráno přes `/intake`, stránka instance ukázala `<b>faktura-tshydro.pdf</b>` a `/workflow/:id/original` vrátil přesně 1207 B `application/pdf` (shoda s originálem byte-for-byte podle Content-Length).
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare/tsconfig.json`), 232 testů, arch, farm:check.
+
 ## 2026-09-07 (40) — Upload do inboxu přímo na `/farm`, ne přes Cloudflare dashboard
 
 **Pokyn vlastníka:** po (39) zjistil, že popis „nahraj do Cloudflare R2" znamená doopravdy otevřít cizí dashboard — „ale já to potřebuji u farmáře a ne na Cloudflare". Ověřeno mezitím i to, že farma (`/version`) už běžela na `gitSha 8488422`, tedy dávkový příjem z (39) byl mezitím nasazen (nejspíš druhým PC) beze samostatného HANDOFF záznamu o nasazení.

@@ -27,6 +27,8 @@ export interface Artifact {
   byteLength?: number;
   /** Where a binary original is kept (runtime-specific key, e.g. an R2 object key). */
   location?: string;
+  /** Original filename, when the caller had one (browser upload). Display only, never part of identity/hash. */
+  name?: string;
 }
 
 /** The store cannot accept another original (RES-STOR-001): the caller must fail explicitly, never pretend acceptance. */

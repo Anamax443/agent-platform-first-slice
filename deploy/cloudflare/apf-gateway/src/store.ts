@@ -14,7 +14,7 @@ import type { Instance, JournalStore } from "../../../../src/platform/journal.js
 export const DDL = [
   "CREATE TABLE IF NOT EXISTS instance (workflow_id TEXT PRIMARY KEY, status TEXT NOT NULL, updated_at TEXT NOT NULL, json TEXT NOT NULL)",
   "CREATE TABLE IF NOT EXISTS audit (seq INTEGER PRIMARY KEY AUTOINCREMENT, audit_id TEXT NOT NULL UNIQUE, at TEXT NOT NULL, kind TEXT NOT NULL, correlation_id TEXT, workflow_id TEXT, json TEXT NOT NULL, mirrored INTEGER NOT NULL DEFAULT 0)",
-  "CREATE TABLE IF NOT EXISTS artifact (artifact_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, sha256 TEXT NOT NULL, received_at TEXT NOT NULL, received_from TEXT NOT NULL, derived_from TEXT, producer TEXT, content_type TEXT, byte_length INTEGER, location TEXT, bytes TEXT NOT NULL, copied INTEGER NOT NULL DEFAULT 0)",
+  "CREATE TABLE IF NOT EXISTS artifact (artifact_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, sha256 TEXT NOT NULL, received_at TEXT NOT NULL, received_from TEXT NOT NULL, derived_from TEXT, producer TEXT, content_type TEXT, byte_length INTEGER, location TEXT, name TEXT, bytes TEXT NOT NULL, copied INTEGER NOT NULL DEFAULT 0)",
 ];
 
 /** Shared D1 trail: the same record shape, one row per audit record, insert-only. */
@@ -103,6 +103,7 @@ const rowToArtifact = (r: Record<string, SqlStorageValue>): Artifact => ({
   ...(r.content_type ? { contentType: r.content_type as string } : {}),
   ...(typeof r.byte_length === "number" ? { byteLength: r.byte_length } : {}),
   ...(r.location ? { location: r.location as string } : {}),
+  ...(r.name ? { name: r.name as string } : {}),
 });
 
 /** A binary original that already sits in R2: the object keeps metadata only (`bytes` empty, `location` set). */
@@ -113,6 +114,7 @@ export interface ExternalOriginal {
   contentType: string;
   byteLength: number;
   location: string;
+  name?: string;
 }
 
 /** Immutable originals and derivations (EVD-001): insert-only, a second write to an id is a programming error. */
@@ -148,6 +150,7 @@ export class SqliteArtifacts implements ArtifactWriter {
       contentType: input.contentType,
       byteLength: input.byteLength,
       location: input.location,
+      ...(input.name ? { name: input.name } : {}),
     };
     this.store(a);
     return { ...a };
@@ -193,7 +196,7 @@ export class SqliteArtifacts implements ArtifactWriter {
   private store(a: Artifact): void {
     if (this.get(a.artifactId)) throw new Error(`artifact ${a.artifactId} already exists: artifacts are immutable`);
     this.sql.exec(
-      "INSERT INTO artifact (artifact_id, tenant_id, sha256, received_at, received_from, derived_from, producer, content_type, byte_length, location, bytes, copied) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO artifact (artifact_id, tenant_id, sha256, received_at, received_from, derived_from, producer, content_type, byte_length, location, name, bytes, copied) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       a.artifactId,
       a.tenantId,
       a.sha256,
@@ -204,6 +207,7 @@ export class SqliteArtifacts implements ArtifactWriter {
       a.contentType ?? null,
       a.byteLength ?? null,
       a.location ?? null,
+      a.name ?? null,
       a.bytes,
       a.location ? 1 : 0,
     );

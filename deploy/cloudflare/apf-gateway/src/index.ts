@@ -217,7 +217,7 @@ export class WorkflowInstance extends DurableObject<Env> {
     const original =
       o.kind === "text"
         ? this.artifacts.put({ tenantId: input.tenantId, bytes: o.bytes, receivedFrom: input.receivedFrom, contentType: o.contentType })
-        : this.artifacts.putExternal({ tenantId: input.tenantId, receivedFrom: input.receivedFrom, sha256: o.sha256, contentType: o.contentType, byteLength: o.byteLength, location: o.location });
+        : this.artifacts.putExternal({ tenantId: input.tenantId, receivedFrom: input.receivedFrom, sha256: o.sha256, contentType: o.contentType, byteLength: o.byteLength, location: o.location, name: o.name });
 
     // A binary original never reaches a capability: the workflow runs over the text derived from it (provenance = derivedFrom + producer).
     let subject = original;
@@ -360,7 +360,8 @@ const farmRowOf = async (env: Env, workflowId: string, lastAt: string): Promise<
   const view = (await stub.view()) as InstanceView | null;
   if (!view) return { workflowId, purged: true, at: lastAt };
   const i = view.instance;
-  return { workflowId, workflow: i.workflow, workflowVersion: i.workflowVersion, tenantId: i.tenantId, actorId: i.actorId, status: i.status, createdAt: i.createdAt, updatedAt: i.updatedAt, steps: i.steps };
+  const originalName = view.artifacts.find((a) => !a.derivedFrom)?.name;
+  return { workflowId, workflow: i.workflow, workflowVersion: i.workflowVersion, tenantId: i.tenantId, actorId: i.actorId, status: i.status, createdAt: i.createdAt, updatedAt: i.updatedAt, steps: i.steps, ...(originalName ? { originalName } : {}) };
 };
 
 /** The most recently active workflow ids (D1, cheap) — then each instance's real steps[] straight from its own Durable Object (the DO journal is the source of truth, not the audit relay). */
@@ -719,6 +720,20 @@ export default {
       const obj = await env.ARTIFACTS.get(key);
       if (!obj) return Response.json({ error: "NOT_FOUND", message: "not in R2 yet (async write) or already purged", key }, { status: 404 });
       return new Response(obj.body, { headers: { "content-type": obj.httpMetadata?.contentType ?? "text/plain; charset=utf-8", "cache-control": "no-store" } });
+    }
+
+    // The original upload itself (PDF/photo/etc.), not just the text Workers AI extracted from it — owner's request,
+    // 2026-09-07: "chci vidět vizuál dokladu". Text originals have nothing extra here; the text is already inline.
+    const originalRoute = /^\/workflow\/(wf-[A-Za-z0-9]+)\/original$/.exec(url.pathname);
+    if (originalRoute && request.method === "GET") {
+      const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(originalRoute[1] as string));
+      const view = (await stub.view()) as InstanceView | null;
+      if (!view) return Response.json({ error: "NOT_FOUND", workflowId: originalRoute[1] }, { status: 404 });
+      const original = view.artifacts.find((a) => !a.derivedFrom);
+      if (!original?.location) return Response.json({ error: "NOT_FOUND", message: "instance has no binary original (text intake, or already purged)" }, { status: 404 });
+      const obj = await env.ARTIFACTS.get(original.location);
+      if (!obj) return Response.json({ error: "NOT_FOUND", message: "not in R2 (already purged)", key: original.location }, { status: 404 });
+      return new Response(obj.body, { headers: { "content-type": obj.httpMetadata?.contentType ?? "application/octet-stream", "cache-control": "no-store" } });
     }
 
     const m = /^\/workflow\/(wf-[A-Za-z0-9]+)(\.json)?$/.exec(url.pathname);

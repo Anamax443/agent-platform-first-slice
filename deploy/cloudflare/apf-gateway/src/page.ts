@@ -53,6 +53,7 @@ export type FarmInstanceRow =
       createdAt: string;
       updatedAt: string;
       steps: Instance["steps"];
+      originalName?: string;
     };
 
 /** One row of the shared audit trail (D1 "audit" table), as-is — the "deník". */
@@ -231,7 +232,7 @@ export function renderFarm(m: FarmModel): string {
   const instanceRows = m.instances
     .map((i) => {
       if (i.purged) return `<tr class="group-head"><td colspan="5"><a href="/workflow/${esc(i.workflowId)}">${esc(i.workflowId)}</a> — smazáno (PURGED), poslední audit ${esc(i.at)}</td></tr>`;
-      const head = `<tr class="group-head"><td colspan="5"><a href="/workflow/${esc(i.workflowId)}">${esc(i.workflowId)}</a> · ${esc(i.workflow)}/v${esc(i.workflowVersion)} · tenant ${esc(i.tenantId)} · aktér ${esc(i.actorId)} · ${stateBadge(i.status)} · založeno ${esc(i.createdAt)}, změněno ${esc(i.updatedAt)}</td></tr>`;
+      const head = `<tr class="group-head"><td colspan="5">${i.originalName ? `<b>${esc(i.originalName)}</b> · ` : ""}<a href="/workflow/${esc(i.workflowId)}">${esc(i.workflowId)}</a> · ${esc(i.workflow)}/v${esc(i.workflowVersion)} · tenant ${esc(i.tenantId)} · aktér ${esc(i.actorId)} · ${stateBadge(i.status)} · založeno ${esc(i.createdAt)}, změněno ${esc(i.updatedAt)}</td></tr>`;
       const steps = i.steps
         .map((s) => `<tr><td>${esc(s.stepId)}</td><td>${esc(s.capability)}/v${esc(s.capabilityVersion)}</td>${stateTd(s.status)}<td>${s.attempt} / ${s.logicalAttempt} <span class="dim">${esc(s.strategy)}</span></td><td class="wrap">${humanStepResult(s)}</td></tr>`)
         .join("");
@@ -495,7 +496,12 @@ const renderOutput = (v: InstanceView): string => {
     return `<span class="badge ${esc(s.status)}">${esc(s.status)}</span>`;
   };
   const rows = [
-    ["Vstup", original ? `${esc(original.contentType ?? "text/plain")} · ${kb(original.byteLength ?? original.bytes.length)} · od <code>${esc(original.receivedFrom)}</code>` : '<span class="muted">žádný</span>'],
+    [
+      "Vstup",
+      original
+        ? `${original.name ? `<b>${esc(original.name)}</b> · ` : ""}${esc(original.contentType ?? "text/plain")} · ${kb(original.byteLength ?? original.bytes.length)} · od <code>${esc(original.receivedFrom)}</code>${original.location ? ` · <a href="/workflow/${esc(v.workflowId)}/original" target="_blank" rel="noopener">zobrazit originál</a>` : ""}`
+        : '<span class="muted">žádný</span>',
+    ],
     [
       "Text dokumentu",
       subject
