@@ -2,6 +2,18 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-07 (37) — Nová route `/workflow/:id/stamped`: orazítkovaný text šel vidět jen jako ID, ne obsah
+
+**Pokyn vlastníka:** „je možno vidět dokument? co jsme zpracovali?" → „ideálně orazítkovaný". Dosud šlo přečíst jen vytěžený text originálu (`renderOutput`), samotný **orazítkovaný artefakt** byl na stránce vidět jen jako `stampedArtifactId`/`stampedSha256` — ID bez obsahu.
+
+**Proč to nebylo triviální:** bajty orazítkovaného artefaktu se v odpovědi `/dispatch` vůbec nevrací (`payloadFor()` v `stamp-handler.ts` nese jen id a hash), protože `apf-document-host` je od (25)/(29) samostatný vzdálený Worker (celek D2) — svůj `SingleArtifactStore.derive()` zapisuje bajty rovnou do R2 pod klíč `derived/<tenantId>/<sha256>`, asynchronně (`ctx.waitUntil`). Gateway ho tedy nikdy neuvidí přes journal ani audit, jen přes tenhle vedlejší R2 zápis — a instance's `artifacts[]` (co ukazuje `renderInstance`) orazítkovaný artefakt vůbec neobsahuje, protože ho nikdy nezaevidoval do vlastní SQLite.
+
+**Řešení:** nová route `GET /workflow/:id/stamped` na gatewayi — najde poslední úspěšný krok `document.stamp`, vezme `stampedSha256` z jeho výsledku a `tenantId` instance, sestaví stejný R2 klíč (`derived/<tenant>/<sha>`) a přečte objekt přímo (stejný bucket `apf-artifacts`, žádná cesta přes document-host navíc). Odkaz „zobrazit orazítkovaný text" přidán do řádku Razítko na stránce instance.
+
+**Důležité očekávání, řečeno nahlas vlastníkovi:** je to **text**, ne vizuálně orazítkované PDF. `document.stamp` v tomhle referenčním řezu pracuje nad vytěženým markdown textem (ne nad binárními bajty PDF), fake DMS vrátí text s vloženým řádkem `--- STAMPED ... ---`. Skutečné vizuální razítko na PDF by byla samostatná, mnohem větší práce (renderování/manipulace PDF), mimo dnešní rozsah.
+
+**Brány zelené:** typecheck, 232 testů, arch, farm:check. Nasazeno na `farm-bass443`.
+
 ## 2026-09-07 (36) — `VYVOJOVY-DIAGRAM.html` živě na farmě (`apf:docs`), ne jen v repu
 
 **Pokyn vlastníka:** proč znovu vysvětlovat architekturu (gateway volá hostitele) do chatu, když `VYVOJOVY-DIAGRAM.html` už tohle přesně kreslí — a schválil, ať ho `/farm` nabídne přímo.

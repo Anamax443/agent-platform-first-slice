@@ -584,6 +584,23 @@ export default {
       return Response.json(artifact);
     }
 
+    // The stamped derivative's bytes never travel back in the dispatch result (only its id/hash do, payloadFor() in
+    // stamp-handler.ts) — apf-document-host writes them to R2 itself, keyed by tenant + sha256 (SingleArtifactStore.derive()
+    // in apf-document-host/src/index.ts). Same bucket, so gateway can read the object directly, no host round-trip needed.
+    const stampedRoute = /^\/workflow\/(wf-[A-Za-z0-9]+)\/stamped$/.exec(url.pathname);
+    if (stampedRoute && request.method === "GET") {
+      const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(stampedRoute[1] as string));
+      const view = (await stub.view()) as InstanceView | null;
+      if (!view) return Response.json({ error: "NOT_FOUND", workflowId: stampedRoute[1] }, { status: 404 });
+      const stampStep = [...view.instance.steps].reverse().find((s) => s.capability === "document.stamp" && s.status === "SUCCEEDED");
+      const sha = (stampStep?.result?.payload as { stampedSha256?: unknown } | undefined)?.stampedSha256;
+      if (typeof sha !== "string") return Response.json({ error: "NOT_FOUND", message: "instance has no successful document.stamp step" }, { status: 404 });
+      const key = `derived/${view.instance.tenantId}/${sha}`;
+      const obj = await env.ARTIFACTS.get(key);
+      if (!obj) return Response.json({ error: "NOT_FOUND", message: "not in R2 yet (async write) or already purged", key }, { status: 404 });
+      return new Response(obj.body, { headers: { "content-type": obj.httpMetadata?.contentType ?? "text/plain; charset=utf-8", "cache-control": "no-store" } });
+    }
+
     const m = /^\/workflow\/(wf-[A-Za-z0-9]+)(\.json)?$/.exec(url.pathname);
     if (m && request.method === "GET") {
       const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(m[1] as string));
