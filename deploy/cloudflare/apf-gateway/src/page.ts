@@ -157,6 +157,7 @@ const STATE_CLASS: Record<string, string> = {
   DOWN: "st-crit",
   FAILED: "st-crit",
   WAITING: "st-warn",
+  NEZAPOJENO: "st-warn",
   UNKNOWN_OUTCOME: "st-warn",
   CANCELLED: "st-warn",
   RUNNING: "st-man",
@@ -174,6 +175,14 @@ const DEPLOYABLE_ROLE: Record<string, string> = {
   "apf-fakes": "Testovací dvojník DMS/registru/archivu — nahrazuje skutečné externí systémy při vývoji a testech",
 };
 
+/** "Reachable" (HTTP 200 on /version) and "actually wired into the flow" are different claims — a skeleton answers fine but does nothing yet. */
+const workerReady = (d: DeployableStatus): boolean => d.ok && (d.body as Record<string, unknown> | null)?.wired !== false;
+const workerStateLabel = (d: DeployableStatus): string => {
+  if (!d.ok) return "DOWN";
+  if ((d.body as Record<string, unknown> | null)?.wired === false) return "NEZAPOJENO";
+  return "OK";
+};
+
 /** Isolation class → plain label + hover explanation (LOGICAL/PRINCIPAL are jargon on their own). */
 const isolationLabel = (raw: string): { label: string; title?: string } => {
   if (raw === "self") return { label: "gateway", title: "toto je samotná gateway, hlásí vlastní zdraví" };
@@ -188,18 +197,33 @@ const isolationLabel = (raw: string): { label: string; title?: string } => {
  * Přehled + kravičky (pět Workerů) + poslední instance (seskupené kroky) + deník (sdílený audit, D1) na jedné stránce.
  */
 export function renderFarm(m: FarmModel): string {
-  const up = m.deployables.filter((d) => d.ok).length;
+  // Answering /version (HTTP 200) only proves the Worker is alive — its own body can still say wired:false
+  // (a skeleton that hasn't been wired into the flow yet). "OK" here must mean the second thing too.
+  const up = m.deployables.filter((d) => workerReady(d)).length;
 
-  const kravickyRows = m.deployables
-    .map((d) => {
-      const b = (d.body ?? {}) as Record<string, unknown>;
-      const caps = Array.isArray(b.capabilities) ? (b.capabilities as unknown[]).join(", ") : undefined;
-      const detail = caps ? `umí: ${caps}` : b.wired === false ? "zatím nezapojeno do toku" : b.error ? String(b.error) : "";
-      const role = DEPLOYABLE_ROLE[d.name];
-      const iso = isolationLabel(String(b.isolation ?? ""));
-      return `<tr><td><b>${esc(d.name)}</b>${role ? `<br><small class="dim">${esc(role)}</small>` : ""}</td>${stateTd(d.ok ? "OK" : "DOWN")}<td${iso.title ? ` title="${esc(iso.title)}"` : ""}>${esc(iso.label)}</td><td class="dim">${esc(detail)}</td></tr>`;
-    })
-    .join("");
+  const deployableRow = (d: DeployableStatus): string => {
+    const b = (d.body ?? {}) as Record<string, unknown>;
+    const caps = Array.isArray(b.capabilities) ? (b.capabilities as unknown[]).join(", ") : undefined;
+    const detail = caps ? `umí: ${caps}` : b.wired === false ? "zatím nezapojeno do toku" : b.error ? String(b.error) : "";
+    const role = DEPLOYABLE_ROLE[d.name];
+    const iso = isolationLabel(String(b.isolation ?? ""));
+    return `<tr><td><b>${esc(d.name)}</b>${role ? `<br><small class="dim">${esc(role)}</small>` : ""}</td>${stateTd(workerStateLabel(d))}<td${iso.title ? ` title="${esc(iso.title)}"` : ""}>${esc(iso.label)}</td><td class="dim">${esc(detail)}</td></tr>`;
+  };
+  // Not five peers: apf-gateway is the one that decides and calls the other four — a flat table hid that. Grouped so the
+  // hierarchy shows (owner's own observation: "vypadá, že apf-gateway je na stejné úrovni jako ostatní, ne?").
+  const byName = (name: string) => m.deployables.find((d) => d.name === name);
+  const gatewayRow = byName("apf-gateway");
+  const hostNames = ["apf-document-host", "apf-email-executor", "apf-mail-ingest"];
+  const groupHead = (label: string): string => `<tr class="group-head"><td colspan="4">${esc(label)}</td></tr>`;
+  const kravickyRows =
+    (gatewayRow ? groupHead("Řídí tok — přijímá dokument a rozhoduje, kam ho poslat dál") + deployableRow(gatewayRow) : "") +
+    groupHead("Hostitelé, které gateway volá") +
+    hostNames
+      .map((n) => byName(n))
+      .filter((d): d is DeployableStatus => !!d)
+      .map(deployableRow)
+      .join("") +
+    (byName("apf-fakes") ? groupHead("Testovací dvojník (jen pro vývoj a testy)") + deployableRow(byName("apf-fakes") as DeployableStatus) : "");
 
   const instanceRows = m.instances
     .map((i) => {

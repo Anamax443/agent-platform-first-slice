@@ -2,6 +2,16 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-07 (35) — Kravičky: „OK" muselo znamenat i zapojeno, ne jen živé; gateway odděleně od hostitelů
+
+**Dva ostré postřehy vlastníka nad stejnou tabulkou:**
+1. „jak může být zatím nezapojeno do toku ve stavu OK?" — `apf-mail-ingest`/`apf-email-executor` odpovídají na `/version` (HTTP 200 → `d.ok = true`), ale jejich vlastní tělo hlásí `wired: false` (skeleton). Barva stavu vycházela jen z HTTP odpovědi, ne z obsahu — takže „OK" lhalo o tom, co slovo běžně znamená.
+2. „vypadá to graficky, že apf-gateway je na stejné úrovni jako ostatní, ne?" — plochá tabulka pěti řádků neříkala nic o tom, že gateway těch čtyři ostatní **volá**, není jejich vrstevník.
+
+**Opraveno:** `workerReady()`/`workerStateLabel()` — stav teď zohledňuje obojí (dosažitelnost i `wired`); nezapojený, ale živý Worker dostane žlutý badge **NEZAPOJENO**, ne zelené OK. Součet „X/Y Workerů OK" v hlavičce/toolbaru teď taky počítá jen skutečně zapojené. Tabulka Kravičky rozdělena na tři skupiny se záhlavím (`group-head`, stejný vzor jako u seskupených kroků instance): „Řídí tok" (gateway sám), „Hostitelé, které gateway volá" (document-host, email-executor, mail-ingest), „Testovací dvojník" (fakes).
+
+**Brány zelené:** typecheck, 232 testů, arch, farm:check. Nasazeno na `farm-bass443`.
+
 ## 2026-09-07 (34) — `/farm`: syrový JSON pryč z výchozího pohledu, text se zalamuje
 
 **Pokyn vlastníka:** „vůbec nevím o co tady jde. ani text to nemá zalomený" (Poslední instance i Deník) a „`/audit.json` nevím k čemu je". Tabulky (bank `.p-table`) mají záměrně `white-space:nowrap` + výpustku pro hustá tabulková data — u buněk s výsledkem kroku a detailem auditu to ale znamenalo, že syrový `JSON.stringify` zmizel mimo obrazovku beze stopy.
