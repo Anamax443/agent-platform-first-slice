@@ -3,6 +3,7 @@
 import type { Artifact } from "../../../../src/platform/artifacts.js";
 import type { AuditRecord } from "../../../../src/platform/audit.js";
 import type { Instance } from "../../../../src/platform/journal.js";
+import { BANK_SAAS_MODERN_CSS, BANK_UI_CSS } from "./bank.js";
 
 export interface Wired {
   intake: boolean;
@@ -54,11 +55,22 @@ export type FarmInstanceRow =
       steps: Instance["steps"];
     };
 
+/** One row of the shared audit trail (D1 "audit" table), as-is — the "deník". */
+export interface AuditLogRow {
+  at: string;
+  kind: string;
+  workflowId: string | null;
+  tenantId: string | null;
+  capability: string | null;
+  details: unknown;
+}
+
 export interface FarmModel {
   installation: string;
   gatewaySigning: string;
   deployables: DeployableStatus[];
   instances: FarmInstanceRow[];
+  auditLog: AuditLogRow[];
 }
 
 export interface InstanceView {
@@ -138,48 +150,127 @@ ${
   );
 }
 
-/** Known badge colors from the CSS (see .SUCCEEDED/.FAILED/… above); anything else (a "kind (capability)" fallback for a not-yet-terminal instance) gets the neutral "in progress" color. */
-const KNOWN_STATUS_BADGES = new Set(["SUCCEEDED", "FAILED", "WAITING", "RUNNING", "PENDING", "UNKNOWN_OUTCOME", "CANCELLED"]);
-const badgeClassFor = (status: string | undefined, kind: string): string => status ?? (KNOWN_STATUS_BADGES.has(kind) ? kind : "PENDING");
+/** State label → bank status class (docs/UI/predpis-saas-modern-side-nav.txt §8: "stav nese barvu i slovo", nikdy jen barva). */
+const STATE_CLASS: Record<string, string> = {
+  OK: "st-ok",
+  SUCCEEDED: "st-ok",
+  DOWN: "st-crit",
+  FAILED: "st-crit",
+  WAITING: "st-warn",
+  UNKNOWN_OUTCOME: "st-warn",
+  CANCELLED: "st-warn",
+  RUNNING: "st-man",
+  PENDING: "st-man",
+};
+const stateBadge = (label: string): string => `<span class="${STATE_CLASS[label] ?? ""}"><span class="p-state"><span class="p-dot"></span>${esc(label)}</span></span>`;
+const stateTd = (label: string): string => `<td class="c-state">${stateBadge(label)}</td>`;
 
-/** Farmář (přehled farmy nahoře) + kravičky (pět Workerů farmy) + poslední instance s detailem kroků na jedné stránce. */
+/**
+ * Farmář na banku Interface-Par (Anamax443/Interface-Par, styl saas-modern, rozvržení side-nav — viz
+ * docs/UI/predpis-saas-modern-side-nav.txt). Vlastní stránka, ne shell() — jiný vizuální jazyk než zbytek gatewaye.
+ * Přehled + kravičky (pět Workerů) + poslední instance (seskupené kroky) + deník (sdílený audit, D1) na jedné stránce.
+ */
 export function renderFarm(m: FarmModel): string {
   const up = m.deployables.filter((d) => d.ok).length;
-  const counts = new Map<string, number>();
-  for (const i of m.instances) counts.set(i.purged ? "PURGED" : i.status, (counts.get(i.purged ? "PURGED" : i.status) ?? 0) + 1);
 
-  const farmar = `<div class="card"><b>Farmář</b> — souhrn farmy <code>${esc(m.installation)}</code><br>
-Workery: <span class="badge ${up === m.deployables.length ? "SUCCEEDED" : "FAILED"}">${up}/${m.deployables.length} OK</span> ·
-podpis <code>${esc(m.gatewaySigning)}</code> · posledních ${m.instances.length} instancí:
-${[...counts.entries()].map(([k, n]) => `<span class="badge ${badgeClassFor(KNOWN_STATUS_BADGES.has(k) ? k : undefined, k)}">${esc(k)} × ${n}</span>`).join(" ")}
-</div>`;
-
-  const kravicky = m.deployables
+  const kravickyRows = m.deployables
     .map((d) => {
       const b = (d.body ?? {}) as Record<string, unknown>;
       const caps = Array.isArray(b.capabilities) ? (b.capabilities as unknown[]).join(", ") : undefined;
-      return `<tr><td><b>${esc(d.name)}</b></td><td><span class="badge ${d.ok ? "SUCCEEDED" : "FAILED"}">${d.ok ? "OK" : "DOWN"}</span> <small>HTTP ${d.status || "—"}</small></td><td><small>${esc(b.isolation ?? "")}</small></td><td><small>${caps ? esc(caps) : b.wired === false ? "not wired" : b.error ? esc(String(b.error)) : ""}</small></td></tr>`;
+      const detail = caps ?? (b.wired === false ? "not wired" : b.error ? String(b.error) : "");
+      return `<tr><td><b>${esc(d.name)}</b></td>${stateTd(d.ok ? "OK" : "DOWN")}<td>${esc(b.isolation ?? "")}</td><td class="dim">${esc(detail)}</td></tr>`;
     })
     .join("");
 
-  const instances = m.instances
+  const instanceRows = m.instances
     .map((i) => {
-      const header = `<b><a href="/workflow/${esc(i.workflowId)}">${esc(i.workflowId)}</a></b> `;
-      if (i.purged) return `<div class="card"><small>${header}<span class="badge">PURGED</span> · smazáno, poslední audit ${esc(i.at)}</small></div>`;
-      return `<div class="card"><small>${header}<code>${esc(i.workflow)}/v${esc(i.workflowVersion)}</code> · tenant <code>${esc(i.tenantId)}</code> · aktér <code>${esc(i.actorId)}</code>
-<span class="badge ${esc(i.status)}">${esc(i.status)}</span> · založeno ${esc(i.createdAt)} · změněno ${esc(i.updatedAt)}</small>
-${stepsTable(i.steps)}</div>`;
+      if (i.purged) return `<tr class="group-head"><td colspan="5"><a href="/workflow/${esc(i.workflowId)}">${esc(i.workflowId)}</a> — smazáno (PURGED), poslední audit ${esc(i.at)}</td></tr>`;
+      const head = `<tr class="group-head"><td colspan="5"><a href="/workflow/${esc(i.workflowId)}">${esc(i.workflowId)}</a> · ${esc(i.workflow)}/v${esc(i.workflowVersion)} · tenant ${esc(i.tenantId)} · aktér ${esc(i.actorId)} · ${stateBadge(i.status)} · založeno ${esc(i.createdAt)}, změněno ${esc(i.updatedAt)}</td></tr>`;
+      const steps = i.steps
+        .map((s) => `<tr><td>${esc(s.stepId)}</td><td>${esc(s.capability)}/v${esc(s.capabilityVersion)}</td>${stateTd(s.status)}<td>${s.attempt} / ${s.logicalAttempt} <span class="dim">${esc(s.strategy)}</span></td><td>${fmtResult(s)}</td></tr>`)
+        .join("");
+      return head + steps;
     })
     .join("");
 
-  return shell(
-    `Farmář · ${m.installation}`,
-    `<header><h1>Farmář · farma <code>${esc(m.installation)}</code></h1></header>
-${farmar}
-<h2>Kravičky</h2><div class="card"><table><tr><th>Worker</th><th>Stav</th><th>Isolation</th><th>Detail</th></tr>${kravicky}</table></div>
-<h2>Poslední instance</h2>${m.instances.length ? instances : '<div class="card muted">zatím žádná</div>'}
-<nav><a href="/">Nový dokument</a><a href="/audit.json">Společný audit (D1)</a></nav>`,
-  );
+  const denikRows = m.auditLog
+    .map((r) => {
+      const link = r.workflowId ? `<a href="/workflow/${esc(r.workflowId)}">${esc(r.workflowId)}</a>` : "—";
+      const detail = JSON.stringify(r.details ?? {});
+      return `<tr><td class="c-date">${esc(r.at)}</td><td>${esc(r.kind)}</td><td>${link}</td><td>${esc(r.capability ?? "")}</td><td><code>${esc(detail.length > 200 ? `${detail.slice(0, 200)}…` : detail)}</code></td></tr>`;
+    })
+    .join("");
+
+  const bodyHtml = `<div class="ui" data-layout="side-nav" data-style="saas-modern">
+  <div class="p-title">
+    <span class="p-brand"><span class="mark"></span>Farmář<span class="sub">— farma ${esc(m.installation)}</span></span>
+    <span class="vsep"></span>
+    <span class="p-field">podpis ${esc(m.gatewaySigning)}</span>
+    <span class="grow"></span>
+    <span class="p-field">${up}/${m.deployables.length} Workerů OK</span>
+  </div>
+
+  <nav class="p-nav">
+    <a class="p-navitem" href="#prehled" aria-current="true"><span class="lbl">Přehled</span></a>
+    <a class="p-navitem" href="#kravicky"><span class="lbl">Kravičky</span></a>
+    <a class="p-navitem" href="#instance"><span class="lbl">Poslední instance</span></a>
+    <a class="p-navitem" href="#denik"><span class="lbl">Deník</span></a>
+    <div class="p-navsec">Farma</div>
+    <a class="p-navitem" href="/"><span class="lbl">Nový dokument</span></a>
+    <a class="p-navitem" href="/audit.json"><span class="lbl">/audit.json</span></a>
+  </nav>
+
+  <main class="p-main">
+    <div class="p-panehead" id="prehled"><span>Přehled</span><span class="n">farma ${esc(m.installation)}</span></div>
+    <div class="p-toolbar">
+      <span class="meta">instalace ${esc(m.installation)}</span>
+      <span class="vsep"></span>
+      <span class="meta">podpis ${esc(m.gatewaySigning)}</span>
+      <span class="vsep"></span>
+      <span class="meta">${up}/${m.deployables.length} Workerů OK · ${m.instances.length} instancí · ${m.auditLog.length} v deníku</span>
+      <span class="grow"></span>
+      <a class="p-btn" href="/">Nový dokument</a>
+    </div>
+
+    <div class="p-panehead" id="kravicky"><span>Kravičky</span><span class="n">${m.deployables.length} Workerů</span></div>
+    <div class="p-gridwrap"><table class="p-table">
+      <thead><tr><th>Worker</th><th class="c-state">Stav</th><th>Isolation</th><th>Detail</th></tr></thead>
+      <tbody>${kravickyRows}</tbody>
+    </table></div>
+
+    <div class="p-panehead" id="instance"><span>Poslední instance</span><span class="n">${m.instances.length}</span></div>
+    <div class="p-gridwrap"><table class="p-table">
+      <thead><tr><th>Krok</th><th>Capability</th><th class="c-state">Stav</th><th>Pokus</th><th>Výsledek</th></tr></thead>
+      <tbody>${m.instances.length ? instanceRows : '<tr><td colspan="5" class="dim">zatím žádná</td></tr>'}</tbody>
+    </table></div>
+
+    <div class="p-panehead" id="denik"><span>Deník</span><span class="n">posledních ${m.auditLog.length}</span></div>
+    <div class="p-gridwrap"><table class="p-table">
+      <thead><tr><th class="c-date">Čas</th><th>Druh</th><th>Instance</th><th>Capability</th><th>Detail</th></tr></thead>
+      <tbody>${denikRows}</tbody>
+    </table></div>
+  </main>
+
+  <footer class="p-status">
+    <span><b>${up}/${m.deployables.length}</b> Workerů</span>
+    <span><b>${m.instances.length}</b> instancí</span>
+    <span><b>${m.auditLog.length}</b> v deníku</span>
+    <span class="grow"></span>
+    <span>Farmář · ${esc(m.installation)}</span>
+  </footer>
+</div>`;
+
+  return `<!doctype html><html lang="cs"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Farmář · ${esc(m.installation)}</title>
+<style>
+html,body{height:100%;margin:0}
+.ui{height:100vh}
+.ui a{color:inherit;text-decoration:none}
+.ui a:hover{text-decoration:underline}
+.ui code{font-family:var(--font-data);background:var(--bordersoft);padding:.05em .35em;border-radius:4px;font-size:.92em}
+${BANK_UI_CSS}
+${BANK_SAAS_MODERN_CSS}
+</style>
+</head><body>${bodyHtml}</body></html>`;
 }
 
 export function renderError(title: string, message: string, details: Record<string, unknown> = {}): string {

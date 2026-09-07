@@ -2,6 +2,22 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-07 (30) — `/farm` na banku Interface-Par (saas-modern · side-nav) + deník
+
+**Pokyn vlastníka:** vložil závazný předpis vzhledu (`saas-modern` · `side-nav`) z vlastního katalogu `Anamax443/Interface-Par` a požádal, ať `/farm` použije tenhle vzhled a přidá zobrazení deníku (sdíleného auditu).
+
+**Zdroj vzhledu:** `D:\git\Interface-Par\bank\ui.css` (vrstva komponent, sdílená napříč styly) + `bank/tokens/style/saas-modern.css` (tokeny stylu) okopírované doslovně do nového `deploy/cloudflare/apf-gateway/src/bank.ts` — komentář u nich odkazuje na zdroj a na to, že se needitují ručně (přegenerovat odsud, kdyby se styl v katalogu změnil). Samotný předpis uložen jako `docs/UI/predpis-saas-modern-side-nav.txt`.
+
+**Vědomé zjednodušení, řečeno nahlas:** `bank/fonts.css` (vendorované woff2 Inter/Cascadia Mono) se **nekopíroval**. `/farm` je nástroj pro jednoho operátora na jednom Windows PC — tokeny stylu už mají jako fallback `"Segoe UI Variable Text","Segoe UI",system-ui`, což je na Windows dost blízko Inter. Kdyby se to přestalo hodit (jiný operátor, jiný OS), doplnit `vendor/fonts/` a `fonts.css` podle předpisu.
+
+**Nová stránka `/farm`:** vlastní HTML wrapper (ne `shell()` — jiný vizuální jazyk než zbytek gatewaye), `.ui[data-layout="side-nav"][data-style="saas-modern"]`, boční menu s kotvami na čtyři sekce jedné stránky (Přehled, Kravičky, Poslední instance, Deník — žádné klientské routování, jen `#kotvy`). Stav (Worker OK/DOWN, krok SUCCEEDED/FAILED/…) jde přes `.p-state`/`.p-dot` a třídy `st-ok`/`st-warn`/`st-crit`/`st-man`, ne barvou natvrdo — podle §8 předpisu „stav nese barvu i slovo".
+
+**Nová sekce „Deník":** sdílený audit (D1 `audit` tabulka) — stejný zdroj jako `/audit.json`, teď čitelně v tabulce (čas, druh, instance, capability, detail), posledních 50 záznamů napříč celou farmou, ne jen jednou instancí.
+
+**Poslední instance:** zůstává detail kroků z (29), jen přeskládaný do seskupených řádků tabulky (`group-head` řádek s odkazem/tenantem/stavem, pak řádek na krok) místo samostatných karet.
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare/tsconfig.json`), 232 testů, arch, farm:check. Ověřeno i vizuálně přes `wrangler dev` + curl (local-fakes, prázdná data — žádný pád, čistý markup). Nasazeno na `farm-bass443`, kde uvidí operátor plná data (5 Workerů, reálné instance, deník).
+
 ## 2026-09-07 (29) — W23 ověřeno naživo (s důležitou nuancí o „Canceled"); `/farm` rozšířen o detail kroků z DO
 
 **Živé ověření W23:** vlastník poslal nový testovací dokument přes `/`. Nová instance (`wf-mtr4okum...`) má v `/audit.json` **kompletní** trojici `dispatch`/`write-intent`/`write-done` pro `document.stamp`, časově plynule navazující až po `state: SUCCEEDED`. Na straně `apf-document-host` `wrangler tail` ukázal `/dispatch done ... status=SUCCEEDED (158ms)` **bez jediného `console.error`** z `RelayAudit`, což je možné jen když `flush()` čekal na všechny tři relaye a všechny odpověděly `res.ok`.

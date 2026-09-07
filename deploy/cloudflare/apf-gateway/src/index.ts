@@ -22,7 +22,7 @@ import { Orchestrator, type WorkflowDef } from "../../../../src/platform/orchest
 import { ReviewService } from "../../../../src/platform/review.js";
 import type { MessageEnvelope, ResultEnvelope } from "../../../../src/platform/types.js";
 import { WORKFLOW_NAMES, workflowDef } from "../../../../src/platform/workflow.js";
-import { renderError, renderFarm, renderHome, renderInstance, type FarmInstanceRow, type InstanceView, type ModelsInfo, type Wired } from "./page.js";
+import { renderError, renderFarm, renderHome, renderInstance, type AuditLogRow, type FarmInstanceRow, type InstanceView, type ModelsInfo, type Wired } from "./page.js";
 import { describeModels, wirePlatform, type Wiring } from "./platform-wiring.js";
 import { D1_AUDIT_DDL, DDL, SqliteArtifacts, SqliteAudit, SqliteJournal } from "./store.js";
 
@@ -369,6 +369,16 @@ const recentInstances = async (env: Env, limit = 15): Promise<FarmInstanceRow[]>
   return Promise.all(rows.results.map((r) => farmRowOf(env, r.workflow_id, r.last_at)));
 };
 
+/** The "deník": the shared audit trail as-is, same source as /audit.json, newest first. */
+const auditLog = async (env: Env, limit = 50): Promise<AuditLogRow[]> => {
+  await ensureD1Audit(env.AUDIT);
+  const rows = await env.AUDIT.prepare("SELECT json FROM audit ORDER BY at DESC LIMIT ?").bind(limit).all<{ json: string }>();
+  return rows.results.map((r) => {
+    const full = JSON.parse(r.json) as AuditRecord;
+    return { at: full.at, kind: full.kind, workflowId: full.workflowId ?? null, tenantId: full.tenantId ?? null, capability: full.capability ?? null, details: full.details };
+  });
+};
+
 /** Who handed the document in, as data: the Access-authenticated e-mail, or the service token path. JWT verification is a later unit. */
 const receivedFrom = (request: Request): string => {
   const email = request.headers.get("cf-access-authenticated-user-email");
@@ -441,12 +451,13 @@ export default {
 
     // "Farmář" (owner's own word for it): one page, health of all five deployables + the most recent workflow instances.
     if (url.pathname === "/farm" && request.method === "GET") {
-      const [documentHost, emailExecutor, mailIngest, fakes, instances] = await Promise.all([
+      const [documentHost, emailExecutor, mailIngest, fakes, instances, log] = await Promise.all([
         deployableInfo(env.DOCUMENT_HOST, "https://apf-document-host.internal"),
         deployableInfo(env.EMAIL_EXECUTOR, "https://apf-email-executor.internal"),
         deployableInfo(env.MAIL_INGEST, "https://apf-mail-ingest.internal"),
         deployableInfo(env.FAKES, FAKES_ORIGIN),
         recentInstances(env, 15),
+        auditLog(env, 50),
       ]);
       return html(
         renderFarm({
@@ -460,6 +471,7 @@ export default {
             { name: "apf-fakes", ...fakes },
           ],
           instances,
+          auditLog: log,
         }),
       );
     }

@@ -1,0 +1,173 @@
+﻿PŘEDPIS VZHLEDU – saas-modern · rozvržení side-nav (boční panel)
+Současný SaaS
+
+Tailwind a shadcn/ui v základním nastavení. Zaoblení 8 px, indigová, chladné
+modrošedé neutrály, jemný stín pod plochami, stav jako pilulka místo tečky,
+plné tlačítko. Písmo Inter, pokud je nainstalované.
+
+Kdy sáhnout: produkt pro zákazníky, u kterého je hlavní, aby působil současně,
+a hustota dat je vedlejší.
+
+POZOR: Tohle je ten vzhled, který dnes generuje AI. Není špatný – je jen
+okamžitě rozpoznatelný.
+
+Tohle je závazný popis vzhledu jedné aplikace. Hodnoty jsou odečtené ze
+skutečně vykresleného náhledu v katalogu, ne opsané. Kdo podle nich staví –
+člověk i AI – drží se jich a nic si nepřidává: co tu není, se nedělá.
+
+Odečteno 2026-09-07 v prohlížeči, ve kterém byl katalog otevřený.
+
+ODKUD TO JE
+  repozitář   Anamax443/Interface-Par   (D:\git\Interface-Par)
+  katalog     mockup/ui-styly-katalog.html   – styl se vybírá tady
+  banka       bank/                          – tohle se vkládá do projektu
+  rozbor      docs/styly.md
+  Banka se generuje z katalogu (node scripts/build-bank.mjs). Ručně se
+  needituje – příští běh generátoru změny přepíše.
+
+1 – ZAPOJENÍ
+  ui.style    saas-modern
+  ui.layout   side-nav
+
+  Do projektu se zkopíruje adresář bank/, a vedle něj vendor/fonts, mají-li
+  být písma vendorovaná (stahuje je node scripts/fetch-vendor.mjs):
+
+    <link rel="stylesheet" href="bank/fonts.css">
+    <link rel="stylesheet" href="bank/tokens/style/saas-modern.css">
+    <link rel="stylesheet" href="bank/ui.css">
+
+    <div class="ui" data-layout="side-nav">
+      <div class="p-title">…</div>
+      <nav class="p-nav">…</nav>
+      <main class="p-main">…</main>
+      <footer class="p-status">…</footer>
+    </div>
+
+  Obal .ui musí dostat výšku – kostra je mřížka a sama si ji nenastaví. Žádný
+  CSS framework navíc, žádné CDN za běhu. Funkční kostru se vším všudy má
+  bank/example.html.
+
+2 – PÍSMO
+  rozhraní           Inter,"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif
+  nadpisy            totéž co rozhraní
+  data a čísla       "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif
+  velikost rozhraní  14px
+  velikost dat       13.5px
+  hlavička sloupce   12.5px · tučnost 500 · prostrkání 0 · bez verzálek
+  čísla jdou vždy písmem dat, zarovnaná doprava, tabular-nums. Bez
+  bank/fonts.css se Cascadia Mono ani Inter na běžné stanici nenajdou; náhrada
+  změní metriku a řádek přestane sedět do své výšky.
+
+3 – BARVY ROZHRANÍ   (role – světlý režim / tmavý režim)
+  plocha panelu       --pane        #ffffff                 #0f172a
+  lišty (chrom)       --chrome      #f8fafc                 #020617
+  lišty světlejší     --chromehi    #ffffff                 #0f172a
+  hlavička tabulky    --head        #f8fafc                 #1e293b
+  zebra               --zebra       #ffffff                 #0f172a
+  najetí myší         --hover       #f1f5f9                 #1e293b
+  linka               --border      #e2e8f0                 #1e293b
+  linka jemná         --bordersoft  #f1f5f9                 #1e293b
+  text                --text        #0f172a                 #f1f5f9
+  text tlumený        --dim         #64748b                 #94a3b8
+  text doplňkový      --faint       #94a3b8                 #64748b
+  akcent              --accent      #6366f1                 #818cf8
+  akcent podbarvení   --accsoft     #eef2ff                 #1e1b4b
+  text na akcentu     --accfg       #ffffff                 #0f172a
+  stav v pořádku      --ok          #16a34a                 #4ade80
+  stav varování       --warn        #d97706                 #fbbf24
+  stav kritický       --crit        #dc2626                 #f87171
+  Sahá se výhradně přes roli, nikdy hodnotou natvrdo. Obě sady nese jeden
+  soubor bank/tokens/style/saas-modern.css; výchozí je režim podle systému,
+  data-theme na kořeni stránky ho přebíjí.
+
+4 – BARVY DAT   (na stylu NEZÁVISLÉ – neměnit)
+  série 1 (uhrazeno, náklady)   --viz-1     #2a78d6     #3987e5
+  série 2 (předpis, reference)  --viz-2     #eb6834     #d95926
+  kladný pól (přeplatek)        --viz-pos   #2a78d6     #3987e5
+  záporný pól (nedoplatek)      --viz-neg   #e34948     #e66767
+  Akcent je barva rozhraní, série je identita dat. Série se nesmí překreslit
+  jen proto, že se změnil styl – kdo se naučil, že uhrazeno je modré, by byl
+  uveden v omyl. Text nikdy nenese barvu dat; identitu nese barevná značka
+  vedle popisku.
+
+5 – KOSTRA   (rozvržení side-nav)
+  Boční menu vlevo (186 px), obsah vpravo. Výchozí rozvržení.
+
+  titulní lišta      .p-title      56px
+  položka menu       .p-navitem    38px · rádius 8px
+  hlavička panelu    .p-panehead   44px
+  lišta nástrojů     .p-toolbar    52px
+  řádek tabulky      .p-table      44px
+  stavový řádek      .p-status     34px
+  rádius prvků       8px · linka 1px · pruh výběru 0px
+  stín panelu        0 1px 3px rgba(15,23,42,.1)
+
+  Markup je pro všechna rozvržení týž, mění se jen mřížka – položky
+  vodorovného menu se klonují z bočního, detail i konzole jsou v markupu vždy
+  a jen se odkrývají. Druhý zdroj pravdy o položkách menu tím nevzniká.
+
+    .ui[data-layout]   obal – nese styl i rozvržení
+    .p-title           titulní lišta: značka, oddělovač, pole, pravý blok
+    .p-nav             boční menu (.p-navitem, .p-navsec)
+    .p-topnav          vodorovné menu – klon položek bočního
+    .p-main            hlavní panel
+    .p-panehead        hlavička panelu – název vlevo, počet vpravo
+    .p-toolbar         lišta nástrojů (.p-btn, .vsep, .meta)
+    .p-gridwrap        posuvná oblast tabulky
+    .p-table           mřížka
+    .p-charts          obrazovka grafů
+    .p-detail          detail vybraného řádku – jen master-detail
+    .p-console         průběh úlohy – jen split-console
+    .p-status          stavový řádek
+
+6 – LIŠTY, TLAČÍTKA, POLE
+  tlačítko  .p-btn    odsazení 8px 16px · rádius 8px · tučnost 500
+    Plné: podklad v akcentní barvě, text i ikona v --accfg, rámeček žádný.
+    Tohle je odchylka tohoto stylu, ne obecné pravidlo banky.
+  pole      .p-field  rámeček --border, podklad --pane, text --dim, rádius 999px
+  oddělovač .vsep     svislá linka --border
+  popisek   .meta     --dim, o půl pixelu menší než text rozhraní
+  Ikony: jeden tah 1,5 px, currentColor, 16 px (13 px v lištách), bez výplně a
+  bez stínu. Lišta nástrojů drží svou výšku a smí mít vodorovný posuvník –
+  vypadnout z ní nesmí nic.
+
+7 – TABULKA
+  výška řádku        44px, hlavička ulpívá při rolování (sticky)
+  zebra              ne
+  hustota            11 řádků na 500 px
+  najetí myší        podbarvení --hover
+  výběr řádku        podbarvení --accsoft, bez pruhu
+  Datum a VS jdou písmem dat v barvě --dim, částka písmem dat doprava,
+  tabular-nums, tučně. Doplňkový text v buňce nese třídu .dim (barva --dim, ne
+  --faint – je to text, ne dekorace). Buňka nezalamuje, přetečení řeší
+  výpustka; vodorovný posuvník má mřížka, ne stránka.
+
+8 – STAV
+  značka  .p-dot   6.99219px · rádius 50%, vlevo od popisku
+  .st-ok --ok · .st-warn --warn · .st-crit --crit · .st-man --accent
+  Stav nese barvu i slovo. Samotná barva nestačí – na tiskárně, v šeru ani při
+  barvosleposti se nepozná.
+
+9 – GRAFY
+  karta grafu        .viz-card (titulek .viz-title, podtitulek .viz-sub)
+  pruh ukazatelů     .viz-kpis / .viz-tile, jiskrový graf .viz-spark
+  legenda            .viz-legend – jen tam, kde jsou dvě a víc sérií
+  značky             .viz-b1 .viz-b2 .viz-bp .viz-bn .viz-ref .viz-grid .viz-axis
+  Sloupce nejvýš 24 px, zaoblená datová hrana a hranatá pata. Čáry 2 px.
+  Mřížka a osy vlasové a jednobarevné, nikdy čárkované. Jedna série = jedna
+  barva pro všechny sloupce; odstupňovat je podle velikosti kóduje tutéž
+  informaci dvakrát. Popisky výběrově – přímý popisek nese jediný sloupec,
+  zbytek hodnot nese osa. Každý graf má pod sebou tabulkové dvojče v prvku
+  details, takže se k číslu dostane i ten, kdo na graf nedosáhne myší; bublina
+  hodnotu jen doplňuje a nikdy k ní není jediná cesta. Barvy sérií jsou v
+  oddíle 4 a se stylem se nemění.
+
+10 – CO SE NESMÍ
+  · Přidat CSS framework nebo komponentovou knihovnu vedle banky.
+  · Editovat bank/ui.css nebo bank/tokens/style/*.css – generuje je katalog.
+  · Napsat barvu natvrdo místo role.
+  · Překreslit sérii dat podle stylu nebo podle filtru.
+  · Nechat hodnotu dostupnou jen v bublině.
+  · Nasadit bez kontroly zobrazení: v katalogu tlačítko Zkontrolovat všechny
+  styly, a to v rozvržení side-nav – nálezy se liší podle kostry, ne jen podle
+  stylu.
