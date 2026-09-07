@@ -2,6 +2,24 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-07 (26) — Jméno platformy: Erwin; směr pro admin konzoli farmy (bez kódu)
+
+**Pokyn vlastníka:** odklon od ladění celku D2 (viz (25), otevřené pozorování `waitUntil`/„Canceled" zůstává nedořešené beze změny) k pojmenování platformy a k tomu, co bude potřeba, až farma poroste za jeden dokumentový tok.
+
+**Jméno:** platforma dostala pracovní jméno **Erwin**. Padlo po zamítnutí dvou směrů: „Pigy"/„Piggy" (farmářský motiv, ale v angličtině hanlivý podtón u oslovení člověka — nevhodné, jakmile se cokoli dostane před zákazníka), a čistě funkčních jmen (Dispečer/Relay/Voxa — foneticky bezpečná pro hlasové rozhraní, ale bez osobnosti). Erwin zvolil vlastník přímo, bez dalšího zdůvodnění v zápisu.
+
+**Směr pro admin konzoli** (koncepční, nic z tohoto není v kódu ani v kontraktech):
+
+- **Registr agentů v GUI:** přidání, aktivace, deaktivace jednotlivého agenta/specialisty z konzole, ne editací configu.
+- **Editovatelné display jméno** per instance, oddělené od technického typu/ID — jméno vidí operátor/tenant, kontrakt a audit se pořád váže na stabilní identifikátor.
+- **Detailní log každého procesu a dotazu**, tak aby šla zpětně rekonstruovat celá historie případu a **prokázat/vyvrátit porušení kontraktu** („renonc" — agent udělal něco, co podle svého `Nesmí`/capability neměl). Bez toho je audit jen tvrzení.
+- **Filtrace a export do CSV** jako samozřejmá součást, ne dodatek.
+- **Konektorové testy jako gate při nasazení:** nový agent musí projít testem svých konektorů — **interních** (mluví se sdílenými službami farmy: zápis/čtení případu, registr, audit) i **externích** (mluví se svým vnějším světem — API, registry třetích stran) — dřív, než smí přejít do stavu aktivní. Selhání **tvrdě blokuje** aktivaci; override je jen explicitní akce s vlastním záznamem v auditu (kdo, kdy, proč přehlasoval).
+
+**Otevřeno, nezařazeno do pořadí:** tahle vize přesahuje jeden dokumentový tok — `first-slice` dnes pokrývá `document.classify → validate → stamp` přes tři hosty (gateway, fakes, document-host), ne víc typů specialistů vedle sebe. Obecný model (registr, capability kontrakt, izolace) popisuje `agent-platform-foundation`, ale ten je od 5. 9. zmrazený a nové papírové změny nepřijímá bez evidence z kódu (viz `2026-09-06` výše). Kam admin konzole zapadá do „Pořadí dalších celků" z (19)/(23) (invoice formáty → e-mail → fronta → pentest → `erp.post`), zůstává otevřené na vlastníkovi.
+
+**Zapsáno, kód se v tomto záznamu nemění.**
+
 ## 2026-09-07 (25) — Celek D2: apf-document-host doopravdy funguje na farmě; transportní chyba nalezena a opravená; logování
 
 **Celek D2 hotový:** `apf-document-host` už není skeleton. Skládá se stejně jako gateway (`Router` + `ExecutorHost` + `CredentialResolver`), ale jako samostatný Worker. Vyřešeny oba problémy z W21:
