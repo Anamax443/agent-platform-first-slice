@@ -12,6 +12,11 @@ import classifyFixtures from "../../../../conformance/document.classify/fixtures
 import classifyGolden from "../../../../conformance/document.classify/golden/document.classify.golden.json" with { type: "json" };
 import validateFixtures from "../../../../conformance/document.validate/fixtures/document.validate.fixtures.json" with { type: "json" };
 import validateGolden from "../../../../conformance/document.validate/golden/document.validate.golden.json" with { type: "json" };
+import stampFixtures from "../../../../conformance/document.stamp/fixtures/document.stamp.fixtures.json" with { type: "json" };
+import stampGolden from "../../../../conformance/document.stamp/golden/document.stamp.golden.json" with { type: "json" };
+import archiveFixtures from "../../../../conformance/document.archive/fixtures/document.archive.fixtures.json" with { type: "json" };
+import archiveGolden from "../../../../conformance/document.archive/golden/document.archive.golden.json" with { type: "json" };
+import { sha256 } from "../../../../src/platform/artifacts.js";
 import type { ArtifactWriter } from "../../../../src/platform/artifacts.js";
 import type { Clock } from "../../../../src/platform/clock.js";
 import { iso } from "../../../../src/platform/clock.js";
@@ -36,9 +41,15 @@ interface Golden {
   [key: string]: unknown;
 }
 
+// document.stamp/document.archive are write capabilities (owner's request 2026-09-08: "chci testovat i samostatné
+// kravičky" — apf-document-host, not just what runs in-process on the gateway). Safe to run live today because the
+// DMS/archive they write to is still the apf-fakes twin, not a real production system (docs/NAVRHOVY-LIST-farma.md,
+// celek D) — revisit this list once a real DMS is wired, the same way a real payment/ERP write never belongs here.
 const SUITES: { capability: string; fixtures: Fixture[]; golden: Record<string, Golden> }[] = [
   { capability: "document.classify", fixtures: classifyFixtures as Fixture[], golden: classifyGolden as Record<string, Golden> },
   { capability: "document.validate", fixtures: validateFixtures as Fixture[], golden: validateGolden as Record<string, Golden> },
+  { capability: "document.stamp", fixtures: stampFixtures as Fixture[], golden: stampGolden as Record<string, Golden> },
+  { capability: "document.archive", fixtures: archiveFixtures as Fixture[], golden: archiveGolden as Record<string, Golden> },
 ];
 
 export interface SelfTestRow {
@@ -96,6 +107,7 @@ export async function runSelfTest(opts: { transport: DispatchTransport; artifact
       const vars: Record<string, string> = {
         $artifactId: artifact?.artifactId ?? "art-missing",
         $sha256: artifact?.sha256 ?? "0".repeat(64),
+        "$sha256:tampered": sha256(`${f.artifact?.bytes ?? ""} tampered`),
         $now: iso(opts.clock.now()),
       };
       const now = opts.clock.now();

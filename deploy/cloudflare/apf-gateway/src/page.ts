@@ -581,7 +581,7 @@ export function renderSelfTest(rows: SelfTestRow[]): string {
   const sections = [...byCapability.entries()]
     .map(
       ([cap, rs]) =>
-        `<h2>${esc(cap)} <small class="muted">${rs.filter((r) => r.ok).length}/${rs.filter((r) => !r.skipped).length}</small></h2>
+        `<h2>${esc(cap)} <small class="muted">${rs.filter((r) => r.ok && !r.skipped).length}/${rs.filter((r) => !r.skipped).length}</small></h2>
 <table><thead><tr><th>Fixture</th><th>Druh</th><th>Stav</th><th>Detail</th></tr></thead><tbody>${rs.map(rowHtml).join("")}</tbody></table>`,
     )
     .join("");
