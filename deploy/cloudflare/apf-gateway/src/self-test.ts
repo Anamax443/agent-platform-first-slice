@@ -18,6 +18,10 @@ import stampFixtures from "../../../../conformance/document.stamp/fixtures/docum
 import stampGolden from "../../../../conformance/document.stamp/golden/document.stamp.golden.json" with { type: "json" };
 import archiveFixtures from "../../../../conformance/document.archive/fixtures/document.archive.fixtures.json" with { type: "json" };
 import archiveGolden from "../../../../conformance/document.archive/golden/document.archive.golden.json" with { type: "json" };
+import ingestFixtures from "../../../../conformance/mail.ingest/fixtures/mail.ingest.fixtures.json" with { type: "json" };
+import ingestGolden from "../../../../conformance/mail.ingest/golden/mail.ingest.golden.json" with { type: "json" };
+import emailFixtures from "../../../../conformance/email.send/fixtures/email.send.fixtures.json" with { type: "json" };
+import emailGolden from "../../../../conformance/email.send/golden/email.send.golden.json" with { type: "json" };
 import { sha256 } from "../../../../src/platform/artifacts.js";
 import type { ArtifactWriter } from "../../../../src/platform/artifacts.js";
 import type { Clock } from "../../../../src/platform/clock.js";
@@ -64,6 +68,11 @@ const SUITES: { capability: string; worker: string; fixtures: Fixture[]; golden:
   { capability: "document.validate", worker: "apf-gateway", fixtures: validateFixtures as Fixture[], golden: validateGolden as Record<string, Golden> },
   { capability: "document.stamp", worker: "apf-document-host", fixtures: stampFixtures as Fixture[], golden: stampGolden as Record<string, Golden> },
   { capability: "document.archive", worker: "apf-document-host", fixtures: archiveFixtures as Fixture[], golden: archiveGolden as Record<string, Golden> },
+  // SEVERKA.md item 3, second real write-type: mail.ingest runs in-process on the gateway (no credential to
+  // isolate), email.send is a genuine remote dispatch to apf-email-executor (PRINCIPAL, SEND_MODE=sandbox here —
+  // self-test never flips that, so this never sends a real email).
+  { capability: "mail.ingest", worker: "apf-gateway", fixtures: ingestFixtures as Fixture[], golden: ingestGolden as Record<string, Golden> },
+  { capability: "email.send", worker: "apf-email-executor", fixtures: emailFixtures as Fixture[], golden: emailGolden as Record<string, Golden> },
 ];
 
 export interface SelfTestRow {

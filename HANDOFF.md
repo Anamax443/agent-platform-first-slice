@@ -2,6 +2,14 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-08 (59) — `mail.ingest`/`email.send` přidány do `self-test.ts` SUITES
+
+**Kontext:** poslední kódový krok před společným nasazením a živým ověřením obou capabilit z (57)/(58) — parita s `document.stamp`/`document.archive`, co self-test už pokrývá od (49).
+
+**`deploy/cloudflare/apf-gateway/src/self-test.ts`:** dva nové řádky v `SUITES` (13 fixtur `mail.ingest`, 15 `email.send`) — mechanický přídavek, žádná změna `runSelfTest()`'s smyčky nebyla potřeba: existující logika (artifact `put()` jen když `f.artifact`, skip na `f.adapters`/`f.storage`, `actor` override) už přesně sedí na tvar obou fixture sad. `mail.ingest` fixtury nikdy neodkazují `$artifactId` (samy vytvářejí artefakt z `rawMail`), `email.send` fixtury ho potřebují stejně jako `document.stamp` — stejný `SELF_TEST_WORKFLOW_ID` mechanismus (fixní workflowId → stejná Durable Object → fetch-back najde artefakt) funguje beze změny.
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare/tsconfig.json`), 233 testů, arch, farm:check. **Nenasazeno** — nasazení a živé ověření (deploy + self-test běhy + `wrangler tail`, stejná rigorózita jako u `document.stamp`) je bezprostředně další krok.
+
 ## 2026-09-08 (58) — SEVERKA bod 3, druhá polovina: `apf-email-executor` skutečně odesílá (sandbox)
 
 **Kontext:** dokončení (57) — `email.send` je PRINCIPAL (vlastní credential doména, jediné write právo je Email Sending binding), takže na rozdíl od `mail.ingest` zůstává skutečným remote dispatchem, ne in-process. Struktura zrcadlí `apf-document-host`'s `/dispatch` (celek D2) téměř 1:1, jediný strukturní rozdíl: fetch-back artefaktu je tady **read-only** (`email.send` artefakt jen referencuje přes `params.artifactId`, nikdy neodvozuje) — nová `ReadOnlyArtifactStore` (jen `get()`, ne `derive()`/`put()`), ne kopie plného `SingleArtifactStore`.
