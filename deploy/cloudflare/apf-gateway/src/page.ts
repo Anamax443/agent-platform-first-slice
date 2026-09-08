@@ -385,7 +385,7 @@ export function renderFarm(m: FarmModel): string {
       <div class="p-panehead"><span>Kravičky</span><span class="n">${m.deployables.length} Workerů</span></div>
       <div class="p-toolbar"><span class="meta">Zdraví a role jednotlivých Workerů farmy — kdo co dělá a jestli běží</span></div>
       <form class="p-toolbar" method="post" action="/farm/self-test">
-        <span class="meta">„OK" výš dokazuje jen, že proces odpovídá — self-test skutečně spustí <code>document.classify</code> a <code>document.validate</code> proti reálnému modelu a registru a porovná s golden výsledkem</span>
+        <span class="meta">„OK" výš dokazuje jen, že proces odpovídá — self-test skutečně spustí <code>document.classify</code>/<code>document.validate</code> (na <code>apf-gateway</code>) i <code>document.stamp</code>/<code>document.archive</code> (na <code>apf-document-host</code>, přes síť) proti reálnému modelu a porovná s golden výsledkem</span>
         <span class="grow"></span>
         <button class="p-btn" type="submit">Spustit self-test</button>
       </form>
@@ -563,6 +563,7 @@ export function renderError(title: string, message: string, details: Record<stri
 
 export interface SelfTestRow {
   capability: string;
+  worker: string;
   id: string;
   kind: string;
   ok: boolean;
@@ -570,23 +571,33 @@ export interface SelfTestRow {
   diff: string[];
 }
 
-/** Live self-test result page (owner's request 2026-09-08: test a kravička's health from the GUI, not just /version). */
+/**
+ * Live self-test result page (owner's request 2026-09-08: test a kravička's health from the GUI, not just /version;
+ * "chci otestovat samostatnou kravičku, aby u ní bylo vidět, že probíhají kontroly" — grouped by WORKER first, so
+ * it's visible that apf-document-host was actually reached over the network, not just apf-gateway in-process).
+ */
 export function renderSelfTest(rows: SelfTestRow[]): string {
   const failed = rows.filter((r) => !r.ok);
   const ran = rows.filter((r) => !r.skipped);
-  const byCapability = new Map<string, SelfTestRow[]>();
-  for (const r of rows) byCapability.set(r.capability, [...(byCapability.get(r.capability) ?? []), r]);
+  const byWorker = new Map<string, SelfTestRow[]>();
+  for (const r of rows) byWorker.set(r.worker, [...(byWorker.get(r.worker) ?? []), r]);
   const rowHtml = (r: SelfTestRow): string =>
     `<tr><td><code>${esc(r.id)}</code></td><td>${esc(r.kind)}</td>${stateTd(r.skipped ? "SKIPPED" : r.ok ? "SUCCEEDED" : "FAILED")}<td class="wrap">${r.skipped ? esc(r.skipped) : r.diff.length ? `<pre class="wrap">${esc(r.diff.join("\n"))}</pre>` : "shoda s golden"}</td></tr>`;
-  const sections = [...byCapability.entries()]
-    .map(
-      ([cap, rs]) =>
-        `<h2>${esc(cap)} <small class="muted">${rs.filter((r) => r.ok && !r.skipped).length}/${rs.filter((r) => !r.skipped).length}</small></h2>
-<table><thead><tr><th>Fixture</th><th>Druh</th><th>Stav</th><th>Detail</th></tr></thead><tbody>${rs.map(rowHtml).join("")}</tbody></table>`,
-    )
+  const capabilitySection = (cap: string, rs: SelfTestRow[]): string =>
+    `<h3>${esc(cap)} <small class="muted">${rs.filter((r) => r.ok && !r.skipped).length}/${rs.filter((r) => !r.skipped).length}</small></h3>
+<table><thead><tr><th>Fixture</th><th>Druh</th><th>Stav</th><th>Detail</th></tr></thead><tbody>${rs.map(rowHtml).join("")}</tbody></table>`;
+  const sections = [...byWorker.entries()]
+    .map(([worker, workerRows]) => {
+      const byCapability = new Map<string, SelfTestRow[]>();
+      for (const r of workerRows) byCapability.set(r.capability, [...(byCapability.get(r.capability) ?? []), r]);
+      const n = workerRows.filter((r) => !r.skipped).length;
+      const ok = workerRows.filter((r) => r.ok && !r.skipped).length;
+      return `<h2>🐄 ${esc(worker)} <small class="muted">${ok}/${n} — kontrola opravdu proběhla přes tenhle Worker, ne jen odsud</small></h2>
+${[...byCapability.entries()].map(([cap, rs]) => capabilitySection(cap, rs)).join("")}`;
+    })
     .join("");
   return shell(
-    "Self-test · document.classify + document.validate",
+    "Self-test kravičky",
     `<header><h1>Self-test kravičky</h1><small>${ran.length - failed.length}/${ran.length} fixtures prošlo (${rows.length - ran.length} přeskočeno — vyžadují adapter chaos mode, jen Node testy)</small></header>${sections}<nav><a href="/farm#kravicky">Zpět na Kravičky</a></nav>`,
   );
 }

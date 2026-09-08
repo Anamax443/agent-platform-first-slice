@@ -25,7 +25,7 @@ import type { MessageEnvelope, ResultEnvelope } from "../../../../src/platform/t
 import { WORKFLOW_NAMES, workflowDef } from "../../../../src/platform/workflow.js";
 import { renderError, renderFarm, renderHome, renderInstance, renderSelfTest, type AuditLogRow, type FarmInstanceRow, type FarmStats, type InboxItem, type InstanceView, type ModelsInfo, type SelfTestRow, type Wired } from "./page.js";
 import { describeModels, wirePlatform, type Wiring } from "./platform-wiring.js";
-import { runSelfTest } from "./self-test.js";
+import { runSelfTest, SELF_TEST_WORKFLOW_ID } from "./self-test.js";
 import { D1_AUDIT_DDL, DDL, SqliteArtifacts, SqliteAudit, SqliteJournal } from "./store.js";
 import { visuallyStamp } from "./visual-stamp.js";
 
@@ -461,8 +461,11 @@ export const windowSince = (window: string | null, clock: Clock): string | undef
 /** The most recently active workflow ids (D1, cheap) — then each instance's real steps[] straight from its own Durable Object (the DO journal is the source of truth, not the audit relay). Owner's request 2026-09-08: "kolik dokumentů a nebo časové okno" — both are just narrower reads over the same query, nothing else changes. */
 const recentInstances = async (env: Env, limit = 15, sinceIso?: string): Promise<FarmInstanceRow[]> => {
   await ensureD1Audit(env.AUDIT);
-  const sql = `SELECT workflow_id, MAX(at) AS last_at FROM audit WHERE workflow_id IS NOT NULL${sinceIso ? " AND at >= ?" : ""} GROUP BY workflow_id ORDER BY last_at DESC LIMIT ?`;
-  const stmt = sinceIso ? env.AUDIT.prepare(sql).bind(sinceIso, limit) : env.AUDIT.prepare(sql).bind(limit);
+  // SELF_TEST_WORKFLOW_ID excluded: apf-document-host relays document.stamp/document.archive self-test dispatches
+  // to this same shared audit trail (RelayAudit -> POST /audit, writes unconditionally) — without this filter a
+  // self-test run shows up here as a fake, journal-less "PURGED" document (found live 2026-09-08).
+  const sql = `SELECT workflow_id, MAX(at) AS last_at FROM audit WHERE workflow_id IS NOT NULL AND workflow_id != ?${sinceIso ? " AND at >= ?" : ""} GROUP BY workflow_id ORDER BY last_at DESC LIMIT ?`;
+  const stmt = sinceIso ? env.AUDIT.prepare(sql).bind(SELF_TEST_WORKFLOW_ID, sinceIso, limit) : env.AUDIT.prepare(sql).bind(SELF_TEST_WORKFLOW_ID, limit);
   const rows = await stmt.all<{ workflow_id: string; last_at: string }>();
   return Promise.all(rows.results.map((r) => farmRowOf(env, r.workflow_id, r.last_at)));
 };
@@ -814,10 +817,12 @@ export default {
       );
     }
 
-    // Live self-test (owner's request 2026-09-08): a dedicated, fixed-name instance so it never pollutes "Poslední
-    // instance" or clashes with a real document's workflowId; purgeable like any instance if its artifact store grows.
+    // Live self-test (owner's request 2026-09-08): a dedicated, fixed-name instance (SELF_TEST_WORKFLOW_ID, shape
+    // wf-... so apf-document-host's artifact fetch-back resolves to it too) so it never pollutes "Poslední instance"
+    // (recentInstances() excludes it explicitly) or clashes with a real document's workflowId; purgeable like any
+    // instance at /workflow/wf-selftest/purge if its artifact store grows.
     if (url.pathname === "/farm/self-test" && request.method === "POST") {
-      const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName("self-test"));
+      const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(SELF_TEST_WORKFLOW_ID));
       const rows = (await stub.selfTest()) as SelfTestRow[];
       return html(renderSelfTest(rows));
     }

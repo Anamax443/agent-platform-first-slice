@@ -1,9 +1,11 @@
-// Live self-test (owner's request 2026-09-08: "chci si to testovat sám v GUI"): runs the conformance fixtures of
-// document.classify and document.validate — the two capabilities without side effects — against THIS deployment's
-// real wiring (real model, real apf-fakes registry over HTTP), not the Node fake adapters tests/harness uses.
-// "OK" on /farm today only proves the process answers /version; this proves the capability itself still produces
-// the contracted result, right now, on this Worker. Fixtures that need an adapter-chaos mode (adapters/storage
-// overrides) are skipped: those simulate Node-only fake failures and have no live equivalent to trigger on demand.
+// Live self-test (owner's request 2026-09-08: "chci si to testovat sám v GUI"; "chci otestovat samostatnou
+// kravičku"): runs the conformance fixtures of document.classify/document.validate (in-process on apf-gateway) and
+// document.stamp/document.archive (apf-document-host, over the network) against THIS deployment's real wiring —
+// real model, real apf-fakes registry/DMS/archive over HTTP — not the Node fake adapters tests/harness uses. "OK" on
+// /farm today only proves the process answers /version; this proves each capability itself still produces the
+// contracted result, right now, on the Worker that actually serves it. Fixtures that need an adapter-chaos mode
+// (adapters/storage overrides) are skipped: those simulate Node-only fake failures and have no live equivalent to
+// trigger on demand.
 //
 // substitute()/subsetDiff()/goldenDiff() mirror tests/harness/index.ts and tests/harness/conformance.ts exactly —
 // duplicated, not imported, so the Worker bundle never pulls in test-only code (vitest, node:fs) across the
@@ -12,6 +14,10 @@ import classifyFixtures from "../../../../conformance/document.classify/fixtures
 import classifyGolden from "../../../../conformance/document.classify/golden/document.classify.golden.json" with { type: "json" };
 import validateFixtures from "../../../../conformance/document.validate/fixtures/document.validate.fixtures.json" with { type: "json" };
 import validateGolden from "../../../../conformance/document.validate/golden/document.validate.golden.json" with { type: "json" };
+import stampFixtures from "../../../../conformance/document.stamp/fixtures/document.stamp.fixtures.json" with { type: "json" };
+import stampGolden from "../../../../conformance/document.stamp/golden/document.stamp.golden.json" with { type: "json" };
+import archiveFixtures from "../../../../conformance/document.archive/fixtures/document.archive.fixtures.json" with { type: "json" };
+import archiveGolden from "../../../../conformance/document.archive/golden/document.archive.golden.json" with { type: "json" };
 import { sha256 } from "../../../../src/platform/artifacts.js";
 import type { ArtifactWriter } from "../../../../src/platform/artifacts.js";
 import type { Clock } from "../../../../src/platform/clock.js";
@@ -37,20 +43,32 @@ interface Golden {
   [key: string]: unknown;
 }
 
-// document.stamp/document.archive deliberately NOT here yet (tried 2026-09-08, reverted same day): they run on a
-// different Worker (apf-document-host), which fetches the artifact bytes back from the gateway by workflowId
-// (index.ts fetchArtifact() -> GET /workflow/<wf-...>/artifact/<id>, apf-document-host/src/index.ts:88-103) — the
-// self-test instance's id ("self-test") doesn't match that route's wf-* pattern, so the fetch-back 404s and every
-// stamp/archive fixture fails with ARTIFACT_NOT_FOUND that has nothing to do with either capability's real health.
-// Needs its own workflowId scheme (and a check that apf-document-host's audit relay to shared D1 won't turn every
-// self-test run into a fake row in "Poslední instance") before it's added back — not a five-minute fix.
-const SUITES: { capability: string; fixtures: Fixture[]; golden: Record<string, Golden> }[] = [
-  { capability: "document.classify", fixtures: classifyFixtures as Fixture[], golden: classifyGolden as Record<string, Golden> },
-  { capability: "document.validate", fixtures: validateFixtures as Fixture[], golden: validateGolden as Record<string, Golden> },
+// Fixed, reserved workflowId for every self-test dispatch — never a randomly generated one. Two things depend on it
+// being exactly this constant, in exactly this shape:
+//  1. apf-document-host fetches an artifact's bytes back from the gateway via GET /workflow/<wf-...>/artifact/<id>
+//     (apf-document-host/src/index.ts fetchArtifact(), matched against index.ts's `wf-[A-Za-z0-9]+` artifact route) —
+//     document.stamp/document.archive run on that separate Worker and need this to resolve to the SAME Durable
+//     Object this file's caller is already running in (selfTest() puts the fixture artifact into `this.artifacts`
+//     of that exact instance).
+//  2. recentInstances() in index.ts excludes this exact id from "Poslední instance" — a self-test run must never
+//     show up there as a fake document (found live 2026-09-08: an earlier attempt did exactly that).
+export const SELF_TEST_WORKFLOW_ID = "wf-selftest";
+
+// document.stamp/document.archive run on apf-document-host (a different Worker), reached through the same
+// wiring.transport.dispatch() as document.classify/document.validate — the routing itself (platform-wiring.ts)
+// doesn't care which Worker actually serves a capability. Safe to exercise live today: the DMS/archive they write
+// to is still the apf-fakes twin, not a real production system (docs/NAVRHOVY-LIST-farma.md, celek D) — revisit
+// once a real DMS is wired, the same way a real payment/ERP write would never belong in an on-demand self-test.
+const SUITES: { capability: string; worker: string; fixtures: Fixture[]; golden: Record<string, Golden> }[] = [
+  { capability: "document.classify", worker: "apf-gateway", fixtures: classifyFixtures as Fixture[], golden: classifyGolden as Record<string, Golden> },
+  { capability: "document.validate", worker: "apf-gateway", fixtures: validateFixtures as Fixture[], golden: validateGolden as Record<string, Golden> },
+  { capability: "document.stamp", worker: "apf-document-host", fixtures: stampFixtures as Fixture[], golden: stampGolden as Record<string, Golden> },
+  { capability: "document.archive", worker: "apf-document-host", fixtures: archiveFixtures as Fixture[], golden: archiveGolden as Record<string, Golden> },
 ];
 
 export interface SelfTestRow {
   capability: string;
+  worker: string;
   id: string;
   kind: string;
   ok: boolean;
@@ -91,13 +109,13 @@ export async function runSelfTest(opts: { transport: DispatchTransport; artifact
   for (const suite of SUITES) {
     for (const f of suite.fixtures) {
       if (f.adapters || f.storage) {
-        rows.push({ capability: suite.capability, id: f.id, kind: f.kind, ok: true, skipped: "vyžaduje adapter chaos mode (jen Node testy)", diff: [] });
+        rows.push({ capability: suite.capability, worker: suite.worker, id: f.id, kind: f.kind, ok: true, skipped: "vyžaduje adapter chaos mode (jen Node testy)", diff: [] });
         continue;
       }
       // No installation-bound fallback here (ARCH-DEP-001): every conformance fixture that carries an artifact
       // already names its own tenantId, so a fixture missing one is a fixture bug, not something to paper over.
       if (f.artifact && !f.artifact.tenantId) {
-        rows.push({ capability: suite.capability, id: f.id, kind: f.kind, ok: false, diff: [`fixture ${f.id}: artifact.tenantId chybí`] });
+        rows.push({ capability: suite.capability, worker: suite.worker, id: f.id, kind: f.kind, ok: false, diff: [`fixture ${f.id}: artifact.tenantId chybí`] });
         continue;
       }
       const artifact = f.artifact ? opts.artifacts.put({ tenantId: f.artifact.tenantId as string, bytes: f.artifact.bytes, receivedFrom: "self-test" }) : undefined;
@@ -108,9 +126,13 @@ export async function runSelfTest(opts: { transport: DispatchTransport; artifact
         $now: iso(opts.clock.now()),
       };
       const now = opts.clock.now();
+      // workflowId fixed to SELF_TEST_WORKFLOW_ID (not a fresh newId("wf")): document.stamp/document.archive run on
+      // apf-document-host, which fetches the artifact back from the gateway by this exact id — it must resolve to
+      // the same Durable Object instance whose `artifacts` store just received the put() above.
       const message: MessageEnvelope = {
         messageId: newId("msg"),
         correlationId: newId("cor"),
+        workflowId: SELF_TEST_WORKFLOW_ID,
         type: "command",
         capability: suite.capability,
         capabilityVersion: f.capabilityVersion ?? "1",
@@ -123,7 +145,7 @@ export async function runSelfTest(opts: { transport: DispatchTransport; artifact
       const result = await opts.transport.dispatch(message, f.actor ?? opts.defaultActor);
       const golden = suite.golden[f.id];
       const diff = golden ? goldenDiff(result, golden, vars) : [`chybí golden pro ${f.id}`];
-      rows.push({ capability: suite.capability, id: f.id, kind: f.kind, ok: diff.length === 0, diff });
+      rows.push({ capability: suite.capability, worker: suite.worker, id: f.id, kind: f.kind, ok: diff.length === 0, diff });
     }
   }
   return rows;
