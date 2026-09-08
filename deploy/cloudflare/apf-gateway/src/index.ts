@@ -308,7 +308,10 @@ export class WorkflowInstance extends DurableObject<Env> {
       const bytes = await obj.arrayBuffer();
       const stamped = await visuallyStamp(bytes, original.contentType ?? "application/octet-stream", { label: "ZPRACOVANO", at: iso(this.clock.now()), ref: dmsRef }, this.env.IMAGES, this.env.STAMP_FONT_URL);
       if (!stamped) return; // content type has no visual-stamp recipe yet
-      const key = `stamped-visual/${original.tenantId}/${original.sha256}`;
+      // Keyed by workflowId, not by content hash: two documents that happen to share bytes (a re-upload of the
+      // same PDF, a duplicate inbox pick-up) are still two separate instances and must not overwrite each other's
+      // stamp — found live 2026-09-08, /original-stamped of one instance was serving the other's stamped image.
+      const key = `stamped-visual/${original.tenantId}/${workflowId}`;
       await this.env.ARTIFACTS.put(key, stamped.bytes, { httpMetadata: { contentType: stamped.contentType } });
       console.log(`[apf-gateway] visual stamp written workflowId=${workflowId} key=${key}`);
     } catch (e) {
@@ -909,7 +912,7 @@ export default {
       if (stampStep?.status !== "SUCCEEDED") {
         return Response.json({ error: "NOT_FOUND", message: "document.stamp never succeeded for this instance (still waiting on review, or the flow ended before reaching it) — there is nothing to visually stamp yet", stampStepStatus: stampStep?.status ?? "not reached" }, { status: 404 });
       }
-      const key = `stamped-visual/${view.instance.tenantId}/${original.sha256}`;
+      const key = `stamped-visual/${view.instance.tenantId}/${originalStampedRoute[1]}`;
       const obj = await env.ARTIFACTS.get(key);
       if (!obj) return Response.json({ error: "NOT_FOUND", message: "document.stamp succeeded but the visual stamp isn't in R2 yet — either still writing asynchronously (try again in a few seconds) or this content type has no visual-stamp recipe (visual-stamp.ts only knows PDF, JPG, PNG)", key }, { status: 404 });
       return new Response(obj.body, { headers: { "content-type": obj.httpMetadata?.contentType ?? "application/octet-stream", "cache-control": "no-store" } });
