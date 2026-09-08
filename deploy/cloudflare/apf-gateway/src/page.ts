@@ -448,6 +448,7 @@ html,body{height:100%;margin:0}
 .ui .p-titlebtn{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex:none;border:0;border-radius:var(--radius);background:none;color:var(--dim);cursor:pointer}
 .ui .p-titlebtn:hover{background:var(--hover);color:var(--text)}
 .ui .p-table tbody td.wrap{white-space:normal;overflow:visible;text-overflow:clip;word-break:break-word;line-height:1.4;padding-top:8px;padding-bottom:8px}
+.ui .p-table:has(tr.group-head) tbody tr:not(.group-head) td:first-child{padding-left:1.5rem}
 .ui details{margin-top:3px}
 .ui details summary{cursor:pointer;font-size:.85em;color:var(--dim)}
 .ui details summary:hover{color:var(--text)}
