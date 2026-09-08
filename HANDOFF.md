@@ -2,6 +2,16 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-09 (64) — Nasazeno a živě ověřeno: `/capabilities` na všech třech providerech na `farm-bass443`
+
+**Nasazení:** `node scripts/farm-deploy.mjs farm-bass443` (bez `--bootstrap`, žádná nová vazba/binding — jen nová route na existujících třech Workerech), všech pět beze změny pořadí. `/version` potvrdil `gitSha: "595d272"`.
+
+**`GET /capabilities` na `apf-gateway`** (`https://apf.maxferit.cz/capabilities`, přes CF Access service token) vrátilo přesně `gatewayCatalog()`: `document.classify`/`document.validate`/`mail.ingest`, se správným `riskClass`/`sideEffects`/`trustClass`/`usesLlm` z descriptorů.
+
+**`apf-document-host`/`apf-email-executor` nemají veřejnou route** (`workers_dev: false`, žádný `routes` v `farm.json` — jen service binding z gatewaye) — ověřeno dočasným diagnostickým patchem na gatewayi (`GET /diag/capabilities`, fetch přes `env.DOCUMENT_HOST`/`env.EMAIL_EXECUTOR` stejným vzorem jako `/farm`'s `deployableInfo()`, nasazeno, ověřeno, **vráceno zpět, `git diff` prázdný**, redeploy). Výsledek: `document.stamp`+`document.archive` (LOW/LOGICAL/internal-write) a `email.send` (MEDIUM/PRINCIPAL/external-write) — přesně podle descriptorů, žádný pád, žádné `notWired`.
+
+**Beze změny počtu testů/gates** — čistě nasazení a živé ověření (63).
+
 ## 2026-09-09 (63) — SEVERKA bod 4, druhá polovina: `/capabilities` na všech třech providerech (`descriptor.json`'s vlastní deklarovaný endpoint, dřív nikde neimplementovaný)
 
 **Kontext:** dokončení (61) — vlastní posudek nad `d6f8287` navrhl dodělat runtime stranu Registry (endpoint, ne jen data uvnitř `Router`), než se jde k Planneru. Každý `descriptor.json` už rok deklaruje `endpoints.capabilities: "/capabilities"` (`mail-ingest`, `email-executor`, `document-executor-host`), ale nic tu cestu neobsluhovalo (zjištěno explorací k (61)) — teď existuje, na všech třech.
