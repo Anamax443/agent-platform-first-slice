@@ -2,6 +2,20 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-09 (65) — `/farm`'s Deník dostal živý terminál ("vidět co se šustne")
+
+**Pokyn vlastníka:** chtěl v GUI "terminal kde uvidím co se šustne" — vybral (AskUserQuestion) nejdřív živý pohled na existující D1 audit trail, skutečný `wrangler tail`-styl přes Tail Workers zapsat do `SEVERKA.md` jako budoucí krok, ne stavět hned.
+
+**`deploy/cloudflare/apf-gateway/src/index.ts`:** `GET /audit.json` dostal `?after=<ISO at>` (ascending, striktně novější než zadaný záznam) vedle beze změny výchozího `?limit=` (descending, nejnovější N) — jediný, zpětně kompatibilní branch navíc.
+
+**`deploy/cloudflare/apf-gateway/src/page.ts`:** Deník view dostal `<div class="p-term" id="denik-term">` nad existující tabulkou (tabulka zůstala beze změny, pro dohledání konkrétní události nejnovější-nahoře) — chronologicky, nejnovější dole jako `tail -f`, seedováno server-side ze stejných dat jako `denikRows` (`terminalLine()`/`terminalSeed`, sdílí `auditSummary()`/`esc()`), aby box nebyl prázdný před prvním klientským pollem. Tlačítko „⏸ Pozastavit"/"▶ Živě" (`#denik-live-toggle`).
+
+**Klientský JS (nový blok v existující IIFE):** `setInterval` po 3 s volá `/audit.json?after=<poslední at>&limit=200`, jen když je záložka viditelná (`!document.hidden`) a "živě" není pozastaveno; nové řádky se skládají přes `document.createElement`/`textContent` (**nikdy ne `innerHTML` ze síťových dat**) — audit `details` může nést text vytažený přímo z nedůvěryhodného dokumentu (F2), takže tohle je jediné bezpečné místo pro sestavení řádku bez rizika, že se z operátorské konzole stane HTML-injection cesta. Krátká flash animace (`.t-new`, `@keyframes term-flash`) na nově přidaném řádku, strop 500 řádků v DOM (odstraňuje nejstarší), auto-scroll na konec.
+
+**Živě ověřeno na `farm-bass443`** (nasazeno, ověřeno, viz i (64) pro postup): `/farm`'s HTML nese 50 seedovaných `.t-line` řádků se správným escapingem (`&quot;` v JSON detailu, ne syrové uvozovky); `/audit.json?after=<nejnovější at>` vrací `[]`; `/audit.json?after=<starší at>&limit=5` vrací přesně záznamy striktně novější, vzestupně.
+
+**Beze změny gates** (žádný nový local test — stejná disciplína jako `/capabilities`: Cloudflare-only HTTP chování, typecheck/farm:check ho pokryje, živé ověření dokazuje chování).
+
 ## 2026-09-09 (64) — Nasazeno a živě ověřeno: `/capabilities` na všech třech providerech na `farm-bass443`
 
 **Nasazení:** `node scripts/farm-deploy.mjs farm-bass443` (bez `--bootstrap`, žádná nová vazba/binding — jen nová route na existujících třech Workerech), všech pět beze změny pořadí. `/version` potvrdil `gitSha: "595d272"`.

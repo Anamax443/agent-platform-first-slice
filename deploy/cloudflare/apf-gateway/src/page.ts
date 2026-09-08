@@ -286,6 +286,15 @@ export function renderFarm(m: FarmModel): string {
       return `<tr><td class="c-date">${esc(r.at)}</td><td>${esc(r.kind)}</td><td>${link}</td><td>${esc(r.capability ?? "")}</td><td class="wrap">${auditSummary(r.kind, r.capability, r.details)}</td></tr>`;
     })
     .join("");
+  // Live terminal (owner's request 2026-09-09: "vidět co se šustne") — same rows as denikRows, oldest first (tail -f
+  // order), seeded server-side so the box isn't empty before the client's first poll picks up.
+  const terminalLine = (r: AuditLogRow): string => {
+    const time = esc(r.at).replace("T", " ").replace(/\.\d+Z$|Z$/, "");
+    const link = r.workflowId ? ` <a href="/workflow/${esc(r.workflowId)}">${esc(r.workflowId)}</a>` : "";
+    const cap = r.capability ? ` <code>${esc(r.capability)}</code>` : "";
+    return `<div class="t-line" data-at="${esc(r.at)}"><span class="t-dim">${time}</span> ${esc(r.kind)}${cap}${link} <span class="t-dim">${auditSummary(r.kind, r.capability, r.details)}</span></div>`;
+  };
+  const terminalSeed = [...m.auditLog].reverse().map(terminalLine).join("");
 
   const icon = (paths: string): string => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
   const ICONS = {
@@ -421,7 +430,13 @@ export function renderFarm(m: FarmModel): string {
 
     <div id="view-denik" hidden>
       <div class="p-panehead"><span>Deník</span><span class="n">posledních ${m.auditLog.length}</span></div>
-      <div class="p-toolbar"><span class="meta">Pohled na události: syrový auditní záznam napříč celou farmou, jeden řádek = jedna událost, chronologicky (ne seskupené podle dokumentu)</span></div>
+      <div class="p-toolbar">
+        <span class="meta">Živý terminál: syrový auditní záznam napříč celou farmou, jeden řádek = jedna událost, nejnovější dole (jako <code>tail -f</code>)</span>
+        <span class="grow"></span>
+        <button type="button" class="p-btn" id="denik-live-toggle" aria-pressed="true">⏸ Pozastavit</button>
+      </div>
+      <div class="p-term" id="denik-term" aria-live="polite">${terminalSeed}</div>
+      <div class="p-toolbar"><span class="meta">Stejná data jako tabulka: nejnovější nahoře, pro dohledání konkrétní události</span></div>
       <div class="p-gridwrap"><table class="p-table">
         <thead><tr><th class="c-date">Čas</th><th>Druh</th><th>Instance</th><th>Capability</th><th>Detail</th></tr></thead>
         <tbody>${denikRows}</tbody>
@@ -485,6 +500,11 @@ html,body{height:100%;margin:0}
 .ui details summary{cursor:pointer;font-size:.85em;color:var(--dim)}
 .ui details summary:hover{color:var(--text)}
 .ui pre.wrap{white-space:pre-wrap;word-break:break-word;margin:4px 0 0;font-size:.82em;max-width:100%;background:var(--bordersoft);padding:.5em .6em;border-radius:6px}
+.ui .p-term{margin:0 14px 10px;height:22rem;overflow-y:auto;background:var(--chrome);border:var(--border-w) solid var(--border);border-radius:8px;padding:8px 10px;font-family:var(--font-data);font-size:var(--fs-data);line-height:1.6}
+.ui .p-term .t-line{white-space:pre-wrap;word-break:break-word}
+.ui .p-term .t-line.t-new{animation:term-flash 1.4s ease-out}
+.ui .p-term .t-dim{color:var(--dim)}
+@keyframes term-flash{from{background:var(--accsoft)}to{background:transparent}}
 .ui .p-form{padding:0 14px 14px}
 .ui .p-form label{display:block;font-weight:600;margin:.9rem 0 .3rem}
 .ui .p-form textarea,.ui .p-form input[type=text],.ui .p-form select{width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:var(--radius);padding:.5rem;font:inherit;background:var(--pane);color:var(--text)}
@@ -546,6 +566,68 @@ ${BANK_SAAS_MODERN_CSS}
       document.querySelectorAll('tr.step-row[data-wf="' + wf + '"]').forEach(function (r) { r.hidden = open; });
     });
   });
+
+  // Deník live terminal (owner's request 2026-09-09: "vidět co se šustne"): poll /audit.json?after=<last>, append as
+  // DOM nodes built with textContent (never innerHTML) — audit details can carry text lifted straight from an
+  // untrusted document (F2), so this must never turn into an HTML-injection path into the operator's own console.
+  var term = document.getElementById("denik-term");
+  if (term) {
+    var liveToggle = document.getElementById("denik-live-toggle");
+    var live = true;
+    var lastAt = term.lastElementChild ? term.lastElementChild.getAttribute("data-at") : null;
+    function fmtTime(at) { return String(at || "").replace("T", " ").replace(/\.\d+Z$|Z$/, ""); }
+    function lineEl(rec) {
+      var div = document.createElement("div");
+      div.className = "t-line t-new";
+      div.setAttribute("data-at", rec.at || "");
+      var time = document.createElement("span");
+      time.className = "t-dim";
+      time.textContent = fmtTime(rec.at);
+      div.appendChild(time);
+      div.appendChild(document.createTextNode(" " + (rec.kind || "")));
+      if (rec.capability) {
+        div.appendChild(document.createTextNode(" "));
+        var code = document.createElement("code");
+        code.textContent = rec.capability;
+        div.appendChild(code);
+      }
+      if (rec.workflowId) {
+        div.appendChild(document.createTextNode(" "));
+        var a = document.createElement("a");
+        a.href = "/workflow/" + encodeURIComponent(rec.workflowId);
+        a.textContent = rec.workflowId;
+        div.appendChild(a);
+      }
+      var detail = document.createElement("span");
+      detail.className = "t-dim";
+      var hasDetails = rec.details && typeof rec.details === "object" && Object.keys(rec.details).length;
+      detail.textContent = hasDetails ? " " + JSON.stringify(rec.details) : "";
+      div.appendChild(detail);
+      return div;
+    }
+    function poll() {
+      if (!live || document.hidden) return;
+      var url = "/audit.json?limit=200" + (lastAt ? "&after=" + encodeURIComponent(lastAt) : "");
+      fetch(url).then(function (r) { return r.json(); }).then(function (rows) {
+        if (!Array.isArray(rows) || !rows.length) return;
+        rows.forEach(function (rec) {
+          term.appendChild(lineEl(rec));
+          lastAt = rec.at;
+        });
+        while (term.children.length > 500) term.removeChild(term.firstElementChild);
+        term.scrollTop = term.scrollHeight;
+      }).catch(function () {});
+    }
+    if (liveToggle) {
+      liveToggle.addEventListener("click", function () {
+        live = !live;
+        liveToggle.textContent = live ? "⏸ Pozastavit" : "▶ Živě";
+        liveToggle.setAttribute("aria-pressed", live ? "true" : "false");
+      });
+    }
+    term.scrollTop = term.scrollHeight;
+    setInterval(poll, 3000);
+  }
 })();
 </script>
 </body></html>`;

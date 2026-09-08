@@ -1093,7 +1093,12 @@ export default {
     if (url.pathname === "/audit.json" && request.method === "GET") {
       await ensureD1Audit(env.AUDIT);
       const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 50) || 50, 1), 500);
-      const rows = await env.AUDIT.prepare("SELECT json FROM audit ORDER BY at DESC LIMIT ?").bind(limit).all<{ json: string }>();
+      // ?after=<at ISO>: ascending, strictly newer than the given record — the Deník live terminal's tail-f poll.
+      // Without it: unchanged descending "latest N" (existing callers, existing behavior).
+      const after = url.searchParams.get("after");
+      const rows = after
+        ? await env.AUDIT.prepare("SELECT json FROM audit WHERE at > ? ORDER BY at ASC LIMIT ?").bind(after, limit).all<{ json: string }>()
+        : await env.AUDIT.prepare("SELECT json FROM audit ORDER BY at DESC LIMIT ?").bind(limit).all<{ json: string }>();
       return Response.json(rows.results.map((r) => JSON.parse(r.json) as unknown));
     }
 
