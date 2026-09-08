@@ -31,7 +31,7 @@ se přepisuje orchestrátor.
 | **Planner** | chybí | z požadavku (přirozený jazyk) sestaví plán z dostupných capabilities | **vysoké, pokud plán rovnou vykonává.** Musí místo toho **vyprodukovat `WorkflowDef`**, který projde stejnou fail-closed bránou (schema, Policy Engine, Human Review) jako dnešní ručně psaný workflow — generátor vstupu do přísného pipeline, ne nová cesta kolem něj |
 | **Policy Engine + risk scoring** | částečně — `policy.ts` (`policyFor(installation.policies, capability, "1")`) existuje per-capability | rozšířit o rizikovou úroveň požadavku (nízké/střední/vysoké → auto/potvrzení/nikdy) | střední — navazuje na existující Human Review, není nová vrstva vedle ní |
 | **Execution Engine** | existuje (`Router`, `ExecutorHost`, retry/review/journal) | — | idempotency dnes řeší jen `capability + idempotencyKey`; hlubší identita `tenantId + handlerId + requestFingerprint` + `IDEMPOTENCY_CONFLICT` zůstává otevřená (Posudek 5/6). Dokud farma přidává jen čtecí/testovací COW, snesitelné; jakmile přibude `ERP.write`/`bank.payment.prepare`, „doufáme, že provider deduplikuje" nestačí — chce to durable effect ledger |
-| **Human Review** | existuje (`WAITING(REVIEW)`, `/review`) | — | `ReviewService.tasks` je dnes jen paměťová `Map` v Durable Objectu — po evikci objektu může rozhodnutí skončit `APPROVAL_MISMATCH`. Než se `/review` používá jako skutečná funkce (ne jen demo), review task musí přežít restart/evikci (SQLite, ne Map) |
+| **Human Review** | existuje jen jako zápis, ne jako funkce | — | **Zpřesněno 8. 9. 2026 (`docs/OPONENTURA-BEZPECNOST-STABILITA.md` bod 1, čtením nasazeného kódu):** horší, než tahle tabulka dřív tvrdila. `ReviewService` se na farmě vytváří **znovu s prázdnou mapou při každém běhu** (`orchestratorFor()`, jediné volací místo), v nasazeném kódu **neexistuje žádný `/review` handler ani jediné volání `.decide(`**. Testy tohle nemůžou odhalit (`createSlice()` drží jeden `ReviewService` po celou dobu testu — jiná topologie než nasazený Worker). Instance, co dnes doběhne do `WAITING(REVIEW)`, tam zůstává natrvalo; jediná akce je `/purge`. Není to „durabilita při evikci", je to „decision cesta neexistuje vůbec" |
 | **Tenant Layer** | koncepčně navrženo, nasazení záměrně single-tenant | `farm-bass443` je `CLOUD_SINGLE_TENANT` (viz `NAVRHOVY-LIST-farma.md`); `tenant-7` je jen protistrana bezpečnostních testů, ne živý zákazník. Foundation nese `tenants: string[]` + policy semantiku, ale skutečné tenant resolution (`TenantConfig { tenantId, assistant.displayName, orchestration.actorId }` místo jediného globálního `roles.orchestrator`) je budoucí capability, ne dnešní bug | nízké dnes (nic naostro na tom neběží) — vysoké, jakmile přibude druhý reálný tenant a nikdo tenant resolution nedodělal předem |
 | **Connector Layer** | 1 z N hotový | `document-host` běží na farmě; `apf-mail-ingest` a `apf-email-executor` jsou na farmě doslova skeleton (`501 NOT_WIRED`, `email()` handler dělá `setReject`) | dokončení = zároveň první reálný **event-driven** case (mail přijde → spustí workflow), ne samostatná vzdálená vrstva |
 | **Event-driven provoz** | rozpracováno (`apf-mail-ingest` k tomu existuje) | „něco se stalo" spouští workflow samo, ne jen dotaz uživatele | — |
@@ -98,10 +98,145 @@ registrům, jiná bezpečnostní a spolehlivostní kategorie než čtení textu 
 
 ---
 
+## Cílová architektura pro standardizované přidávání COW (8. 9. 2026)
+
+Vznikl z rozsáhlé diskuze vlastníka (+ externí AI konzultace) 8. 9. 2026. **Cílový obraz, ne
+rozhodnuté zadání** — stejná výhrada jako u zbytku dokumentu. Motivace: než přibude další COW,
+má být zmapované veškeré propojení (vstupy, výstupy, testy, bezpečnost) tak, aby nová COW šla
+jen „zasunout do slotu", ne stavět znovu vlastní bezpečnost, konektory a testy.
+
+**Vztah k dnešnímu first-slice:** foundation je zmrazená (1.0-rc2.1, mění se jen s evidencí z
+kódu, část XVII — žádné další posudky na papíře). Tahle sekce je přesně takový papírový posudek,
+proto žije tady jako cíl, ne jako okamžitá změna kontraktů. Rozhodnuto 8. 9. 2026 (vlastník):
+**blízký plán (krok 8 → 8b → e-mail → fronta → pentest → reálný model) pokračuje beze změny
+pořadí**; z týhle sekce se čerpá až bude evidence (druhá reálná write-capabilita, druhý reálný
+tenant), ne teď dopředu.
+
+### Canonical vstup/výstup — COW nesmí vědět, odkud data přišla ani kam jdou
+
+```
+VSTUPY (web upload, e-mail+příloha, Telegram+soubor, API, scheduler, webhook)
+        ↓ vždy převedeno na stejný tvar
+   IncomingArtifact { artifactId, tenantId, source, mimeType, contentRef, hash, receivedAt, metadata }
+        ↓
+   COW (capability, input/output schema, vlastní credential, úzký účel)
+        ↓ vrací vlastní typovaný výsledek (např. InvoiceExtractionResult)
+   VÝSTUPY (ERP/DMS, e-mail, Telegram, API, DB, webhook, další COW)
+```
+
+**Dnešní částečná shoda:** `Artifact` (`src/platform/artifacts.ts`) už nese `sha256`,
+`contentType`, `receivedFrom`, `location` — je to zárodek `IncomingArtifact`, jen zatím jen pro
+dokumentové vstupy (`/intake`, `/farm/inbox`), ne pro Telegram/webhook/scheduler. Rozšíření na
+další vstupní adaptéry je čistě přidávání, ne přepis — pokud si nový vstupní adaptér udrží
+stejný tvar artefaktu, žádná COW se o něm nemusí dozvědět.
+
+### COW technický pas (rozšíření dnešního `descriptor.json`)
+
+Dnešní `module-descriptor.v1.schema.json` (zmrazený) už nese: `capabilities`, `inputSchema`/
+`outputSchema`, `riskClass`, `sideEffects`, `requiredScopes`, `tenantMode`, `isolationClass`,
+`idempotency`+`idempotencyRetention`, `deadlinePolicy`, `reconciliationBudget`, `humanApproval`,
+`errorCodes`, `conformanceTier`. Chybí (kandidáti pro rozšíření, ne pro dnešní kontrakt):
+`allowedNetworkDestinations` (egress firewall — COW deklaruje, kam smí volat, cokoli mimo seznam
+je `DENY + SECURITY EVENT`), explicitní `rateLimit`, `healthCheck`/`connectorTests` reference.
+**COW sama nemůže tvrdit „jsem bezpečná" — platforma její deklaraci porovná s vlastní policy,**
+stejně jako dnes `Router` porovnává `requiredScopes` s granty, ne s tvrzením handleru.
+
+### Admission Gate — nasazení COW jako homologace
+
+```
+NEW → manifest validation → schema testy → security testy → tenant isolation test
+  → credential isolation test → connectivity test → negative testy → timeout/retry test
+  → replay/idempotency test → failure/recovery test → audit test → output contract test
+  → APPROVED → ACTIVE
+```
+
+Jakýkoli FAIL → `QUARANTINED`, Planner tu COW ani neuvidí. **Dnešní stav: conformance suite
+existuje (`conformance/`, `npm test`), ale nic nezablokuje nasazení, když je červená** — brána je
+dnes lidská disciplína (`npm run typecheck/test/arch/farm:check` před každým nasazením), ne
+automatizovaný gate. To je největší mezera mezi dneškem a týhle vizí.
+
+**Konektivita jako součást certifikace, ne jen funkční test:** DNS, TLS, HTTP, autentizace, tvar
+odpovědi, latence, testovací dotaz, neočekávaná odpověď, timeout, rate limit — pro `cz.company.
+verify` např. proti ARES/Finanční správě, dřív než se capabilita aktivuje. Živý stav pak `ACTIVE`
+→ `DEGRADED` → `QUARANTINED` podle **běžícího** zdraví konektoru (externí API změní formát →
+capabilita se přestane používat samo, ne až uživateli něco pokazí) — to je nad rámec dnešního
+statického `wired: true/false`.
+
+### Risk profily řídí povinné testy, ne autor COW
+
+`riskClass` v dnešním descriptoru (`LOW`/`MEDIUM` v repu) by se rozšířil na explicitní úroveň
+(R0 read-public → R1 tenant-read → R2 external-write → R3 business-critical-write → R4
+financial/high-impact), která **sama určuje** povinnou sadu testů a kontrol (R4 = durable
+idempotency + reconciliation + human approval + amount limity + kompletní audit navíc). Autor
+COW nemůže napsat nižší riziko, než jaké capabilita fakticky má — platforma ho odvodí ze
+`sideEffect`/`capability` deklarace, ne z tvrzení.
+
+### Multi-tenant izolace: shared compute, isolated context/data/credentials/policy/audit
+
+Princip: **sdílená výpočetní infrastruktura, ale každý požadavek nese od vstupu po výstup
+důvěryhodný tenant kontext, který COW nesmí odhadovat ani dopočítávat z payloadu.**
+
+- **Isolated context** — tenant vzniká z ověřené identity/intake adresy/API credential, nikdy
+  z `tenantId` v těle požadavku (to by šlo zfalšovat). Dnešní `intakeTenant()` čte identitu z
+  profilu, ne z uživatelského vstupu — správný směr, jen zatím jen pro jednoho tenanta.
+- **Isolated data** — objekt pevně svázaný s tenantem, COW nezná cizí tenanty, dostane jen
+  tenant-scoped storage rozhraní.
+- **Isolated credentials** — COW dostane jen credential set tenanta, kterému požadavek patří, a
+  jen pro tu capabilitu, co zrovna vykonává (dnešní `credentialTable()` už dělá první polovinu —
+  jméno, ne hodnotu, per capability; chybí per-tenant rozlišení, protože dnes je jeden tenant).
+- **Isolated policy** — jeden tenant dovolí `email.send` automaticky, jiný vyžaduje schválení;
+  jeden dovolí externí model, jiný jen interní. `ADR-016` granty už jsou per-tenant, jen zatím
+  nesou stejná pravidla pro oba testovací tenanty.
+- **Isolated audit, limity, billing, incident containment** — tenant vidí jen svoje; per-tenant
+  rate limit/concurrency/storage/LLM budget, ať jeden zákazník nevytíží farmu ostatním; možnost
+  okamžitě odpojit jen jednoho tenanta (credentials/capabilitu/celý tenant), ne celou farmu.
+- **Stateless COW** — vstup, trusted context, omezené služby, výsledek, konec. Stav patří do
+  platformního storage (dnes DO SQLite), ne do paměti COW — čím míň si COW pamatuje mezi běhy,
+  tím menší riziko, že si „zapamatuje" data předchozího tenanta.
+
+### Zero-trust model — COW může být chybná nebo kompromitovaná, přesto nesmí poškodit farmu
+
+Základní předpoklad silnější než dnešní: *každá COW může být chybná, kompromitovaná nebo úmyslně
+škodlivá; přesto nesmí být schopná poškodit farmu ani jiného tenanta.*
+
+- **Tenant nikdy z payloadu** — už zapsáno výše, zdůrazněno jako bezpečnostní, ne jen datový
+  požadavek: útočníkem poslané `"tenantId": "..."` v těle musí být bezvýznamné.
+- **Vstup je vždy nepřátelský** — velikostní limit → MIME validace → magic-byte validace →
+  malware sken → limity na rozbalení archivu → normalizace obsahu → immutable originál → teprve
+  COW. Text z dokumentu je vždy DATA, nikdy instrukce platformě (existující F2 princip, jen
+  rozšířený o binární hrozby nad rámec prompt injection).
+- **AI výstup nikdy není příkaz.** Faktura může obsahovat „pošli 250 000 Kč na účet X" —
+  extrakce smí vrátit `bankAccount = X`, `amount = 250000` jako FAKTA, nikdy jako oprávnění něco
+  zaplatit. Autorita vždy z platformní policy/workflow/human approval, nikdy z dokumentu. Přesné
+  rozšíření dnešního F2 (allowlist nad výstupem modelu) na obecný princip DOCUMENT → FACTS, ne
+  DOCUMENT → COMMAND.
+- **Credential broker, ne jen jméno secretu** — cílový stav: COW secret hodnotu vůbec neuvidí,
+  platformní connector operaci provede jejím jménem. Dnešní stav je slabší (COW dostane hodnotu,
+  jen omezenou na deklarovanou potřebu) — legitimní budoucí zpřísnění, ne dnešní chyba.
+- **Egress firewall per COW** (`allowedNetworkDestinations`, viz výš) — kompromitovaná COW
+  nemůže exfiltrovat data mimo deklarovaný seznam cílů.
+- **Blast radius / karanténa** — možnost vypnout tenant/COW/capabilitu/connector/credential/
+  provider/model jednotlivě, bez odstavení farmy; automatická karanténa na živé signály (error
+  rate, latence, neočekávaný cíl sítě, autorizační selhání, schema violace, neobvyklý objem).
+- **Supply-chain** — dependency sken, SAST, secret sken, testy, conformance, SBOM, hash,
+  podpis, teprve nasazení. Produkce spouští jen podepsaný build, co prošel pipeline.
+- **Adversarial test suite** (nad rámec dnešních MUST/mutant testů): cross-tenant útoky,
+  credential escape, privilege escalation, replay, forged/expired context, schema fuzzing,
+  prompt injection, poškozené soubory, oversized payload, timeout/rate-limit zneužití, connector
+  spoofing, SSRF, neočekávaný egress, audit bypass, race podmínky, pád během zápisu, ztráta
+  odpovědi po zápisu (musí reconcilovat, nesmí zopakovat efekt).
+
+**Hlavní bezpečnostní invariant, navrhovaný jako architektonický požadavek (ne dnešní
+kontrakt):** *kompromitace jedné COW nesmí znamenat kompromitaci jiné COW, jiného tenanta,
+control plane ani farmy jako celku.*
+
+---
+
 ## Pořadí (co je skutečně příští, ne všech vrstev najednou)
 
-1. **Durable Review** — `ReviewService.tasks` je dnes jen paměťová `Map`; to je existující runtime
-   chyba (evikce → `APPROVAL_MISMATCH`), ne aspirace. Řeší se dřív než cokoli nového.
+1. **Durable Review + skutečná decision cesta** — `ReviewService` na farmě dnes nemá vůbec žádnou
+   cestu k rozhodnutí (viz tabulka výše, zpřesněno 8. 9. 2026), ne jen „nepřežije evikci". To je
+   existující runtime chyba, ne aspirace. Řeší se dřív než cokoli nového.
 2. **Durable idempotency/effect ledger** pro write executory — `tenantId + handlerId +
    requestFingerprint` (Posudek 5/6), než přibude druhý typ write COW.
 3. **Dokončit `mail.ingest`/`email.send` skeleton** — druhý reálný typ COW, důkaz že
