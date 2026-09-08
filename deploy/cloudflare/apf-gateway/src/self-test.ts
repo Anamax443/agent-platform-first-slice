@@ -12,10 +12,6 @@ import classifyFixtures from "../../../../conformance/document.classify/fixtures
 import classifyGolden from "../../../../conformance/document.classify/golden/document.classify.golden.json" with { type: "json" };
 import validateFixtures from "../../../../conformance/document.validate/fixtures/document.validate.fixtures.json" with { type: "json" };
 import validateGolden from "../../../../conformance/document.validate/golden/document.validate.golden.json" with { type: "json" };
-import stampFixtures from "../../../../conformance/document.stamp/fixtures/document.stamp.fixtures.json" with { type: "json" };
-import stampGolden from "../../../../conformance/document.stamp/golden/document.stamp.golden.json" with { type: "json" };
-import archiveFixtures from "../../../../conformance/document.archive/fixtures/document.archive.fixtures.json" with { type: "json" };
-import archiveGolden from "../../../../conformance/document.archive/golden/document.archive.golden.json" with { type: "json" };
 import { sha256 } from "../../../../src/platform/artifacts.js";
 import type { ArtifactWriter } from "../../../../src/platform/artifacts.js";
 import type { Clock } from "../../../../src/platform/clock.js";
@@ -41,15 +37,16 @@ interface Golden {
   [key: string]: unknown;
 }
 
-// document.stamp/document.archive are write capabilities (owner's request 2026-09-08: "chci testovat i samostatné
-// kravičky" — apf-document-host, not just what runs in-process on the gateway). Safe to run live today because the
-// DMS/archive they write to is still the apf-fakes twin, not a real production system (docs/NAVRHOVY-LIST-farma.md,
-// celek D) — revisit this list once a real DMS is wired, the same way a real payment/ERP write never belongs here.
+// document.stamp/document.archive deliberately NOT here yet (tried 2026-09-08, reverted same day): they run on a
+// different Worker (apf-document-host), which fetches the artifact bytes back from the gateway by workflowId
+// (index.ts fetchArtifact() -> GET /workflow/<wf-...>/artifact/<id>, apf-document-host/src/index.ts:88-103) — the
+// self-test instance's id ("self-test") doesn't match that route's wf-* pattern, so the fetch-back 404s and every
+// stamp/archive fixture fails with ARTIFACT_NOT_FOUND that has nothing to do with either capability's real health.
+// Needs its own workflowId scheme (and a check that apf-document-host's audit relay to shared D1 won't turn every
+// self-test run into a fake row in "Poslední instance") before it's added back — not a five-minute fix.
 const SUITES: { capability: string; fixtures: Fixture[]; golden: Record<string, Golden> }[] = [
   { capability: "document.classify", fixtures: classifyFixtures as Fixture[], golden: classifyGolden as Record<string, Golden> },
   { capability: "document.validate", fixtures: validateFixtures as Fixture[], golden: validateGolden as Record<string, Golden> },
-  { capability: "document.stamp", fixtures: stampFixtures as Fixture[], golden: stampGolden as Record<string, Golden> },
-  { capability: "document.archive", fixtures: archiveFixtures as Fixture[], golden: archiveGolden as Record<string, Golden> },
 ];
 
 export interface SelfTestRow {
