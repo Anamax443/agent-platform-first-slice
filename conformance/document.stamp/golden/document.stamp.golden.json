@@ -12,7 +12,7 @@
   "injection-stamptext": { "status": "FAILED", "error": { "code": "SCHEMA_VALIDATION_FAILED", "class": "VALIDATION", "retryable": false } },
   "boundary-validation-failed": { "status": "FAILED", "error": { "code": "VALIDATION_EVIDENCE_MISSING", "class": "POLICY", "retryable": false } },
   "boundary-validation-wrong-provider": { "status": "FAILED", "error": { "code": "VALIDATION_EVIDENCE_MISSING", "class": "POLICY", "retryable": false } },
-  "error-artifact-missing": { "status": "FAILED", "error": { "code": "ARTIFACT_NOT_FOUND", "class": "BUSINESS", "retryable": false } },
+  "error-artifact-missing": { "status": "FAILED", "error": { "code": "RESOURCE_TENANT_UNRESOLVED", "class": "SECURITY", "retryable": false } },
   "error-free-text": { "status": "FAILED", "error": { "code": "SCHEMA_VALIDATION_FAILED", "class": "VALIDATION", "retryable": false } },
   "error-expired": { "status": "FAILED", "error": { "code": "COMMAND_EXPIRED", "class": "POLICY", "retryable": false, "reissuable": true } },
   "error-ai-actor": { "status": "FAILED", "error": { "code": "CAPABILITY_NOT_ALLOWED", "class": "SECURITY", "retryable": false } },

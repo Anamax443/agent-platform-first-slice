@@ -3,7 +3,8 @@
 | Input class | code | class | retryable | reissuable | enforced by |
 |---|---|---|---|---|---|
 | recipient reference not in the allowlist of the caller's tenant | `RECIPIENT_NOT_ALLOWED` | POLICY | false | false | handler |
-| referenced artifact does not exist | `ARTIFACT_NOT_FOUND` | BUSINESS | false | false | handler |
+| referenced artifact does not exist (normal path: caught before the handler runs) | `RESOURCE_TENANT_UNRESOLVED` | SECURITY | false | false | host |
+| referenced artifact does not exist, reached only if the host's resourceTenant gate is bypassed (defense in depth, MUT-CTX-001) | `ARTIFACT_NOT_FOUND` | BUSINESS | false | false | handler |
 | referenced artifact belongs to another tenant than the trusted context | `TENANT_SCOPE_MISMATCH` | SECURITY | false | false | host |
 | mail provider rejects the message (5xx, auth) | `SMTP_REJECTED` | DEPENDENCY | true | false | handler |
 | `notValidAfter` passed by more than 30 s | `COMMAND_EXPIRED` | POLICY | false | true | host |
@@ -11,5 +12,7 @@
 | handler resolves a credential reference that is not its own | `CREDENTIAL_DENIED` | SECURITY | false | false | host |
 | address instead of reference, free text, unknown template, unknown field | `SCHEMA_VALIDATION_FAILED` | VALIDATION | false | false | router |
 | handler throws | `HANDLER_CRASHED` | TECHNICAL | true | false | host |
+| same idempotencyKey reused with a different payload (Posudek 5/6) | `IDEMPOTENCY_CONFLICT` | VALIDATION | false | false | host |
+| another attempt for the same idempotencyKey is still reserved/in flight | `IDEMPOTENCY_IN_FLIGHT` | TECHNICAL | true | false | host |
 
 Not an error: `status: UNKNOWN_OUTCOME` with `reconciliationRef` when the provider may have delivered (`WF-UNK-001`). The executor never resends; the provider deduplicates by client reference (`IDM-RET-002`).

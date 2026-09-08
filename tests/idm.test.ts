@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { FakeRegistryAdapter, RegistryUnavailable } from "../src/adapters/registry.js";
 import { newId } from "../src/platform/ids.js";
-import { command, createSlice, dispatch, INJECTION_APPROVE_DOC, INVOICE_CZ, putArtifact, runIntake, validatedStampPayload } from "./harness/index.js";
+import { command, createSlice, dispatch, INJECTION_APPROVE_DOC, INVOICE_CZ, putArtifact, runIntake, TENANT_A, validatedStampPayload } from "./harness/index.js";
 
 /** Registry that fails N times with 503 and then answers: the technical-retry path. */
 class FlakyRegistry extends FakeRegistryAdapter {
@@ -33,7 +33,7 @@ describe("IDM-REPLAY-001 one logical write intent = one side effect", () => {
     expect(slice.dms.stampCalls).toBe(1);
     expect(slice.audit.byKind("write-intent")).toHaveLength(1);
     expect(slice.audit.byKind("duplicate")).toHaveLength(2);
-    expect(slice.host.remembered("document.stamp", "wf-1:stamp:default:1")?.status).toBe("SUCCEEDED");
+    expect((await slice.host.remembered(TENANT_A, "document.stamp", "wf-1:stamp:default:1"))?.status).toBe("SUCCEEDED");
   });
 
   it("technical retry keeps the idempotency key and the step record (FOUNDATION-core §5.2)", async () => {
@@ -99,16 +99,24 @@ describe("IDM-STRAT-001 quality retry never reuses a key", () => {
     expect(classify[1]?.result?.status).toBe("SUCCEEDED");
   });
 
-  it("at the executor, a new key for the same resource is a new intent; the old key still returns the old outcome", async () => {
+  it("at the executor, a new key for the same resource is a new intent; the old key with the same payload replays, with a different payload conflicts", async () => {
     const slice = createSlice();
     const art = putArtifact(slice, INVOICE_CZ);
     const first = await dispatch(slice, command(slice, { capability: "document.stamp", payload: validatedStampPayload(slice, art, "INVOICE", "STAMP A"), idempotencyKey: "wf-2:stamp:default:1" }));
     const second = await dispatch(slice, command(slice, { capability: "document.stamp", payload: validatedStampPayload(slice, art, "INVOICE", "STAMP B"), idempotencyKey: "wf-2:stamp:enhanced:2" }));
-    const replay = await dispatch(slice, command(slice, { capability: "document.stamp", payload: validatedStampPayload(slice, art, "INVOICE", "STAMP B"), idempotencyKey: "wf-2:stamp:default:1" }));
     expect(slice.dms.stampCalls).toBe(2);
     expect(second.payload?.stampText).toBe("STAMP B");
-    expect(replay.payload?.stampText).toBe("STAMP A"); // the key wins, not the payload
+
+    // same key, different payload: a conflict, not a silent replay of the old outcome (Posudek 5/6)
+    const conflict = await dispatch(slice, command(slice, { capability: "document.stamp", payload: validatedStampPayload(slice, art, "INVOICE", "STAMP B"), idempotencyKey: "wf-2:stamp:default:1" }));
+    expect(conflict.status).toBe("FAILED");
+    expect(conflict.error?.code).toBe("IDEMPOTENCY_CONFLICT");
+    expect(slice.dms.stampCalls).toBe(2); // no new side effect from the conflicting attempt
+
+    // same key, same payload: a genuine replay still returns the original outcome
+    const replay = await dispatch(slice, command(slice, { capability: "document.stamp", payload: validatedStampPayload(slice, art, "INVOICE", "STAMP A"), idempotencyKey: "wf-2:stamp:default:1" }));
     expect(replay.payload).toEqual(first.payload);
+    expect(slice.dms.stampCalls).toBe(2);
   });
 });
 
@@ -125,6 +133,6 @@ describe("IDM-HOST-SCOPE-001 dedup is scoped by capability, not by idempotencyKe
     expect(slice.dms.stampCalls).toBe(1);
     expect(slice.archive.putCalls).toBe(1); // archive actually ran; a shared bare key would have short-circuited it
     expect(slice.audit.byKind("duplicate")).toHaveLength(0);
-    expect(slice.host.remembered("document.stamp", key)).not.toEqual(slice.host.remembered("document.archive", key));
+    expect(await slice.host.remembered(TENANT_A, "document.stamp", key)).not.toEqual(await slice.host.remembered(TENANT_A, "document.archive", key));
   });
 });

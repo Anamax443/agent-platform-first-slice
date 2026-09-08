@@ -2,6 +2,20 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-08 (53) — SEVERKA bod 2, první polovina: hlubší idempotency klíč + IDEMPOTENCY_CONFLICT; resourceTenant fail-open uzavřen
+
+**Kontext:** pokračování `## Pořadí` ze `SEVERKA.md` bodem 2 (durable idempotency/effect ledger), rozšířeno o nález z diskuze nad `docs/POSUDKY.md` (Posudek 5/6): `resourceTenant()` fail-open pattern. Explorace ukázala, že „durable ledger" jsou ve skutečnosti dvě oddělitelné věci — **tahle část je ta bez nové infrastruktury**, druhá (skutečně durable úložiště na `apf-document-host`, dnes stateless Worker bez DO/D1/KV) je rozpracovaná dál v tomhle celku.
+
+**`src/platform/idempotency.ts` (nový):** `IdempotencyStore` rozhraní s atomickou `reserveOrGet()`/`resolve()`/`release()` semantikou (na rozdíl od `ReviewTaskStore`'s prostého get/set — tady je race mezi „zkontroluj" a „zapiš" přesně to, co se má uzavřít). `InMemoryIdempotencyStore` výchozí, triviálně atomická v jednom JS vlákně.
+
+**`src/platform/executor-host.ts`:** dedup klíč `capability + idempotencyKey` → `tenantId + handlerId + idempotencyKey` (Posudek 5/6 — `handlerId` je dnes už 1:1 s capabilitou, takže žádná ztráta oproti dřívějšímu W19 fixu, jen navíc uzavírá cross-tenant kolizi). Fingerprint (`sha256(canonicalize(payload))`) rozlišuje replay (stejný klíč, stejný payload → stará odpověď) od konfliktu (stejný klíč, jiný payload → nový `IDEMPOTENCY_CONFLICT`, `class: VALIDATION`). Nová rezervace navíc chytá souběžné duplicity uprostřed běhu (`IDEMPOTENCY_IN_FLIGHT`, retryable). **Vedlejší nález cestou:** v souboru byl od nepaměti stray NUL byte místo mezery v `dedupKey()` (`\`${capability}\0${idempotencyKey}\``) — fungovalo náhodou (NUL je platný oddělovač), opraveno při přepisu.
+
+**`ResourceTenantResult` (resourceTenant fail-open, Posudek 5/6):** `string | undefined` → explicitní `FOUND | GLOBAL_RESOURCE | NOT_FOUND | UNRESOLVED`. Jen `FOUND` s odpovídajícím tenantem a explicitně opted-in `GLOBAL_RESOURCE` (nové pole `HostHandlerSpec.allowsGlobalResource`, dnes jen `mail.ingest`) projdou; `NOT_FOUND`/`UNRESOLVED`/neopted-in `GLOBAL_RESOURCE` → nový `RESOURCE_TENANT_UNRESOLVED` (SECURITY), zamítnuto ještě před handlerem. **Ověřeno v kódu před opravou** (`stamp-handler.ts:35`, `archive-handler.ts:22`): neexistující `artifactId` dřív fail-open přeskočilo tenant kontrolu, zachytil to až handlerův vlastní `ARTIFACT_NOT_FOUND` — náhoda pořadí kontrol, ne záruka. Handlerův `ARTIFACT_NOT_FOUND` check zůstává jako defense-in-depth (dosažitelný jen když `skipContextMatch` mutant vypne bránu, `MUT-CTX-001`), ne smazán jako mrtvý kód.
+
+**Dopad na conformance suite (očekávaný, ne regrese):** `error-artifact-missing` golden pro `document.stamp`/`document.archive`/`email.send` teď čeká `RESOURCE_TENANT_UNRESOLVED` místo `ARTIFACT_NOT_FOUND` — `errors.md` u všech tří doplněn (nový řádek pro normální cestu + poznámka o defense-in-depth cestě + `IDEMPOTENCY_CONFLICT`/`IDEMPOTENCY_IN_FLIGHT`). `tests/idm.test.ts` (`IDM-STRAT-001`): stará asercie „the key wins, not the payload" byla přesně ten dřívější slabý kontrakt, který se měl zpřísnit — přepsáno na explicitní `IDEMPOTENCY_CONFLICT` větev + ověření, že skutečný replay (stejný klíč a payload) pořád funguje.
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare/tsconfig.json`), 233 testů (beze změny počtu — testy upraveny na nový kontrakt, ne přidány), arch, farm:check. **Nenasazeno** — jen lokální commit, žádná Cloudflare vrstva se v tomhle kroku neměnila. Durable úložiště na `apf-document-host` (vyhrazená Durable Object `IdempotencyLedger`, atomická per-klíč, stejný vzor jako `SqliteReviewTaskStore`) je rozpracovaná jako navazující krok téže session.
+
 ## 2026-09-08 (52) — Pushnuto a živě ověřeno na farmě: Human Review decision cesta doopravdy funguje na `farm-bass443`
 
 **Pokyn vlastníka:** „pushnout a udělat živé ověření na farmě" — poslední otevřený bod z (50)/(51).

@@ -24,6 +24,7 @@ import { newId } from "./platform/ids.js";
 import { Journal } from "./platform/journal.js";
 import { Orchestrator, type WorkflowDef } from "./platform/orchestrator.js";
 import { policyFor } from "./platform/policy.js";
+import type { IdempotencyStore } from "./platform/idempotency.js";
 import { ReviewService, type ReviewTaskStore } from "./platform/review.js";
 import { Router } from "./platform/router.js";
 import { generateKeyPair, KeyRegistry, Signer } from "./platform/signing.js";
@@ -45,6 +46,10 @@ export interface SliceOptions {
   artifactCapacityBytes?: number;
   /** Shared between two slices to simulate two requests hitting the same Durable Object (RES-REVIEW-001). */
   reviewStore?: ReviewTaskStore;
+  /** Shared between two slices to simulate two requests hitting the same document-host object (RES-IDM-001). */
+  documentIdempotencyStore?: IdempotencyStore;
+  emailIdempotencyStore?: IdempotencyStore;
+  ingestIdempotencyStore?: IdempotencyStore;
   dms?: FakeDmsAdapter;
   /** Any RegistryAdapter: the fake in process (default), or HttpRegistryAdapter over the fakes protocol (INT-HTTP-*). */
   registry?: RegistryAdapter;
@@ -94,7 +99,7 @@ export function createSlice(installation: Installation, secrets: SecretsSource, 
   const ingestCredentials = new CredentialResolver(credentialTable(installation, secrets, { [ingest.INGEST_HANDLER_ID]: [] }), audit);
 
   // Hosts: document-executor-host (LOGICAL, two handlers), email-executor (PRINCIPAL: own context, own credential domain), mail-ingest.
-  const documentHost = new ExecutorHost({ hostId: host.descriptor.module, clock, audit, credentials: documentCredentials });
+  const documentHost = new ExecutorHost({ hostId: host.descriptor.module, clock, audit, credentials: documentCredentials, idempotency: o.documentIdempotencyStore });
   Object.assign(documentHost.mutants, o.hostMutants ?? {});
   documentHost.register(host.createStampHandler({ artifacts, dms, credentials: documentCredentials, clock }));
   documentHost.register((o.archiveHandler ?? createArchiveHandler)({ artifacts, archive, credentials: documentCredentials, clock }));
@@ -103,11 +108,11 @@ export function createSlice(installation: Installation, secrets: SecretsSource, 
   const policy = (capability: string) => policyFor(installation.policies, capability, "1");
   const emailPolicy = policy("email.send");
   const recipients: email.RecipientDirectory = (tenantId, ref) => emailPolicy.recipientAllowlist?.[tenantId]?.[ref];
-  const emailHost = new ExecutorHost({ hostId: email.descriptor.module, clock, audit, credentials: emailCredentials });
+  const emailHost = new ExecutorHost({ hostId: email.descriptor.module, clock, audit, credentials: emailCredentials, idempotency: o.emailIdempotencyStore });
   Object.assign(emailHost.mutants, o.emailHostMutants ?? {});
   emailHost.register(email.createEmailSendHandler({ artifacts, smtp, credentials: emailCredentials, recipients, clock }));
 
-  const ingestHost = new ExecutorHost({ hostId: ingest.descriptor.module, clock, audit, credentials: ingestCredentials });
+  const ingestHost = new ExecutorHost({ hostId: ingest.descriptor.module, clock, audit, credentials: ingestCredentials, idempotency: o.ingestIdempotencyStore });
   ingestHost.register(ingest.createIngestHandler({ artifacts, clock }));
 
   // Router: descriptors validated against the frozen schema, policies looked up fail-closed.

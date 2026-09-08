@@ -41,7 +41,10 @@ export function createEmailSendHandler(deps: EmailDeps): HostHandlerSpec {
   return {
     capability: "email.send",
     handlerId: SEND_HANDLER_ID,
-    resourceTenant: (payload) => deps.artifacts.get(String((payload.params as { artifactId?: string } | undefined)?.artifactId ?? ""))?.tenantId,
+    resourceTenant: (payload) => {
+      const art = deps.artifacts.get(String((payload.params as { artifactId?: string } | undefined)?.artifactId ?? ""));
+      return art ? { kind: "FOUND" as const, tenantId: art.tenantId } : { kind: "NOT_FOUND" as const };
+    },
 
     run: async ({ message, context }) => {
       const p = message.payload as unknown as Input;

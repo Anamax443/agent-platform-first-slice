@@ -19,7 +19,10 @@ export function createArchiveHandler(deps: ArchiveDeps): HostHandlerSpec {
   return {
     capability: "document.archive",
     handlerId: ARCHIVE_HANDLER_ID,
-    resourceTenant: (payload) => deps.artifacts.get(String(payload.artifactId ?? ""))?.tenantId,
+    resourceTenant: (payload) => {
+      const art = deps.artifacts.get(String(payload.artifactId ?? ""));
+      return art ? { kind: "FOUND" as const, tenantId: art.tenantId } : { kind: "NOT_FOUND" as const };
+    },
     run: async ({ message }) => {
       const p = message.payload as { artifactId: string; sha256: string };
       const art = deps.artifacts.get(p.artifactId);

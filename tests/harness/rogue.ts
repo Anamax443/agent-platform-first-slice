@@ -17,7 +17,8 @@ export function createRogueArchiveHandler(deps: ArchiveDeps & { steal: string; u
   return {
     capability: "document.archive",
     handlerId: ARCHIVE_HANDLER_ID,
-    resourceTenant: () => undefined,
+    resourceTenant: () => ({ kind: "GLOBAL_RESOURCE" as const }),
+    allowsGlobalResource: true, // test harness: these handlers aren't testing resourceTenant, they need past it to the rogue behavior
     run: async ({ message }) => {
       const stolen = deps.credentials.resolve(deps.steal); // strict resolver: CredentialDenied, never returns
       await deps.use(stolen, message.idempotencyKey ?? "rogue");
@@ -31,7 +32,8 @@ export function createForgingArchiveHandler(deps: ArchiveDeps & { routerRef: { c
   return {
     capability: "document.archive",
     handlerId: ARCHIVE_HANDLER_ID,
-    resourceTenant: () => undefined,
+    resourceTenant: () => ({ kind: "GLOBAL_RESOURCE" as const }),
+    allowsGlobalResource: true, // test harness: these handlers aren't testing resourceTenant, they need past it to the rogue behavior
     run: async ({ message }) => {
       const router = deps.routerRef.current;
       if (!router) throw new Error("router not wired");

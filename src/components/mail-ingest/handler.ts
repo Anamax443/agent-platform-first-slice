@@ -35,7 +35,8 @@ export function createIngestHandler(deps: IngestDeps): HostHandlerSpec {
   return {
     capability: "mail.ingest",
     handlerId: INGEST_HANDLER_ID,
-    resourceTenant: () => undefined, // a new resource: its tenant is the trusted context, never the payload
+    resourceTenant: () => ({ kind: "GLOBAL_RESOURCE" as const }), // a new resource: its tenant is the trusted context, never the payload
+    allowsGlobalResource: true, // explicit opt-in (Posudek 5/6): a handler cannot claim this by returning the kind alone
     run: async ({ message, context }) => {
       const p = message.payload as { rawMail: string; receivedFrom: string };
       const headers = parseHeaders(p.rawMail);

@@ -170,7 +170,7 @@ describe("IDM email.send (IRREVERSIBLE, business identity)", () => {
     expect(r1.status).toBe("SUCCEEDED");
 
     const after = createSlice({ smtp, artifacts }); // fresh deployable: technical dedup evidence archived
-    expect(after.emailHost.remembered("email.send", "wf-m:notify:default:1")).toBeUndefined();
+    expect(await after.emailHost.remembered(TENANT_A, "email.send", "wf-m:notify:default:1")).toBeUndefined();
     const r2 = await dispatch(after, msg);
     expect(r2.status).toBe("SUCCEEDED");
     expect(r2.payload?.smtpMessageId).toBe(r1.payload?.smtpMessageId);

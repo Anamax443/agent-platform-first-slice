@@ -18,6 +18,17 @@ export const PLATFORM_CODES = {
   REVIEW_EXPIRED: { class: "POLICY", retryable: false, reissuable: false },
   CREDENTIAL_DENIED: { class: "SECURITY", retryable: false, reissuable: false },
   HANDLER_CRASHED: { class: "TECHNICAL", retryable: true, reissuable: false },
+  // Found 2026-09-08 (Posudek 5/6, docs/POSUDKY.md): the same idempotencyKey reused with a
+  // different payload must not silently replay the old outcome — a genuinely new intent needs a
+  // new key, not a retry.
+  IDEMPOTENCY_CONFLICT: { class: "VALIDATION", retryable: false, reissuable: false },
+  // Another attempt for the same dedup key is currently reserved (mid-flight); the caller should
+  // back off, not race the side effect.
+  IDEMPOTENCY_IN_FLIGHT: { class: "TECHNICAL", retryable: true, reissuable: false },
+  // resourceTenant() could not establish ownership of the targeted resource (missing, or a future
+  // handler's lookup failed) — fail closed, same as an actual cross-tenant mismatch, rather than
+  // silently skipping the tenant check.
+  RESOURCE_TENANT_UNRESOLVED: { class: "SECURITY", retryable: false, reissuable: false },
 } as const satisfies Record<string, { class: ErrorClass; retryable: boolean; reissuable: boolean }>;
 
 export type PlatformCode = keyof typeof PLATFORM_CODES;
