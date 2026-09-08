@@ -2,6 +2,25 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-08 (55) — Živé ověření (54) na farmě: `document.stamp` čistý, `document.archive` má otevřený, nevysvětlený nález
+
+**Nasazeno a ověřeno:** `farm-bass443` po (54), `/version` potvrdil `gitSha`. Živě ověřeno přes existující self-test (`/farm` → Kravičky → Spustit self-test), víc než deset opakování:
+
+- **`document.stamp` (jediná capabilita v reálném produkčním toku) je čistá.** Přes `wrangler tail` ověřen kompletní běh 16 fixtur: `resourceTenant()` správně vrací `FOUND` pro reálné artefakty (dosáhne `write-intent`/`write-done`), `NOT_FOUND` jen pro záměrně chybějící (`error-artifact-missing`) a `TENANT_SCOPE_MISMATCH`/`CAPABILITY_NOT_ALLOWED`/`COMMAND_EXPIRED` přesně podle scénáře. `IdempotencyLedger.reserveOrGet`/`resolve`/`release` volání viditelná v tailu na každém zápisu.
+- **`document.archive` má reprodukovatelný, ale nevysvětlený nález:** fixtura `damaged-hash-mismatch` (skutečně existující artefakt s podvrženým sha256) na živé farmě konzistentně (10+ opakování, vždy) dostane `RESOURCE_TENANT_UNRESOLVED` (NOT_FOUND) místo očekávaného `ARTIFACT_HASH_MISMATCH` — jako by `resourceTenant()` artefakt nenašel, i když existuje (sousední `canonical-archive` i záměrně chybějící `error-artifact-missing` fixtura fungují správně). **Lokálně (`npm test`, 233/233) tahle přesná fixtura prochází deterministicky** — bug se neprojevuje mimo živou farmu.
+
+**Vedlejší nález cestou (samostatný, ne příčina výše):** `document.archive`'s `security`/`deny` audit záznamy (na rozdíl od `document.stamp`, kde jsou spolehlivě v D1) se v `/audit.json` prakticky nikdy neobjeví — `RelayAudit`/`copyOut()` kód je capability-agnostic, takže nejde o zjevnou logickou chybu, jen o pozorování. Nebráněno dál, protože `document.archive` dnes v produkčním workflow vůbec neběží (`document-intake.v2.json` má jen `classify→validate→stamp`; `document.archive` existuje jen pro SEC-HOST-001 izolační test a teď navíc self-test).
+
+**Vyšetřeno a vyloučeno jako příčina** (než jsem se rozhodl nález nechat otevřený, ne hádat opravu): shoda `artifactId` regexu na gatewayi (`newId()` vždy `[A-Za-z0-9]+`, vyloučeno), staleness `notValidAfter`/hodin (přepočítává se per fixtura), sdílený stav mezi requesty (`SingleArtifactStore`/`ExecutorHost`/`Router` se staví nanovo při každém `/dispatch`), pořadí/souběžnost self-testu (`await` sekvenční, `RemoteHostTransport.dispatch()` plně awaitovaný), kolize obsahu/ID artefaktů (`artifactId` vždy čerstvý `newId`, ne content-addressed).
+
+**Pracovní hypotéza, NEPOTVRZENÁ:** něco vázané na hloubku/objem požadavků uvnitř jednoho `stub.selfTest()` běhu (`document.archive` běží jako poslední sada, cca 20.–23. dispatch v pořadí) — možná Cloudflare limit na souběžné/vnořené Durable Object volání (gatewayovo `WorkflowInstance` DO obsluhuje jak vlastní `selfTest()` RPC, tak vnořené `artifact()` RPC z document-hostova fetch-backu). **Nehádat opravu bez důkazu** — zapsáno jako otevřená položka k vyšetření, ne opraveno naslepo.
+
+**Přidáno cestou (drobné, komitnuto):** `RESOURCE_TENANT_UNRESOLVED` audit detail rozšířen o `artifactId`/`messageId` (`src/platform/executor-host.ts`) — trvalé zlepšení diagnostiky pro produkci, ne jen pro tenhle nález; použito při vyšetřování, nepomohlo (audit se pro `document.archive` stejně nedostal do D1, viz vedlejší nález výš).
+
+**Dopad na hodnocení celku (54):** cíl tohoto celku — durabilita idempotency ledgeru pro **`document.stamp`**, jedinou capabilitu v reálném produkčním toku — je živě ověřená a čistá. `document.archive`'s nález je izolovaný na capabilitu mimo produkční cestu; nezastavuje ani neznevěrohodňuje (54).
+
+**Brány zelené:** typecheck, 233 testů, arch, farm:check.
+
 ## 2026-09-08 (54) — SEVERKA bod 2, druhá polovina: durable `IdempotencyLedger` (Durable Object) na `apf-document-host`
 
 **Kontext:** dokončení bodu 2 ze `SEVERKA.md` — (53) uzavřela kontraktovou část (hlubší klíč, `IDEMPOTENCY_CONFLICT`), tohle je skutečná durabilita, kterou (53) výslovně nechala otevřenou: `apf-document-host` je stateless Worker, `ExecutorHost` se staví nanovo při každém `/dispatch` requestu, výchozí `InMemoryIdempotencyStore` tedy na farmě nededupuje nic mezi požadavky ani isoláty.

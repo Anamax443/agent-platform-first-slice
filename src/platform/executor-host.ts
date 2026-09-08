@@ -160,7 +160,7 @@ export class ExecutorHost {
           correlationId: message.correlationId,
           actorId: context.actorId,
           capability,
-          details: { code: "RESOURCE_TENANT_UNRESOLVED", reason: result.kind, contextTenant: context.tenantId },
+          details: { code: "RESOURCE_TENANT_UNRESOLVED", reason: result.kind, contextTenant: context.tenantId, artifactId: String((message.payload as { artifactId?: unknown } | undefined)?.artifactId ?? ""), messageId: message.messageId },
         });
         return { status: "FAILED", error: platformError("RESOURCE_TENANT_UNRESOLVED", `resource ownership could not be established (${result.kind})`) };
       }
