@@ -2,6 +2,16 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-09 (62) — `SEVERKA.md` Execution Engine řádek byl zastaralý (nález externího posudku nad `d6f8287`, ověřeno proti kódu)
+
+**Nález:** externí posudek nad (61) upozornil, že řádek Execution Engine popisuje stav před `b5b8be8`/`f29eb6f` (8. 9. 2026) — tvrdil, že hlubší idempotency identita a `IDEMPOTENCY_CONFLICT` zůstávají otevřené, což už týden neplatí. Ověřeno přímo v `src/platform/executor-host.ts` (ne převzato): `dedupKey()` je univerzálně `tenantId + handlerId + idempotencyKey`, fingerprint (`sha256(canonicalize(payload))`) rozlišuje replay od `IDEMPOTENCY_CONFLICT` — pro každý `ExecutorHost`, ne jen `document-host`.
+
+**Nuance, kterou posudek zjednodušil:** durable effect ledger (`IdempotencyLedger` Durable Object) běží zatím **jen na `apf-document-host`**. `apf-email-executor`'s `/dispatch` (`deploy/cloudflare/apf-email-executor/src/index.ts`) staví `ExecutorHost` bez `idempotency` volby → výchozí `InMemoryIdempotencyStore`, zahozený s každým požadavkem (fresh `ExecutorHost` per `/dispatch`, žádná Durable Object). Composite klíč/fingerprint je tedy univerzální, durabilita ne — dva různé kroky bodu 2 `SEVERKA.md`, ne jeden. Neškodí, dokud `SEND_MODE: "sandbox"`; před `"live"` stojí za rozhodnutí.
+
+**`docs/SEVERKA.md`:** Execution Engine řádek přepsán na aktuální stav (opraveno + zbylá mezera u `email.send`), ne smazán beze stopy.
+
+**Beze změny kódu, gates neběžely** (dokumentační oprava).
+
 ## 2026-09-09 (61) — SEVERKA bod 4, první krok: `src/platform/registry.ts` — Agent Registry jako čtení nad `Router`, ne nová autorita
 
 **Kontext:** externí posudek nad commitem (60) navrhoval jít rovnou do Admission Gate; vlastník rozhodl (AskUserQuestion) pokračovat podle vlastního kanonického pořadí `SEVERKA.md` — bod 4, Agent Registry, ne přeskočit dopředu (`SEVERKA.md`'s vlastní podmínka pro čerpání z Admission Gate sekce — druhý reálný tenant — stejně ještě není splněná).
