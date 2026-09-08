@@ -25,7 +25,7 @@ import { ReviewService, type Decision } from "../../../../src/platform/review.js
 import type { MessageEnvelope, ResultEnvelope } from "../../../../src/platform/types.js";
 import { WORKFLOW_NAMES, workflowDef } from "../../../../src/platform/workflow.js";
 import { renderError, renderFarm, renderHome, renderInstance, renderSelfTest, type AuditLogRow, type FarmInstanceRow, type FarmStats, type InboxItem, type InstanceView, type ModelsInfo, type SelfTestRow, type Wired } from "./page.js";
-import { describeModels, wirePlatform, type Wiring } from "./platform-wiring.js";
+import { describeModels, gatewayCatalog, wirePlatform, type Wiring } from "./platform-wiring.js";
 import { runSelfTest, SELF_TEST_WORKFLOW_ID } from "./self-test.js";
 import { D1_AUDIT_DDL, DDL, SqliteArtifacts, SqliteAudit, SqliteJournal, SqliteReviewTaskStore } from "./store.js";
 import { visuallyStamp } from "./visual-stamp.js";
@@ -860,6 +860,9 @@ export default {
       });
     }
     if (url.pathname === "/health") return Response.json({ ok: true, wired: wiredOf(env) });
+    // Agent Registry (SEVERKA.md item 4): the descriptor's own declared endpoint (endpoints.capabilities), read-only,
+    // no live Router round-trip needed — document.classify/document.validate/mail.ingest run in-process here.
+    if (url.pathname === "/capabilities") return Response.json({ deployable: "apf-gateway", capabilities: gatewayCatalog() });
 
     // Read-only view of the chaos switches (KV of apf-fakes) for the operator; they are set with wrangler kv, never through the page.
     if (url.pathname === "/chaos" && request.method === "GET") {

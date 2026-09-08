@@ -2,6 +2,22 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-09 (63) — SEVERKA bod 4, druhá polovina: `/capabilities` na všech třech providerech (`descriptor.json`'s vlastní deklarovaný endpoint, dřív nikde neimplementovaný)
+
+**Kontext:** dokončení (61) — vlastní posudek nad `d6f8287` navrhl dodělat runtime stranu Registry (endpoint, ne jen data uvnitř `Router`), než se jde k Planneru. Každý `descriptor.json` už rok deklaruje `endpoints.capabilities: "/capabilities"` (`mail-ingest`, `email-executor`, `document-executor-host`), ale nic tu cestu neobsluhovalo (zjištěno explorací k (61)) — teď existuje, na všech třech.
+
+**`src/platform/registry.ts`:** nová `catalogOf(descriptor)` — každá capability descriptoru na svém `preferredVersion`, žádný živý `Router` potřeba (descriptor byl validován už při `Router.register()`, tohle ho jen čte znovu).
+
+**`apf-document-host`/`apf-email-executor`:** nová `GET /capabilities` vrací `{ deployable, capabilities: catalogOf(descriptor) }`; `/version`'s dřív natvrdo psané `capabilities: ["document.stamp","document.archive"]` / `["email.send"]` teď `capabilityNamesOf(descriptor)` (stejná hodnota, odvozená).
+
+**`apf-gateway`:** `platform-wiring.ts` dostala `gatewayCatalog()` (agreguje `catalogOf()` nad classifier/validator/ingest descriptory — capabilities co gateway hostuje in-process, žádný per-DO-instance round-trip potřeba, stejná úvaha jako u `GATEWAY_CAPABILITIES`); nová `GET /capabilities` na top-level fetch handleru (ne uvnitř `WorkflowInstance` DO — deterministické, stejné pro každou instanci).
+
+**`tests/reg.test.ts`:** `REG-005` — `catalogOf()` vrací jeden řádek na capabilitu, shoduje se s `catalogEntry()`.
+
+**Vědomě mimo rozsah:** integrace do `/farm`'s Kravičky panelu (dnes pořád čte `/version`'s prostý `capabilities` seznam, ne bohatý `/capabilities` katalog — funkční, jen ne využívá nová data), `lifecycleStatus`/health/cena pole (vyžadovalo by rozšíření zmrazeného `contracts/module-descriptor.v1.schema.json` — mimo proces, `SEVERKA.md` to sama jmenuje jako "kandidát pro rozšíření, ne dnešní kontrakt").
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare/tsconfig.json`), **242 testů** (241 + `REG-005`), arch, farm:check. **Nenasazeno zatím** — na rozdíl od (61) (beze změny chování) tohle je skutečně nová cesta na farmě, čeká na živé ověření jako každá nová Cloudflare-strana věc dřív.
+
 ## 2026-09-09 (62) — `SEVERKA.md` Execution Engine řádek byl zastaralý (nález externího posudku nad `d6f8287`, ověřeno proti kódu)
 
 **Nález:** externí posudek nad (61) upozornil, že řádek Execution Engine popisuje stav před `b5b8be8`/`f29eb6f` (8. 9. 2026) — tvrdil, že hlubší idempotency identita a `IDEMPOTENCY_CONFLICT` zůstávají otevřené, což už týden neplatí. Ověřeno přímo v `src/platform/executor-host.ts` (ne převzato): `dedupKey()` je univerzálně `tenantId + handlerId + idempotencyKey`, fingerprint (`sha256(canonicalize(payload))`) rozlišuje replay od `IDEMPOTENCY_CONFLICT` — pro každý `ExecutorHost`, ne jen `document-host`.

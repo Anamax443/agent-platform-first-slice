@@ -3,7 +3,7 @@
 // or with what a descriptor actually declares.
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { capabilityNamesOf, catalogEntry, type ModuleDescriptorLike } from "../src/platform/registry.js";
+import { capabilityNamesOf, catalogEntry, catalogOf, type ModuleDescriptorLike } from "../src/platform/registry.js";
 import { createSlice } from "./harness/index.js";
 import { loadJson, projectRoot } from "./harness/paths.js";
 
@@ -48,6 +48,20 @@ describe("REG-003 capabilityNamesOf() is the single source for cross-Worker disp
   });
   it("mail-ingest descriptor names exactly mail.ingest", () => {
     expect(capabilityNamesOf(descriptorOf("mail-ingest"))).toEqual(["mail.ingest"]);
+  });
+});
+
+describe("REG-005 catalogOf() — a deployable's own /capabilities endpoint, no live Router needed", () => {
+  it("one row per capability the descriptor declares, at its preferredVersion", () => {
+    const descriptor = descriptorOf("document-executor-host");
+    const catalog = catalogOf(descriptor);
+    expect(catalog).toHaveLength(2);
+    expect(catalog).toEqual(
+      expect.arrayContaining([
+        catalogEntry(descriptor, "document.stamp", "1"),
+        catalogEntry(descriptor, "document.archive", "1"),
+      ]),
+    );
   });
 });
 

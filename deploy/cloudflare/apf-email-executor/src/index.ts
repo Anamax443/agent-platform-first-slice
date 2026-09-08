@@ -13,6 +13,7 @@ import { SystemClock } from "../../../../src/platform/clock.js";
 import { CredentialResolver } from "../../../../src/platform/credentials.js";
 import { ExecutorHost } from "../../../../src/platform/executor-host.js";
 import { policyFor } from "../../../../src/platform/policy.js";
+import { capabilityNamesOf, catalogOf } from "../../../../src/platform/registry.js";
 import { Router } from "../../../../src/platform/router.js";
 import { KeyRegistry } from "../../../../src/platform/signing.js";
 import { transportFailure } from "../../../../src/platform/transport.js";
@@ -119,9 +120,11 @@ export default {
 
     if (url.pathname === "/version") {
       const { keyIds } = keyRegistryFrom(env.SIGNING_PUBLIC_KEYS);
-      return Response.json({ deployable: env.HOST_ID, isolation: env.ISOLATION_CLASS, wired: true, capabilities: ["email.send"], signingKeys: keyIds, sendMode: env.SEND_MODE });
+      return Response.json({ deployable: env.HOST_ID, isolation: env.ISOLATION_CLASS, wired: true, capabilities: capabilityNamesOf(email.descriptor), signingKeys: keyIds, sendMode: env.SEND_MODE });
     }
     if (url.pathname === "/health") return Response.json({ ok: true, wired: true });
+    // Agent Registry (SEVERKA.md item 4): the descriptor's own declared endpoint (endpoints.capabilities), read-only, no live Router needed.
+    if (url.pathname === "/capabilities") return Response.json({ deployable: env.HOST_ID, capabilities: catalogOf(email.descriptor) });
 
     if (url.pathname === "/dispatch" && request.method === "POST") {
       const t0 = Date.now();

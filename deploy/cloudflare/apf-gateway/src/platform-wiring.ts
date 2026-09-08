@@ -19,7 +19,7 @@ import { CredentialResolver } from "../../../../src/platform/credentials.js";
 import { ExecutorHost } from "../../../../src/platform/executor-host.js";
 import { Gateway, IdentityProvider } from "../../../../src/platform/gateway.js";
 import { policyFor } from "../../../../src/platform/policy.js";
-import { capabilityNamesOf } from "../../../../src/platform/registry.js";
+import { capabilityNamesOf, catalogOf, type CapabilityRecord } from "../../../../src/platform/registry.js";
 import { Router } from "../../../../src/platform/router.js";
 import { KeyRegistry, Signer } from "../../../../src/platform/signing.js";
 import { InProcessTransport, RemoteHostTransport, type DispatchTransport, type ServiceBindingLike } from "../../../../src/platform/transport.js";
@@ -40,6 +40,11 @@ export const DOCUMENT_HOST_ORIGIN = "https://apf-document-host.internal";
 /** email.send is PRINCIPAL (its own credential domain, the Email Sending binding) — stays a genuine remote dispatch. */
 export const EMAIL_EXECUTOR_CAPABILITIES: readonly string[] = capabilityNamesOf(emailDescriptor);
 export const EMAIL_EXECUTOR_ORIGIN = "https://apf-email-executor.internal";
+
+/** Agent Registry (SEVERKA.md item 4): the gateway's own in-process catalog, for its `/capabilities` endpoint — no live Router round-trip needed, same reasoning as GATEWAY_CAPABILITIES above. */
+export function gatewayCatalog(): CapabilityRecord[] {
+  return [...catalogOf(classifier.descriptor), ...catalogOf(validator.descriptor), ...catalogOf(ingest.descriptor)];
+}
 
 export interface ModelChoice {
   key: string;

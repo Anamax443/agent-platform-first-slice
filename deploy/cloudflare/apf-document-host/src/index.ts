@@ -26,6 +26,7 @@ import type { HandlerOutcome } from "../../../../src/platform/types.js";
 import type { IdempotencyRecord, IdempotencyStore } from "../../../../src/platform/idempotency.js";
 import { newId } from "../../../../src/platform/ids.js";
 import { policyFor } from "../../../../src/platform/policy.js";
+import { capabilityNamesOf, catalogOf } from "../../../../src/platform/registry.js";
 import { Router } from "../../../../src/platform/router.js";
 import { KeyRegistry } from "../../../../src/platform/signing.js";
 import { transportFailure } from "../../../../src/platform/transport.js";
@@ -197,9 +198,12 @@ export default {
 
     if (url.pathname === "/version") {
       const { keyIds } = keyRegistryFrom(env.SIGNING_PUBLIC_KEYS);
-      return Response.json({ deployable: env.HOST_ID, isolation: env.ISOLATION_CLASS, wired: true, capabilities: ["document.stamp", "document.archive"], signingKeys: keyIds, secrets: { dms: Boolean(env.DMS_SECRET), archive: Boolean(env.ARCHIVE_SECRET) } });
+      return Response.json({ deployable: env.HOST_ID, isolation: env.ISOLATION_CLASS, wired: true, capabilities: capabilityNamesOf(host.descriptor), signingKeys: keyIds, secrets: { dms: Boolean(env.DMS_SECRET), archive: Boolean(env.ARCHIVE_SECRET) } });
     }
     if (url.pathname === "/health") return Response.json({ ok: true, wired: true });
+    // Agent Registry (SEVERKA.md item 4): the descriptor's own declared endpoint (endpoints.capabilities), read-only,
+    // no live Router needed — document.stamp/document.archive share this one descriptor (one deployable, two capabilities).
+    if (url.pathname === "/capabilities") return Response.json({ deployable: env.HOST_ID, capabilities: catalogOf(host.descriptor) });
 
     if (url.pathname === "/dispatch" && request.method === "POST") {
       const t0 = Date.now();

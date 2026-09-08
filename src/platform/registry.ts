@@ -3,6 +3,7 @@
 // authorization — Router.route() alone decides what may execute (FOUNDATION-core §3.3), this only describes it.
 export interface CapabilityDescriptorLike {
   readonly name: string;
+  readonly preferredVersion?: string;
   readonly riskClass?: string;
   readonly sideEffects?: string;
   readonly isolationClass?: string;
@@ -57,4 +58,13 @@ export function catalogEntry(descriptor: ModuleDescriptorLike, capability: strin
     ...(c?.usesLlm !== undefined ? { usesLlm: c.usesLlm } : {}),
     ...(c?.conformanceTier ? { conformanceTier: c.conformanceTier } : {}),
   };
+}
+
+/**
+ * Every capability a descriptor declares, at its own preferredVersion — for a deployable's own read-only
+ * `/capabilities` endpoint (FOUNDATION descriptor.endpoints.capabilities), where no live Router instance is
+ * needed: the descriptor was already validated at Router.register() time, this just reads it again.
+ */
+export function catalogOf(descriptor: ModuleDescriptorLike): CapabilityRecord[] {
+  return descriptor.capabilities.map((c) => catalogEntry(descriptor, c.name, c.preferredVersion ?? "1"));
 }
