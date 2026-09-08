@@ -16,7 +16,7 @@ import type { WorkersAiBinding } from "../../../../src/adapters/workers-ai.js";
 import type { SecretsSource } from "../../../../src/installation.js";
 import type { AuditRecord } from "../../../../src/platform/audit.js";
 import { sha256Bytes, type Artifact } from "../../../../src/platform/artifacts.js";
-import { iso, SystemClock } from "../../../../src/platform/clock.js";
+import { iso, SystemClock, type Clock } from "../../../../src/platform/clock.js";
 import { platformError } from "../../../../src/platform/errors.js";
 import { newId } from "../../../../src/platform/ids.js";
 import { Orchestrator, type WorkflowDef } from "../../../../src/platform/orchestrator.js";
@@ -415,16 +415,35 @@ const farmRowOf = async (env: Env, workflowId: string, lastAt: string): Promise<
   const view = (await stub.view()) as InstanceView | null;
   if (!view) return { workflowId, purged: true, at: lastAt };
   const i = view.instance;
-  const originalName = view.artifacts.find((a) => !a.derivedFrom)?.name;
-  return { workflowId, workflow: i.workflow, workflowVersion: i.workflowVersion, tenantId: i.tenantId, actorId: i.actorId, status: i.status, createdAt: i.createdAt, updatedAt: i.updatedAt, steps: i.steps, ...(originalName ? { originalName } : {}) };
+  const original = view.artifacts.find((a) => !a.derivedFrom);
+  return {
+    workflowId,
+    workflow: i.workflow,
+    workflowVersion: i.workflowVersion,
+    tenantId: i.tenantId,
+    actorId: i.actorId,
+    status: i.status,
+    createdAt: i.createdAt,
+    updatedAt: i.updatedAt,
+    steps: i.steps,
+    ...(original?.name ? { originalName: original.name } : {}),
+    ...(original?.byteLength !== undefined ? { originalByteLength: original.byteLength } : {}),
+  };
 };
 
-/** The most recently active workflow ids (D1, cheap) — then each instance's real steps[] straight from its own Durable Object (the DO journal is the source of truth, not the audit relay). */
-const recentInstances = async (env: Env, limit = 15): Promise<FarmInstanceRow[]> => {
+/** "24h"/"7d"/"30d" -> ISO cutoff from the given clock; anything else (missing, "all") -> no cutoff, full history. */
+const WINDOW_MS: Record<string, number> = { "24h": 24 * 60 * 60 * 1000, "7d": 7 * 24 * 60 * 60 * 1000, "30d": 30 * 24 * 60 * 60 * 1000 };
+export const windowSince = (window: string | null, clock: Clock): string | undefined => {
+  const ms = window ? WINDOW_MS[window] : undefined;
+  return ms === undefined ? undefined : iso(new Date(clock.now().getTime() - ms));
+};
+
+/** The most recently active workflow ids (D1, cheap) — then each instance's real steps[] straight from its own Durable Object (the DO journal is the source of truth, not the audit relay). Owner's request 2026-09-08: "kolik dokumentů a nebo časové okno" — both are just narrower reads over the same query, nothing else changes. */
+const recentInstances = async (env: Env, limit = 15, sinceIso?: string): Promise<FarmInstanceRow[]> => {
   await ensureD1Audit(env.AUDIT);
-  const rows = await env.AUDIT.prepare(`SELECT workflow_id, MAX(at) AS last_at FROM audit WHERE workflow_id IS NOT NULL GROUP BY workflow_id ORDER BY last_at DESC LIMIT ?`)
-    .bind(limit)
-    .all<{ workflow_id: string; last_at: string }>();
+  const sql = `SELECT workflow_id, MAX(at) AS last_at FROM audit WHERE workflow_id IS NOT NULL${sinceIso ? " AND at >= ?" : ""} GROUP BY workflow_id ORDER BY last_at DESC LIMIT ?`;
+  const stmt = sinceIso ? env.AUDIT.prepare(sql).bind(sinceIso, limit) : env.AUDIT.prepare(sql).bind(limit);
+  const rows = await stmt.all<{ workflow_id: string; last_at: string }>();
   return Promise.all(rows.results.map((r) => farmRowOf(env, r.workflow_id, r.last_at)));
 };
 
@@ -738,12 +757,15 @@ export default {
 
     // "Farmář" (owner's own word for it): one page, health of all five deployables + the most recent workflow instances.
     if (url.pathname === "/farm" && request.method === "GET") {
+      const rawLimit = Number(url.searchParams.get("limit"));
+      const instanceLimit = [15, 30, 50, 100, 200].includes(rawLimit) ? rawLimit : 15;
+      const instanceWindow = url.searchParams.get("window") ?? "";
       const [documentHost, emailExecutor, mailIngest, fakes, instances, log, inbox, stats] = await Promise.all([
         deployableInfo(env.DOCUMENT_HOST, "https://apf-document-host.internal"),
         deployableInfo(env.EMAIL_EXECUTOR, "https://apf-email-executor.internal"),
         deployableInfo(env.MAIL_INGEST, "https://apf-mail-ingest.internal"),
         deployableInfo(env.FAKES, FAKES_ORIGIN),
-        recentInstances(env, 15),
+        recentInstances(env, instanceLimit, windowSince(instanceWindow, new SystemClock())),
         auditLog(env, 50),
         inboxDetail(env),
         farmStats(env),
@@ -761,6 +783,8 @@ export default {
             { name: "apf-fakes", ...fakes },
           ],
           instances,
+          instanceLimit,
+          instanceWindow,
           auditLog: log,
           inbox,
           workflows: [...WORKFLOW_NAMES],

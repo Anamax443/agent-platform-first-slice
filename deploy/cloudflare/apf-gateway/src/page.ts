@@ -70,6 +70,7 @@ export type FarmInstanceRow =
       updatedAt: string;
       steps: Instance["steps"];
       originalName?: string;
+      originalByteLength?: number;
     };
 
 /** One row of the shared audit trail (D1 "audit" table), as-is — the "deník". */
@@ -88,6 +89,8 @@ export interface FarmModel {
   gatewaySigning: string;
   deployables: DeployableStatus[];
   instances: FarmInstanceRow[];
+  instanceLimit: number;
+  instanceWindow: string;
   auditLog: AuditLogRow[];
   inbox: { pending: InboxItem[]; failed: InboxItem[]; batchLimit: number };
   workflows: string[];
@@ -261,12 +264,16 @@ export function renderFarm(m: FarmModel): string {
     groupHead("Návrh — zatím nepostaveno, jen v docs/NAVRHOVY-LIST-farma.md") +
     PLANNED_DEPLOYABLES.map(plannedRow).join("");
 
+  // Owner's request 2026-09-08: what carries the link belongs in column 1 (not buried mid-line), rows collapsed to a
+  // one-line summary by default, click to see the steps — a document block is evidence to check, not to always read in full.
   const instanceRows = m.instances
     .map((i) => {
-      if (i.purged) return `<tr class="group-head"><td colspan="5"><a href="/workflow/${esc(i.workflowId)}">${esc(i.workflowId)}</a> — smazáno (PURGED), poslední audit ${esc(i.at)}</td></tr>`;
-      const head = `<tr class="group-head"><td colspan="5">${i.originalName ? `<b>${esc(i.originalName)}</b> · ` : ""}<a href="/workflow/${esc(i.workflowId)}">${esc(i.workflowId)}</a> · ${esc(i.workflow)}/v${esc(i.workflowVersion)} · tenant ${esc(i.tenantId)} · aktér ${esc(i.actorId)} · ${stateBadge(i.status)} · založeno ${esc(i.createdAt)}, změněno ${esc(i.updatedAt)}</td></tr>`;
+      if (i.purged) return `<tr class="group-head"><td><a href="/workflow/${esc(i.workflowId)}"><code>${esc(i.workflowId)}</code></a></td><td colspan="4" class="dim">smazáno (PURGED), poslední audit ${esc(i.at)}</td></tr>`;
+      const size = i.originalByteLength !== undefined ? ` · ${kb(i.originalByteLength)}` : "";
+      const linkText = i.originalName ? esc(i.originalName) : `<code>${esc(i.workflowId)}</code>`;
+      const head = `<tr class="group-head gh-toggle" data-wf="${esc(i.workflowId)}" aria-expanded="false"><td><span class="gh-chevron" aria-hidden="true">▸</span> <a href="/workflow/${esc(i.workflowId)}">${linkText}</a>${i.originalName ? ` <small class="dim"><code>${esc(i.workflowId)}</code></small>` : ""}</td><td colspan="4" class="dim">${esc(i.workflow)}/v${esc(i.workflowVersion)}${size} · tenant ${esc(i.tenantId)} · aktér ${esc(i.actorId)} · ${stateBadge(i.status)} · založeno ${esc(i.createdAt)}, změněno ${esc(i.updatedAt)}</td></tr>`;
       const steps = i.steps
-        .map((s) => `<tr><td>${esc(s.stepId)}</td><td>${esc(s.capability)}/v${esc(s.capabilityVersion)}</td>${stateTd(s.status)}<td>${s.attempt} / ${s.logicalAttempt} <span class="dim">${esc(s.strategy)}</span></td><td class="wrap">${humanStepResult(s)}</td></tr>`)
+        .map((s) => `<tr class="step-row" data-wf="${esc(i.workflowId)}" hidden><td>${esc(s.stepId)}</td><td>${esc(s.capability)}/v${esc(s.capabilityVersion)}</td>${stateTd(s.status)}<td>${s.attempt} / ${s.logicalAttempt} <span class="dim">${esc(s.strategy)}</span></td><td class="wrap">${humanStepResult(s)}</td></tr>`)
         .join("");
       return head + steps;
     })
@@ -384,7 +391,22 @@ export function renderFarm(m: FarmModel): string {
 
     <div id="view-instance" hidden>
       <div class="p-panehead"><span>Poslední instance</span><span class="n">${m.instances.length}</span></div>
-      <div class="p-toolbar"><span class="meta">Pohled na dokument: každý zpracovaný dokument jako blok se všemi kroky (classify → validate → stamp) a jejich výsledkem</span></div>
+      <div class="p-toolbar"><span class="meta">Pohled na dokument: řádek se souborem a stavem, klikni pro rozbalení kroků (classify → validate → stamp)</span></div>
+      <form class="p-toolbar" method="get" action="/farm#instance">
+        <span class="meta">Zobrazit</span>
+        <select name="limit" onchange="this.form.submit()">${[15, 30, 50, 100, 200].map((n) => `<option value="${n}"${n === m.instanceLimit ? " selected" : ""}>${n}</option>`).join("")}</select>
+        <span class="meta">dokumentů</span>
+        <span class="vsep"></span>
+        <select name="window" onchange="this.form.submit()">${[
+          ["", "celá historie"],
+          ["24h", "posledních 24 h"],
+          ["7d", "posledních 7 dní"],
+          ["30d", "posledních 30 dní"],
+        ]
+          .map(([v, label]) => `<option value="${v}"${v === m.instanceWindow ? " selected" : ""}>${esc(label as string)}</option>`)
+          .join("")}</select>
+        <noscript><button class="p-btn" type="submit">Použít</button></noscript>
+      </form>
       <div class="p-gridwrap"><table class="p-table">
         <thead><tr><th>Krok</th><th>Capability</th><th class="c-state">Stav</th><th>Pokus</th><th>Výsledek</th></tr></thead>
         <tbody>${m.instances.length ? instanceRows : '<tr><td colspan="5" class="dim">zatím žádná</td></tr>'}</tbody>
@@ -449,6 +471,10 @@ html,body{height:100%;margin:0}
 .ui .p-titlebtn:hover{background:var(--hover);color:var(--text)}
 .ui .p-table tbody td.wrap{white-space:normal;overflow:visible;text-overflow:clip;word-break:break-word;line-height:1.4;padding-top:8px;padding-bottom:8px}
 .ui .p-table:has(tr.group-head) tbody tr:not(.group-head) td:first-child{padding-left:1.5rem}
+.ui .gh-toggle{cursor:pointer}
+.ui .gh-toggle:hover td{filter:brightness(0.97)}
+.ui .gh-chevron{display:inline-block;width:.9em;transition:transform .15s}
+.ui .gh-toggle[aria-expanded="true"] .gh-chevron{transform:rotate(90deg)}
 .ui details{margin-top:3px}
 .ui details summary{cursor:pointer;font-size:.85em;color:var(--dim)}
 .ui details summary:hover{color:var(--text)}
@@ -504,6 +530,16 @@ ${BANK_SAAS_MODERN_CSS}
     if (clock) clock.textContent = new Date().toLocaleTimeString("cs-CZ");
   }
   if (clock) { tick(); setInterval(tick, 1000); }
+
+  document.querySelectorAll(".gh-toggle").forEach(function (row) {
+    row.addEventListener("click", function (e) {
+      if (e.target.closest("a")) return;
+      var wf = row.getAttribute("data-wf");
+      var open = row.getAttribute("aria-expanded") === "true";
+      row.setAttribute("aria-expanded", open ? "false" : "true");
+      document.querySelectorAll('tr.step-row[data-wf="' + wf + '"]').forEach(function (r) { r.hidden = open; });
+    });
+  });
 })();
 </script>
 </body></html>`;
