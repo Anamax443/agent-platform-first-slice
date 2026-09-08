@@ -20,6 +20,8 @@
     "MAX_MAILS_PER_DAY": "50",
     "SIGNING_PUBLIC_KEYS": "{}"
   }
+  // DEFAULT_NOTIFY_REF (who mail-intake.v2's notify step tells once processing finishes, an
+  // email.send.v1.policy.json recipientAllowlist ref) is an installation value: config/<installation>/farm.json.
   // No secrets: the ingest host resolves no credential (its CredentialResolver table is empty by design).
   // Email Routing rule is created outside this file: `wrangler email routing rules` or the dashboard.
 }

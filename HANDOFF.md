@@ -2,6 +2,24 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-08 (57) — SEVERKA bod 3, první polovina: `mail.ingest` dispatchovatelný, `apf-mail-ingest` skutečně přijímá poštu
+
+**Kontext:** dokončení skeletonu `mail.ingest`/`email.send` (SEVERKA.md bod 3) — druhý reálný typ COW, první event-driven případ. Explorace potvrdila přesnou mezeru: core-platform handlery jsou hotové (stejná zralost jako `document.stamp`), ale gateway na ně dodnes neměla ŽÁDNOU dispatch cestu (`GATEWAY_CAPABILITIES`/`DOCUMENT_HOST_CAPABILITIES` je vůbec nezmiňovaly) a oba Cloudflare deployables byly skutečné skeletony (`wired: false`, `email()` handler vždy odmítal).
+
+**Rozsah potvrzen s vlastníkem:** jen dokončit skeleton (ne rovnou stavět admission pipeline kolem toho). `mail.ingest` běží **in-process na gatewayi** (žádný credential k izolaci, jen zápis do vlastního tenant artifact store — stejný důvod jako `document.classify`/`document.validate`), `email.send` zůstává **remote dispatch** na `apf-email-executor` (PRINCIPAL, vlastní credential doména) — druhá polovina, samostatný krok.
+
+**`deploy/cloudflare/apf-gateway/src/platform-wiring.ts`:** `mail.ingest` přidán do `GATEWAY_CAPABILITIES`, registrován přes vlastní `ExecutorHost`+`ingestCredentials` (prázdná tabulka, stejně jako `src/slice.ts`) — dostává STEJNÝ allowlist/context/idempotency řetězec jako každá jiná write capabilita, ne holý Handler. Zároveň přidána `EMAIL_EXECUTOR_CAPABILITIES`/`emailExecutor` wiring volba (RemoteHostTransport, zrcadlí `documentHost`) — připraveno pro druhou polovinu.
+
+**`deploy/cloudflare/apf-gateway/src/index.ts`:** nová `mailIntake()` RPC metoda na `WorkflowInstance` (zrcadlí `intake()`, ale bez original/extraction — `mail.ingest` jako krok 1 workflow definice sám vytváří artefakt z `rawMail`), nová `startMailIntake()` (KILL_SWITCH/model/velikost kontroly, stejný tvar jako `startIntake()`), nová interní route `POST /mail-intake` (volá jen `apf-mail-ingest` přes `GATEWAY` binding, ne veřejný formulář — tenant se řeší server-side přes existující `intakeTenant()`).
+
+**Nález cestou (ARCH-DEP-001 chytilo skutečnou chybu):** první verze natvrdo psala `"ops-mailbox"` do `index.ts` jako výchozí `notifyRef` — lint správně odmítl (installation hodnota v kódu). Opraveno: `notifyRef` je teď povinné pole, dodává ho volající (`apf-mail-ingest`); jeho výchozí hodnota `DEFAULT_NOTIFY_REF` žije v `config/farm-bass443/farm.json` (stejný vzor jako `EMAIL_FROM`/`INTAKE_ADDRESS` — base `wrangler.jsonc` var vůbec nedeklaruje, jen komentář kam patří).
+
+**`deploy/cloudflare/apf-mail-ingest/src/index.ts`:** skutečný `email()` handler — `message.rawSize` kontrola proti `MAX_RAW_BYTES` ještě před čtením (bounce beze čtení, když je moc velká), `new Response(message.raw).text()` na vybufferování, POST na gatewayovu novou `/mail-intake` route, `setReject()` na jakoukoli chybu (nikdy tiché zahození). `/version`/`/health` teď hlásí `wired: true`.
+
+**Otevřeno, nezakrýváno:** `MAX_MAILS_PER_DAY` je deklarovaná, ale nevynucená — skutečný denní rate limit potřebuje durable stav (KV/DO), mimo rozsah tohohle kroku, zapsáno jako známá mezera, ne mlčky přeskočeno.
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare/tsconfig.json`), 233 testů, arch, farm:check. **Nenasazeno zatím** — `email.send`/`apf-email-executor` (druhá polovina) a `self-test.ts` rozšíření následují jako další celek, pak společné nasazení + živé ověření.
+
 ## 2026-09-08 (56) — Nález (55) vysvětlen: `document.archive`'s `damaged-hash-mismatch` je objem/pořadí-závislý, ne bug v `resourceTenant()`
 
 **Vlastníkovo rozhodnutí:** dořešit otevřený nález z (55) evidencí, ne odhadem, bez ohledu na širší diskuzi o pořadí prací (Admission Gate zůstává v pořadí SEVERKA.md beze změny — bod 3, `mail.ingest`/`email.send`, je další skutečná implementace).

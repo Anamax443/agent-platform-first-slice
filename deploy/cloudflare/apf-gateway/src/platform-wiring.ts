@@ -8,10 +8,13 @@ import type { RegistryAdapter } from "../../../../src/adapters/registry.js";
 import { WorkersAiAdapter, type WorkersAiBinding } from "../../../../src/adapters/workers-ai.js";
 import * as classifier from "../../../../src/components/document-classifier/handler.js";
 import * as validator from "../../../../src/components/document-validator/handler.js";
-import { modelTable, type Installation, type SecretsSource } from "../../../../src/installation.js";
+import * as ingest from "../../../../src/components/mail-ingest/handler.js";
+import { credentialTable, modelTable, type Installation, type SecretsSource } from "../../../../src/installation.js";
 import type { ArtifactWriter } from "../../../../src/platform/artifacts.js";
 import type { AuditTrail } from "../../../../src/platform/audit.js";
 import { iso, type Clock } from "../../../../src/platform/clock.js";
+import { CredentialResolver } from "../../../../src/platform/credentials.js";
+import { ExecutorHost } from "../../../../src/platform/executor-host.js";
 import { Gateway, IdentityProvider } from "../../../../src/platform/gateway.js";
 import { policyFor } from "../../../../src/platform/policy.js";
 import { Router } from "../../../../src/platform/router.js";
@@ -20,11 +23,18 @@ import { InProcessTransport, RemoteHostTransport, type DispatchTransport, type S
 import type { MessageEnvelope, ResultEnvelope } from "../../../../src/platform/types.js";
 
 export const CLASSIFY = "document.classify";
-/** Capabilities the gateway itself provides; everything else is a host and stays "not wired" until its unit lands. */
-export const GATEWAY_CAPABILITIES: readonly string[] = [CLASSIFY, "document.validate"];
+/**
+ * Capabilities the gateway itself provides; everything else is a host and stays "not wired" until its unit lands.
+ * `mail.ingest` runs here too (not as a remote dispatch): it holds no credential to isolate and writes no external
+ * system, only its own tenant's artifact store — the same reasoning that keeps document.classify/validate in-process.
+ */
+export const GATEWAY_CAPABILITIES: readonly string[] = [CLASSIFY, "document.validate", "mail.ingest"];
 /** Capabilities apf-document-host serves over a signed dispatch across a service binding (celek D). */
 export const DOCUMENT_HOST_CAPABILITIES: readonly string[] = ["document.stamp", "document.archive"];
 export const DOCUMENT_HOST_ORIGIN = "https://apf-document-host.internal";
+/** email.send is PRINCIPAL (its own credential domain, the Email Sending binding) — stays a genuine remote dispatch. */
+export const EMAIL_EXECUTOR_CAPABILITIES: readonly string[] = ["email.send"];
+export const EMAIL_EXECUTOR_ORIGIN = "https://apf-email-executor.internal";
 
 export interface ModelChoice {
   key: string;
@@ -89,6 +99,8 @@ export interface WiringOptions {
   registry: RegistryAdapter;
   /** apf-document-host's service binding (celek D2). Absent = document.stamp/archive fall through to notWired, same as today. */
   documentHost?: ServiceBindingLike;
+  /** apf-email-executor's service binding. Absent = email.send falls through to notWired, same as today. */
+  emailExecutor?: ServiceBindingLike;
   /** Result for a capability no deployable serves yet. */
   notWired: (message: MessageEnvelope, actorId: string) => Promise<ResultEnvelope>;
   modelTimeoutMs?: number;
@@ -144,9 +156,21 @@ export function wirePlatform(o: WiringOptions): Wiring {
       },
     ],
   });
+  // No credential domain: mail.ingest never resolves a secret, only writes into its own tenant's artifact store.
+  // Still runs through ExecutorHost (not a bare Handler) for the same allowlist/context/idempotency chain every
+  // write capability gets — matches src/slice.ts's ingestHost exactly, just in-process here instead of a fresh test slice.
+  const ingestCredentials = new CredentialResolver(credentialTable(o.installation, o.secrets, { [ingest.INGEST_HANDLER_ID]: [] }), o.audit);
+  const ingestHost = new ExecutorHost({ hostId: ingest.descriptor.module, clock: o.clock, audit: o.audit, credentials: ingestCredentials });
+  ingestHost.register(ingest.createIngestHandler({ artifacts: o.artifacts, clock: o.clock }));
+  router.register({
+    descriptor: ingest.descriptor as never,
+    policies: { "mail.ingest": policy("mail.ingest") },
+    capabilities: [{ name: "mail.ingest", version: "1", inputSchema: ingest.inputSchema, handler: ingestHost.handlerFor("mail.ingest") }],
+  });
 
   const inProcess = new InProcessTransport(gateway, router);
   const documentHost = o.documentHost ? new RemoteHostTransport(gateway, o.documentHost, DOCUMENT_HOST_ORIGIN) : undefined;
+  const emailExecutor = o.emailExecutor ? new RemoteHostTransport(gateway, o.emailExecutor, EMAIL_EXECUTOR_ORIGIN) : undefined;
   const transport: DispatchTransport = {
     dispatch: (message, actorId) => {
       if (GATEWAY_CAPABILITIES.includes(message.capability)) {
@@ -156,6 +180,10 @@ export function wirePlatform(o: WiringOptions): Wiring {
       if (documentHost && DOCUMENT_HOST_CAPABILITIES.includes(message.capability)) {
         console.log(`[apf-gateway] route ${message.capability} -> apf-document-host correlationId=${message.correlationId}`);
         return documentHost.dispatch(message, actorId);
+      }
+      if (emailExecutor && EMAIL_EXECUTOR_CAPABILITIES.includes(message.capability)) {
+        console.log(`[apf-gateway] route ${message.capability} -> apf-email-executor correlationId=${message.correlationId}`);
+        return emailExecutor.dispatch(message, actorId);
       }
       console.log(`[apf-gateway] route ${message.capability} -> notWired correlationId=${message.correlationId}`);
       return o.notWired(message, actorId);

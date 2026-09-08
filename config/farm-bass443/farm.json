@@ -12,7 +12,7 @@
   "apf-email-executor": {
     "vars": { "EMAIL_FROM": "apf-notify@maxferit.cz", "EMAIL_FROM_NAME": "agent-platform-farm" }
   },
-  "apf-mail-ingest": { "vars": { "INTAKE_ADDRESS": "apf-intake@maxferit.cz" } },
+  "apf-mail-ingest": { "vars": { "INTAKE_ADDRESS": "apf-intake@maxferit.cz", "DEFAULT_NOTIFY_REF": "ops-mailbox" } },
   "apf-fakes": {
     "kv_namespaces": [
       { "binding": "CHAOS", "id": "1a8340c1ec8140728bd99472c87c875f" },

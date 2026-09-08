@@ -119,6 +119,7 @@ const deployableInfo = async (fetcher: Fetcher, origin: string): Promise<{ ok: b
 
 const MAX_TEXT_CHARS = 1_000_000;
 const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
+const MAX_MAIL_CHARS = 1_000_000;
 const EXTRACTOR = "workers-ai:toMarkdown";
 const EXTRACT_CAPABILITY = "document.extract";
 
@@ -143,6 +144,15 @@ interface IntakeInput {
   extraction?: Extraction;
   /** Key of one of the installation's models (form choice); absent = the installation's default. */
   model?: string;
+  stampText?: string;
+}
+
+interface MailIntakeInput {
+  workflowId: string;
+  tenantId: string;
+  rawMail: string;
+  receivedFrom: string;
+  notifyRef: string;
   stampText?: string;
 }
 
@@ -208,6 +218,7 @@ export class WorkflowInstance extends DurableObject<Env> {
       ai: this.env.AI as unknown as WorkersAiBinding,
       registry: new HttpRegistryAdapter(this.env.FAKES),
       documentHost: this.env.DOCUMENT_HOST,
+      emailExecutor: this.env.EMAIL_EXECUTOR,
       artifacts: this.artifacts,
       audit: this.audit,
       clock: this.clock,
@@ -268,6 +279,31 @@ export class WorkflowInstance extends DurableObject<Env> {
     this.recordClassifyResult(input.workflowId, input.tenantId, inst.correlationId);
     this.ctx.waitUntil(this.copyOut());
     this.ctx.waitUntil(this.visualStampIfApplicable(original, input.workflowId));
+    return this.view() as InstanceView;
+  }
+
+  /**
+   * mail-intake's step 1 (mail.ingest) creates the artifact itself — unlike intake(), there is no original to
+   * put() upfront here (SEVERKA.md item 3: second real write-type, first event-driven case).
+   */
+  async mailIntake(input: MailIntakeInput): Promise<InstanceView> {
+    if (this.journal.list().length > 0) throw new Error(`instance ${input.workflowId} already exists`);
+    const wiring = this.wiring();
+    const orchestrator = this.orchestratorFor(workflowDef("mail-intake"), wiring);
+    const inst = orchestrator.start(
+      { tenantId: input.tenantId, rawMail: input.rawMail, receivedFrom: input.receivedFrom, notifyRef: input.notifyRef, ...(input.stampText ? { stampText: input.stampText } : {}) },
+      undefined,
+      input.workflowId,
+    );
+    this.audit.append({
+      kind: "state",
+      workflowId: inst.workflowId,
+      correlationId: inst.correlationId,
+      tenantId: inst.tenantId,
+      details: { status: "RUNNING", receivedFrom: input.receivedFrom, signing: wiring.signing, keyId: wiring.keyId },
+    });
+    await orchestrator.run(inst.workflowId);
+    this.ctx.waitUntil(this.copyOut());
     return this.view() as InstanceView;
   }
 
@@ -662,6 +698,40 @@ async function startIntake(env: Env, req: IntakeRequest): Promise<IntakeOutcome>
   return { ok: true, workflowId };
 }
 
+interface MailIntakeRequest {
+  rawMail: string;
+  receivedFrom: string;
+  /** Who to notify once processing finishes (recipientAllowlist ref) — an installation value, supplied by the
+   * caller (apf-mail-ingest's own DEFAULT_NOTIFY_REF var), never a literal here (ARCH-DEP-001). */
+  notifyRef: string;
+}
+type MailIntakeOutcome = { ok: true; workflowId: string } | { ok: false; code: string; message: string; detail?: Record<string, unknown> };
+
+/**
+ * The mail-intake equivalent of startIntake(): tenant resolved server-side (never trusted from the caller),
+ * only apf-mail-ingest ever calls this (POST /mail-intake, not a public form) — SEVERKA.md item 3.
+ */
+async function startMailIntake(env: Env, req: MailIntakeRequest): Promise<MailIntakeOutcome> {
+  if (env.KILL_SWITCH === "true") return { ok: false, code: "KILL_SWITCH", message: "Farma je vypnutá (KILL_SWITCH)." };
+  const models = modelsOf(env);
+  if ("error" in models) return { ok: false, code: "NO_MODEL", message: "Instalace nemá použitelný výchozí model; tok se nespustí (nikdy bez modelu).", detail: { error: models.error } };
+  if (!req.rawMail.trim()) return { ok: false, code: "EMPTY_MAIL", message: "Prázdná zpráva." };
+  if (req.rawMail.length > MAX_MAIL_CHARS) return { ok: false, code: "MAIL_TOO_LARGE", message: "Zpráva je moc velká.", detail: { max: MAX_MAIL_CHARS } };
+
+  const workflowId = newId("wf");
+  console.log(`[apf-gateway] mail-intake start workflowId=${workflowId} from=${req.receivedFrom}`);
+  const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(workflowId));
+  const t0 = Date.now();
+  try {
+    await stub.mailIntake({ workflowId, tenantId: intakeTenant(), rawMail: req.rawMail, receivedFrom: req.receivedFrom, notifyRef: req.notifyRef });
+  } catch (e) {
+    console.error(`[apf-gateway] mail-intake wiring threw workflowId=${workflowId} (${Date.now() - t0}ms): ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
+    return { ok: false, code: "WIRING_FAILED", message: "Zapojení platformy v objektu instance selhalo (fail-closed).", detail: { workflowId, error: String(e) } };
+  }
+  console.log(`[apf-gateway] mail-intake done workflowId=${workflowId} (${Date.now() - t0}ms)`);
+  return { ok: true, workflowId };
+}
+
 const INTAKE_ERROR_STATUS: Record<string, number> = {
   KILL_SWITCH: 503,
   UNKNOWN_WORKFLOW: 400,
@@ -673,6 +743,8 @@ const INTAKE_ERROR_STATUS: Record<string, number> = {
   EXTRACTION_EMPTY: 422,
   EMPTY_TEXT: 400,
   WIRING_FAILED: 500,
+  EMPTY_MAIL: 400,
+  MAIL_TOO_LARGE: 413,
 };
 const INTAKE_ERROR_TITLE: Record<string, string> = {
   KILL_SWITCH: "Farma je vypnutá",
@@ -906,6 +978,15 @@ export default {
       const result = await startIntake(env, { workflow, tenantId, receivedFrom: from, modelKey: modelKey || undefined, stampText: stampText || undefined, content });
       if (!result.ok) return html(renderError(INTAKE_ERROR_TITLE[result.code] ?? result.code, result.message, { ...(result.detail ?? {}) }), INTAKE_ERROR_STATUS[result.code] ?? 500);
       return Response.redirect(new URL(`/workflow/${result.workflowId}`, url).toString(), 303);
+    }
+
+    // Internal: only apf-mail-ingest's email() handler ever calls this, over the GATEWAY/MAIL_INGEST service
+    // bindings — not a public form like /intake. Tenant is resolved server-side, never trusted from the caller.
+    if (url.pathname === "/mail-intake" && request.method === "POST") {
+      const body = (await request.json().catch(() => undefined)) as Partial<MailIntakeRequest> | undefined;
+      if (!body?.rawMail || !body.receivedFrom || !body.notifyRef) return Response.json({ ok: false, code: "BAD_REQUEST", message: "expected { rawMail, receivedFrom, notifyRef }" }, { status: 400 });
+      const result = await startMailIntake(env, { rawMail: body.rawMail, receivedFrom: body.receivedFrom, notifyRef: body.notifyRef });
+      return Response.json(result, { status: result.ok ? 200 : (INTAKE_ERROR_STATUS[result.code] ?? 500) });
     }
 
     const purge = /^\/workflow\/(wf-[A-Za-z0-9]+)\/purge$/.exec(url.pathname);
