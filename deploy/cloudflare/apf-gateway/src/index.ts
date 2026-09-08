@@ -23,8 +23,9 @@ import { Orchestrator, type WorkflowDef } from "../../../../src/platform/orchest
 import { ReviewService } from "../../../../src/platform/review.js";
 import type { MessageEnvelope, ResultEnvelope } from "../../../../src/platform/types.js";
 import { WORKFLOW_NAMES, workflowDef } from "../../../../src/platform/workflow.js";
-import { renderError, renderFarm, renderHome, renderInstance, type AuditLogRow, type FarmInstanceRow, type FarmStats, type InboxItem, type InstanceView, type ModelsInfo, type Wired } from "./page.js";
+import { renderError, renderFarm, renderHome, renderInstance, renderSelfTest, type AuditLogRow, type FarmInstanceRow, type FarmStats, type InboxItem, type InstanceView, type ModelsInfo, type SelfTestRow, type Wired } from "./page.js";
 import { describeModels, wirePlatform, type Wiring } from "./platform-wiring.js";
+import { runSelfTest } from "./self-test.js";
 import { D1_AUDIT_DDL, DDL, SqliteArtifacts, SqliteAudit, SqliteJournal } from "./store.js";
 import { visuallyStamp } from "./visual-stamp.js";
 
@@ -317,6 +318,22 @@ export class WorkflowInstance extends DurableObject<Env> {
     } catch (e) {
       console.error(`[apf-gateway] visual stamp failed workflowId=${workflowId}: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
     }
+  }
+
+  /**
+   * Live self-test (owner's request 2026-09-08): runs document.classify + document.validate's conformance fixtures
+   * against this Worker's real wiring. Deliberately bypasses intake()/orchestratorFor() — a single capability call
+   * via wiring.transport.dispatch(), the same primitive the orchestrator itself uses per step, no journal entry, no
+   * workflow instance created (this DO's own "self-test" identity never shows up in "Poslední instance").
+   */
+  async selfTest(): Promise<SelfTestRow[]> {
+    return runSelfTest({
+      transport: this.wiring().transport,
+      artifacts: this.artifacts,
+      clock: this.clock,
+      defaultActor: installation.profile.roles.orchestrator,
+      deadlineMs: 60_000,
+    });
   }
 
   view(): InstanceView | null {
@@ -795,6 +812,14 @@ export default {
           stats,
         }),
       );
+    }
+
+    // Live self-test (owner's request 2026-09-08): a dedicated, fixed-name instance so it never pollutes "Poslední
+    // instance" or clashes with a real document's workflowId; purgeable like any instance if its artifact store grows.
+    if (url.pathname === "/farm/self-test" && request.method === "POST") {
+      const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName("self-test"));
+      const rows = (await stub.selfTest()) as SelfTestRow[];
+      return html(renderSelfTest(rows));
     }
 
     // Upload straight into the R2 inbox from the Farmář page (owner's request, 2026-09-07: "potřebuji to u
