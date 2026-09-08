@@ -2,6 +2,24 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-08 (52) — Pushnuto a živě ověřeno na farmě: Human Review decision cesta doopravdy funguje na `farm-bass443`
+
+**Pokyn vlastníka:** „pushnout a udělat živé ověření na farmě" — poslední otevřený bod z (50)/(51).
+
+**Push:** `42d6ee7` (oprava z (50) + regresní test z (51)) na `origin/main`. Beze změn v deployed kódu oproti (50) — `SliceOptions.reviewStore` z (51) je jen testovací harness, `apf-gateway` už opravu nesla od (50), jen nikdy nebyla nasazená.
+
+**Nasazení:** `wrangler whoami` ověřen (`bass443@gmail.com`, účet `a37a36270aa2db7382f62912ba5a0130`), `node scripts/farm-deploy.mjs farm-bass443 --dry-run` čistý, pak ostrý běh — všech pět Workerů (`apf-fakes` → `apf-document-host` → `apf-email-executor` → `apf-mail-ingest` → `apf-gateway`) nahráno bez chyby. `/version` přes službový token (`CF-Access-Client-Id/Secret` z lokálního `.env`) potvrdil `"gitSha":"42d6ee7"`.
+
+**Živé ověření přesně toho, co (50) opravilo (ne jen že se to nasadilo):**
+1. `POST /intake` s textem newsletteru (fixtura `canonical-other-newsletter`) → `303` na novou instanci `wf-mtt2e5zg001a05ec7`.
+2. `GET /workflow/:id.json` → `status: WAITING`, `waiting.reason: REVIEW`, `reviewTaskId: rev-mtt2e6s400g7e045d` (klasifikace `OTHER`, čeká na review stejně jako v testech).
+3. `POST /workflow/:id/review/decide` s `decision=REJECT` → `303` (ne `400` z chybové větve `decideReview()`) — **tohle je přesně cesta, co na farmě před (50) neexistovala vůbec** (žádný `/review` handler, žádné volání `.decide(`).
+4. `GET /workflow/:id.json` znovu → top-level `status: FAILED`, `waiting` pryč — instance se skutečně dokončila přes `resumeAfterReview()`, ne uvízla.
+
+Testovací instance `wf-mtt2e5zg001a05ec7` ponechána na farmě jako doklad ověření (neobsahuje nic citlivého, jen fixturový newsletter text) — lze smazat přes `/purge`, až nebude potřeba jako evidence.
+
+**Brány beze změny od (51):** typecheck, 233 testů, arch, farm:check — všechny zelené před nasazením.
+
 ## 2026-09-08 (51) — Dopsán regresní test z (50): RES-REVIEW-001, `SliceOptions.reviewStore`
 
 **Pokračování přerušené práce z (50)** (`6dea224`, „pokračuj"): dopsáno přesně to, co bylo rozpracované — regresní test dokazující, že rozhodnutí přes samostatně sestavenou `ReviewService` instanci sdílející stejné úložiště funguje, vzorem `RES-CRASH-001`.
