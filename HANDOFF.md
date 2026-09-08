@@ -2,6 +2,20 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-08 (56) — Nález (55) vysvětlen: `document.archive`'s `damaged-hash-mismatch` je objem/pořadí-závislý, ne bug v `resourceTenant()`
+
+**Vlastníkovo rozhodnutí:** dořešit otevřený nález z (55) evidencí, ne odhadem, bez ohledu na širší diskuzi o pořadí prací (Admission Gate zůstává v pořadí SEVERKA.md beze změny — bod 3, `mail.ingest`/`email.send`, je další skutečná implementace).
+
+**Diagnostický test:** `deploy/cloudflare/apf-gateway/src/self-test.ts`'s `SUITES` pole dočasně přeuspořádáno — `document.archive` přesunuto **první** (před `document.classify`/`document.validate`/`document.stamp`), nasazeno, spuštěno 4× živě. **Výsledek: `damaged-hash-mismatch` (i všechny ostatní archive fixtury) prošly čistě ve všech 4 bězích**, žádný `RESOURCE_TENANT_UNRESOLVED`. Po testu vráceno zpět na původní pořadí (`git diff` prázdný), znovu nasazeno — žádná trvalá změna kódu.
+
+**Závěr:** nález z (55) **není bug v `resourceTenant()` ani v idempotency ledgeru** — je to objemově/pořadí-závislý jev specifický pro self-test samotný. `document.archive` v původním pořadí běží jako poslední sada (~20.–23. dispatch z ~30+ v jednom volání `stub.selfTest()`, každý s cross-Worker fetch-backem gateway↔document-host); v tomhle bodě něco (pravděpodobně Cloudflare limit na subrequesty nebo souběžná/vnořená Durable Object volání v rámci jednoho Worker invocation) způsobí, že `SingleArtifactStore` nedostane artefakt zpět, ačkoli existuje. Když archive běží první (minimální předchozí objem), jev zmizí — **potvrzeno, ne jen hypotéza**.
+
+**Proč to nikdy nechytí lokální `npm test`:** `tests/ctr.test.ts` staví pro každou fixturu čerstvý `createSlice()` — žádný kumulativní objem požadavků napříč desítkami fixtur v jednom volání, žádný skutečný cross-Worker network round-trip. Přesně ten typ nálezu, co live self-test má odhalit a lokální conformance suite strukturálně nemůže — potvrzuje hodnotu celku z (49), ne slabinu.
+
+**Nezasahováno do produkčního kódu** — `document.archive` v produkčním workflow neběží (jen `classify→validate→stamp`), takže tenhle limit dnes nikoho nepoškozuje. Pokud/až self-test poroste (víc capabilit, víc fixtur), stojí za zvážení jako budoucí položka: dávkovat `runSelfTest()` po menších skupinách (např. `ctx.waitUntil` mezi suitami, nebo limit souběžných cross-Worker volání) — zapsáno jako nápad, ne naplánováno.
+
+**Brány beze změny** (žádný trvalý diff): typecheck, 233 testů, arch, farm:check zelené jako v (54)/(55).
+
 ## 2026-09-08 (55) — Živé ověření (54) na farmě: `document.stamp` čistý, `document.archive` má otevřený, nevysvětlený nález
 
 **Nasazeno a ověřeno:** `farm-bass443` po (54), `/version` potvrdil `gitSha`. Živě ověřeno přes existující self-test (`/farm` → Kravičky → Spustit self-test), víc než deset opakování:
