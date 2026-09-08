@@ -2,6 +2,16 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-08 (58) — SEVERKA bod 3, druhá polovina: `apf-email-executor` skutečně odesílá (sandbox)
+
+**Kontext:** dokončení (57) — `email.send` je PRINCIPAL (vlastní credential doména, jediné write právo je Email Sending binding), takže na rozdíl od `mail.ingest` zůstává skutečným remote dispatchem, ne in-process. Struktura zrcadlí `apf-document-host`'s `/dispatch` (celek D2) téměř 1:1, jediný strukturní rozdíl: fetch-back artefaktu je tady **read-only** (`email.send` artefakt jen referencuje přes `params.artifactId`, nikdy neodvozuje) — nová `ReadOnlyArtifactStore` (jen `get()`, ne `derive()`/`put()`), ne kopie plného `SingleArtifactStore`.
+
+**`deploy/cloudflare/apf-email-executor/src/relay-audit.ts`** (nový, duplikát `apf-document-host`'s — stejná konvence, každý deployable soběstačný, ne sdílený balíček) a **`smtp-adapter.ts`** (nový): `CloudflareSmtpAdapter` nad nativním Email Sending bindingem (`env.EMAIL.send({to, from, subject, text})`, ověřeno proti `cloudflare-email-service` skillu, ne z paměti). **Zdokumentované omezení, ne skryté:** Cloudflare's nativní API nemá dotaz podle reference (žádné „už se poslalo clientRef X?"), takže `status()`/`read()` vrací vždy `UNKNOWN`/`undefined` — pád mezi „odesláno" a zápisem do lokálního idempotency ledgeru se nedá dořešit dotazem na skutečného poskytovatele (na rozdíl od `HttpDmsAdapter.status()` proti `apf-fakes`). Riziko je duplicitní nízko-rizikový notifikační e-mail, ne duplicitní finanční/dokumentový zápis. Postaveno, aby to prošlo typecheckem a bylo připravené, ale **`SEND_MODE` zůstává `"sandbox"`** — tahle větev se dnes nikde nespouští.
+
+**`deploy/cloudflare/apf-email-executor/src/index.ts`:** `/dispatch` handler — `RelayAudit` + `CredentialResolver` (fixní `SMTP_CREDENTIAL_VALUE = "smtp-secret"`, odpovídá `FakeSmtpAdapter`'s výchozí hodnotě; `CloudflareSmtpAdapter` credential ignoruje, binding sám je autorizace, „Secrets: none" je bod PRINCIPAL) + `ExecutorHost` + `email.createEmailSendHandler` + `Router` s `email.descriptor`/policy. `recipients: RecipientDirectory` čte `recipientAllowlist[tenantId][ref]` ze stejné policy jako `src/slice.ts`. `/version`/`/health` teď hlásí `wired: true`.
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare/tsconfig.json`), 233 testů, arch, farm:check. **Nenasazeno zatím** — `self-test.ts` rozšíření o `mail.ingest`/`email.send` (SUITES) následuje jako poslední krok před společným nasazením a živým ověřením obou capabilit.
+
 ## 2026-09-08 (57) — SEVERKA bod 3, první polovina: `mail.ingest` dispatchovatelný, `apf-mail-ingest` skutečně přijímá poštu
 
 **Kontext:** dokončení skeletonu `mail.ingest`/`email.send` (SEVERKA.md bod 3) — druhý reálný typ COW, první event-driven případ. Explorace potvrdila přesnou mezeru: core-platform handlery jsou hotové (stejná zralost jako `document.stamp`), ale gateway na ně dodnes neměla ŽÁDNOU dispatch cestu (`GATEWAY_CAPABILITIES`/`DOCUMENT_HOST_CAPABILITIES` je vůbec nezmiňovaly) a oba Cloudflare deployables byly skutečné skeletony (`wired: false`, `email()` handler vždy odmítal).
