@@ -739,7 +739,24 @@ const renderOutput = (v: InstanceView): string => {
     ...(i.workflow === "mail-intake" ? [["Notifikace (email.send)", stepCell("email.send", (p) => `<b>odesláno</b> <small>příjemce <code>${esc(pick(p, "recipientRef"))}</code>, id <code>${esc(pick(p, "smtpMessageId"))}</code></small>`)]] : []),
     ["Stav toku", `<span class="badge ${esc(i.status)}">${esc(i.status)}</span> <small>${i.status === "SUCCEEDED" ? "všechny kroky proběhly" : i.status === "WAITING" ? `čeká na ${esc(i.waiting?.reason)}` : i.status === "FAILED" ? "tok skončil explicitně, viz kroky níže" : ""}</small>`],
   ];
-  return `<h2>Výstup</h2><div class="card"><table>${rows.map(([k, val]) => `<tr><th style="width:14rem">${k}</th><td>${val}</td></tr>`).join("")}</table></div>`;
+  const reviewForm =
+    i.status === "WAITING" && i.waiting?.reason === "REVIEW" && i.waiting.reviewTaskId
+      ? `<div class="card">
+      <h3>Rozhodnutí (review)</h3>
+      <p class="muted">Úkol <code>${esc(i.waiting.reviewTaskId)}</code> čeká do <code>${esc(i.waiting.deadline)}</code>. Dřív tahle stránka jen zobrazovala, že se čeká — teď jde skutečně rozhodnout.</p>
+      <form method="post" action="/workflow/${esc(v.workflowId)}/review/decide">
+        <input type="hidden" name="reviewTaskId" value="${esc(i.waiting.reviewTaskId)}">
+        <label for="correctedType">Opravený typ dokumentu (jen pro „Opravit a zopakovat")</label>
+        <select id="correctedType" name="correctedType"><option value="">—</option><option>INVOICE</option><option>CONTRACT</option><option>OTHER</option></select>
+        <div style="margin-top:.75rem;display:flex;gap:.5rem;flex-wrap:wrap">
+          <button type="submit" name="decision" value="RECLASSIFY">Opravit a zopakovat</button>
+          <button type="submit" name="decision" value="APPROVE" style="background:#166534">Schválit tak, jak je</button>
+          <button type="submit" name="decision" value="REJECT" style="background:#991b1b">Zamítnout (ukončit)</button>
+        </div>
+      </form>
+    </div>`
+      : "";
+  return `<h2>Výstup</h2><div class="card"><table>${rows.map(([k, val]) => `<tr><th style="width:14rem">${k}</th><td>${val}</td></tr>`).join("")}</table></div>${reviewForm}`;
 };
 
 /** Shared by the instance page and /farm's per-instance detail: one row per step, same columns both places. */

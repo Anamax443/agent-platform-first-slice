@@ -53,13 +53,38 @@ export interface ExpiryTransition {
   newTaskId?: string;
 }
 
+/**
+ * Where ReviewService keeps its tasks — split out so a Cloudflare Worker can back it with Durable
+ * Object SQLite instead of process memory (found 2026-09-08: on the farm, a fresh in-memory Map
+ * per orchestrator meant a decision could never find the task that created it — there was no
+ * decision path at all, not just "doesn't survive eviction"). Default stays in-memory so every
+ * existing caller (tests, in-process slice) is unaffected.
+ */
+export interface ReviewTaskStore {
+  get(id: string): ReviewTask | undefined;
+  set(id: string, task: ReviewTask): void;
+  all(): ReviewTask[];
+}
+
+export class InMemoryReviewTaskStore implements ReviewTaskStore {
+  private readonly map = new Map<string, ReviewTask>();
+  get(id: string): ReviewTask | undefined {
+    return this.map.get(id);
+  }
+  set(id: string, task: ReviewTask): void {
+    this.map.set(id, task);
+  }
+  all(): ReviewTask[] {
+    return [...this.map.values()];
+  }
+}
+
 /** Review Service (FOUNDATION-core §5.8, F7): decisions are authorized, audited state transitions. */
 export class ReviewService {
-  private readonly tasks = new Map<string, ReviewTask>();
-
   constructor(
     private readonly clock: Clock,
     private readonly audit: AuditTrail,
+    private readonly store: ReviewTaskStore = new InMemoryReviewTaskStore(),
   ) {}
 
   create(input: CreateTask): ReviewTask {
@@ -84,7 +109,7 @@ export class ReviewService {
     if (input.escalateTo) task.escalateTo = input.escalateTo;
     if (input.currentValue !== undefined) task.currentValue = input.currentValue;
     if (input.alternatives) task.alternatives = [...input.alternatives];
-    this.tasks.set(task.reviewTaskId, task);
+    this.store.set(task.reviewTaskId, task);
     this.audit.append({
       kind: "review-created",
       workflowId: task.workflowId,
@@ -96,16 +121,16 @@ export class ReviewService {
   }
 
   get(id: string): ReviewTask | undefined {
-    const t = this.tasks.get(id);
+    const t = this.store.get(id);
     return t ? structuredClone(t) : undefined;
   }
 
   open(): ReviewTask[] {
-    return [...this.tasks.values()].filter((t) => t.status === "OPEN").map((t) => structuredClone(t));
+    return this.store.all().filter((t) => t.status === "OPEN").map((t) => structuredClone(t));
   }
 
   decide(id: string, by: { actorId: string; role: string; tenantId: string; decision: Decision; correction?: Record<string, unknown> }): DecisionResult {
-    const task = this.tasks.get(id);
+    const task = this.store.get(id);
     if (!task) return { ok: false, code: "APPROVAL_MISMATCH" };
     if (task.tenantId !== by.tenantId) {
       this.audit.append({ kind: "security", tenantId: by.tenantId, actorId: by.actorId, correlationId: task.correlationId, details: { code: "TENANT_SCOPE_MISMATCH", reviewTaskId: id, taskTenant: task.tenantId } });
@@ -119,6 +144,7 @@ export class ReviewService {
     task.status = "DECIDED";
     task.decision = { actorId: by.actorId, role: by.role, decision: by.decision, at: iso(this.clock.now()) };
     if (by.correction) task.decision.correction = { ...by.correction };
+    this.store.set(id, task);
     this.audit.append({
       kind: "review-decision",
       workflowId: task.workflowId,
@@ -134,7 +160,7 @@ export class ReviewService {
   expire(): ExpiryTransition[] {
     const now = iso(this.clock.now());
     const out: ExpiryTransition[] = [];
-    for (const task of [...this.tasks.values()]) {
+    for (const task of this.store.all()) {
       if (task.status !== "OPEN" || task.expiresAt > now) continue;
       switch (task.expiryPolicy) {
         case "EXPIRE_TO_FAILED":
@@ -159,12 +185,14 @@ export class ReviewService {
             break;
           }
           const n = this.create({ ...this.asCreate(task), requiredRole: task.escalateTo as string });
-          const created = this.tasks.get(n.reviewTaskId) as ReviewTask;
+          const created = this.store.get(n.reviewTaskId) as ReviewTask;
           created.escalationDepth = task.escalationDepth + 1;
+          this.store.set(n.reviewTaskId, created);
           out.push({ reviewTaskId: task.reviewTaskId, transition: "ESCALATED", newTaskId: n.reviewTaskId });
           break;
         }
       }
+      this.store.set(task.reviewTaskId, task);
       this.audit.append({
         kind: "review-expired",
         workflowId: task.workflowId,

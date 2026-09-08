@@ -10,11 +10,16 @@ import type { Clock } from "../../../../src/platform/clock.js";
 import { iso } from "../../../../src/platform/clock.js";
 import { newId } from "../../../../src/platform/ids.js";
 import type { Instance, JournalStore } from "../../../../src/platform/journal.js";
+import type { ReviewTask, ReviewTaskStore } from "../../../../src/platform/review.js";
 
 export const DDL = [
   "CREATE TABLE IF NOT EXISTS instance (workflow_id TEXT PRIMARY KEY, status TEXT NOT NULL, updated_at TEXT NOT NULL, json TEXT NOT NULL)",
   "CREATE TABLE IF NOT EXISTS audit (seq INTEGER PRIMARY KEY AUTOINCREMENT, audit_id TEXT NOT NULL UNIQUE, at TEXT NOT NULL, kind TEXT NOT NULL, correlation_id TEXT, workflow_id TEXT, json TEXT NOT NULL, mirrored INTEGER NOT NULL DEFAULT 0)",
   "CREATE TABLE IF NOT EXISTS artifact (artifact_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, sha256 TEXT NOT NULL, received_at TEXT NOT NULL, received_from TEXT NOT NULL, derived_from TEXT, producer TEXT, content_type TEXT, byte_length INTEGER, location TEXT, name TEXT, bytes TEXT NOT NULL, copied INTEGER NOT NULL DEFAULT 0)",
+  // Found 2026-09-08 (docs/OPONENTURA-BEZPECNOST-STABILITA.md #1): ReviewService's in-memory Map meant a decision
+  // could never find the task that created it on a deployed Worker — there was no decision path at all. This table
+  // is that missing durability; SqliteReviewTaskStore below is the only thing that reads/writes it.
+  "CREATE TABLE IF NOT EXISTS review (review_task_id TEXT PRIMARY KEY, workflow_id TEXT NOT NULL, status TEXT NOT NULL, json TEXT NOT NULL)",
 ];
 
 /** Shared D1 trail: the same record shape, one row per audit record, insert-only. */
@@ -211,5 +216,23 @@ export class SqliteArtifacts implements ArtifactWriter {
       a.bytes,
       a.location ? 1 : 0,
     );
+  }
+}
+
+/** Durable backing for ReviewService (W: see DDL comment above) — one row per review task, replaced whole on every write. */
+export class SqliteReviewTaskStore implements ReviewTaskStore {
+  constructor(private readonly sql: SqlStorage) {}
+
+  get(id: string): ReviewTask | undefined {
+    const row = this.sql.exec("SELECT json FROM review WHERE review_task_id = ?", id).toArray()[0];
+    return row ? (JSON.parse(row.json as string) as ReviewTask) : undefined;
+  }
+
+  set(id: string, task: ReviewTask): void {
+    this.sql.exec("INSERT OR REPLACE INTO review (review_task_id, workflow_id, status, json) VALUES (?, ?, ?, ?)", id, task.workflowId, task.status, JSON.stringify(task));
+  }
+
+  all(): ReviewTask[] {
+    return this.sql.exec("SELECT json FROM review").toArray().map((r) => JSON.parse(r.json as string) as ReviewTask);
   }
 }

@@ -20,13 +20,14 @@ import { iso, SystemClock, type Clock } from "../../../../src/platform/clock.js"
 import { platformError } from "../../../../src/platform/errors.js";
 import { newId } from "../../../../src/platform/ids.js";
 import { Orchestrator, type WorkflowDef } from "../../../../src/platform/orchestrator.js";
-import { ReviewService } from "../../../../src/platform/review.js";
+import type { Instance } from "../../../../src/platform/journal.js";
+import { ReviewService, type Decision } from "../../../../src/platform/review.js";
 import type { MessageEnvelope, ResultEnvelope } from "../../../../src/platform/types.js";
 import { WORKFLOW_NAMES, workflowDef } from "../../../../src/platform/workflow.js";
 import { renderError, renderFarm, renderHome, renderInstance, renderSelfTest, type AuditLogRow, type FarmInstanceRow, type FarmStats, type InboxItem, type InstanceView, type ModelsInfo, type SelfTestRow, type Wired } from "./page.js";
 import { describeModels, wirePlatform, type Wiring } from "./platform-wiring.js";
 import { runSelfTest, SELF_TEST_WORKFLOW_ID } from "./self-test.js";
-import { D1_AUDIT_DDL, DDL, SqliteArtifacts, SqliteAudit, SqliteJournal } from "./store.js";
+import { D1_AUDIT_DDL, DDL, SqliteArtifacts, SqliteAudit, SqliteJournal, SqliteReviewTaskStore } from "./store.js";
 import { visuallyStamp } from "./visual-stamp.js";
 
 export interface Env {
@@ -186,6 +187,7 @@ export class WorkflowInstance extends DurableObject<Env> {
   private readonly journal: SqliteJournal;
   private readonly audit: SqliteAudit;
   private readonly artifacts: SqliteArtifacts;
+  private readonly reviewStore: SqliteReviewTaskStore;
   private wiringCache: Wiring | undefined;
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -194,6 +196,7 @@ export class WorkflowInstance extends DurableObject<Env> {
     this.journal = new SqliteJournal(ctx.storage.sql);
     this.audit = new SqliteAudit(ctx.storage.sql, this.clock);
     this.artifacts = new SqliteArtifacts(ctx.storage.sql, this.clock);
+    this.reviewStore = new SqliteReviewTaskStore(ctx.storage.sql);
   }
 
   /** Built on first use so that a broken wiring (missing secret) fails the intake with a message, not the object. */
@@ -393,11 +396,39 @@ export class WorkflowInstance extends DurableObject<Env> {
       workflow: def,
       transport: wiring.transport,
       journal: this.journal,
-      review: new ReviewService(this.clock, this.audit),
+      review: new ReviewService(this.clock, this.audit, this.reviewStore),
       audit: this.audit,
       clock: this.clock,
       actorId: installation.profile.roles.orchestrator,
     });
+  }
+
+  /**
+   * The missing decision path (found 2026-09-08, docs/OPONENTURA-BEZPECNOST-STABILITA.md #1): a human can now
+   * actually resolve a WAITING(REVIEW) instance instead of it staying stuck forever. Reuses the orchestrator's own
+   * resumeAfterReview() as-is (already tested, WF-REV-003/004) — the only thing missing was a durable place for the
+   * review task to live between the request that created it and the request that decides it (now `this.reviewStore`).
+   */
+  async decideReview(reviewTaskId: string, decision: Decision, actorId: string, correctedType?: string): Promise<Instance> {
+    const inst = this.journal.list()[0];
+    if (!inst) throw new Error("no instance in this object");
+    const task = this.reviewStore.get(reviewTaskId);
+    if (!task) throw new Error(`review task ${reviewTaskId} not found`);
+    // Always the same top-level correction field regardless of which step is waiting: the workflow definition
+    // (document-intake.v2.json) maps $input.documentType to each step's own expected payload key itself — classify
+    // reads it as `documentType`, validate's own `inputs` mapping renames it to `correctedDocumentType` for its
+    // handler. decideReview() does not need to know which step it is.
+    const correction = correctedType ? { documentType: correctedType } : undefined;
+    const review = new ReviewService(this.clock, this.audit, this.reviewStore);
+    const result = review.decide(reviewTaskId, { actorId, role: task.requiredRole, tenantId: task.tenantId, decision, ...(correction ? { correction } : {}) });
+    if (!result.ok) throw new Error(`review decision rejected: ${result.code}`);
+    const wiring = this.wiring();
+    const orchestrator = this.orchestratorFor(workflowDef(inst.workflow), wiring);
+    const updated = await orchestrator.resumeAfterReview(inst.workflowId, reviewTaskId);
+    this.ctx.waitUntil(this.copyOut());
+    const original = this.artifacts.list().find((a) => !a.derivedFrom);
+    if (original) this.ctx.waitUntil(this.visualStampIfApplicable(original, inst.workflowId));
+    return updated;
   }
 
   /** Text artifacts to R2 (immutable, keyed by tenant + sha256) and audit records to the shared D1 trail. Idempotent. */
@@ -885,6 +916,25 @@ export default {
       if (!(await stub.view())) return Response.json({ error: "NOT_FOUND", workflowId: purge[1] }, { status: 404 });
       const result = await stub.purge(receivedFrom(request), reason);
       return html(renderError("Instance smazána", "Originál, derivace i obsah objektu instance jsou pryč; ve společném auditu (D1) zůstal záznam PURGED.", { ...result }), 200);
+    }
+
+    // The decision path that was missing entirely on the deployed farm until now (2026-09-08,
+    // docs/OPONENTURA-BEZPECNOST-STABILITA.md #1): a human can resolve a WAITING(REVIEW) instance.
+    const reviewDecide = /^\/workflow\/(wf-[A-Za-z0-9]+)\/review\/decide$/.exec(url.pathname);
+    if (reviewDecide && request.method === "POST") {
+      const form = await request.formData().catch(() => new FormData());
+      const reviewTaskId = String(form.get("reviewTaskId") ?? "");
+      const decisionRaw = String(form.get("decision") ?? "");
+      const allowedDecisions: Decision[] = ["APPROVE", "REJECT", "CORRECT", "RECLASSIFY"];
+      if (!allowedDecisions.includes(decisionRaw as Decision)) return Response.json({ error: "INVALID_DECISION", decision: decisionRaw }, { status: 400 });
+      const correctedType = String(form.get("correctedType") ?? "").trim();
+      const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(reviewDecide[1] as string));
+      try {
+        await stub.decideReview(reviewTaskId, decisionRaw as Decision, receivedFrom(request), correctedType || undefined);
+      } catch (e) {
+        return html(renderError("Rozhodnutí se nepodařilo použít", e instanceof Error ? e.message : String(e), { reviewTaskId, decision: decisionRaw }), 400);
+      }
+      return Response.redirect(new URL(`/workflow/${reviewDecide[1]}`, url).toString(), 303);
     }
 
     // Read-only artifact access for apf-document-host (celek D2), reached only through the DOCUMENT_HOST service binding.

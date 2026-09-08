@@ -2,6 +2,24 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-08 (50) — Human Review dostal skutečnou decision cestu (oprava nejzávažnějšího nálezu z OPONENTURY)
+
+**Kontext:** po rozsáhlé diskuzi o cílové platformě (zapsáno do `SEVERKA.md`) se vlastník rozhodl pokračovat blízkým plánem a rovnou opravit nejzávažnější doloženou mezeru z (49)/`docs/OPONENTURA-BEZPECNOST-STABILITA.md` bod 1: na farmě dnes neexistovala žádná funkční cesta k rozhodnutí o review.
+
+**Než padl kód, ověřeno, že chybí jen jedna věc, ne celá logika:** `Orchestrator.resumeAfterReview(workflowId, reviewTaskId)` (`src/platform/orchestrator.ts:173`) už existuje, je hotový a otestovaný (`WF-REV-003`/`004`) — správně aplikuje `REJECT`/`APPROVE`/`CORRECT`/`RECLASSIFY` a znovu spustí tok. Jediné, co chybělo, byla trvalost `ReviewService.tasks` napříč samostatnými HTTP požadavky na tutéž Durable Object.
+
+**Oprava (`src/platform/review.ts`):** `ReviewService` dostala injektovatelné úložiště (`ReviewTaskStore` rozhraní: `get`/`set`/`all`), výchozí `InMemoryReviewTaskStore` zachovává přesně dnešní chování (žádný existující test/volající se nezměnil — `new ReviewService(clock, audit)` funguje jako dřív). Každá mutace (`decide()`, `expire()`) teď po změně objektu volá `store.set()` explicitně, protože SQL-backed úložiště nevrací referenci jako `Map`.
+
+**Cloudflare vrstva:** nová `SqliteReviewTaskStore` (`deploy/cloudflare/apf-gateway/src/store.ts`) — jedna řádka na review úkol v DO SQLite (`review` tabulka v DDL), stejný vzor jako `SqliteJournal`/`SqliteAudit`/`SqliteArtifacts`. `WorkflowInstance` v `index.ts` ji drží jako pole (`this.reviewStore`) a předává do `ReviewService` při každém `orchestratorFor()` — teď už sdílené, ne nové pokaždé.
+
+**Nová metoda `decideReview()` na `WorkflowInstance`:** najde úkol, zavolá `ReviewService.decide()`, pak `Orchestrator.resumeAfterReview()` — a po úspěchu spustí stejné vedlejší efekty jako `intake()` (`copyOut()`, `visualStampIfApplicable()`). **Nález cestou:** oprava correction pole zabrala dvě kola. Nejdřív jsem chybně předpokládal, že se pole jmenuje jinak podle toho, jestli čeká krok classify (`documentType`) nebo validate (`correctedDocumentType`) — schémata mají `additionalProperties:false`, takže poslání špatného pole by spadlo. Skutečnost je elegantnější: workflow definice (`document-intake.v2.json`) mapuje **jediné** `$input.documentType` na payload klíč, který si každý krok sám pojmenuje (`classify` ho čte jako `documentType`, `validate`'s `inputs` ho přejmenuje na `correctedDocumentType`) — `decideReview()` tedy vždy posílá `{ documentType: correctedType }` bez ohledu na to, který krok čeká.
+
+**Nová route `POST /workflow/:id/review/decide`** a formulář na stránce instance (`renderOutput` v `page.ts`) — zobrazí se jen když `status === "WAITING" && waiting.reason === "REVIEW"`: dropdown na opravený typ dokumentu + tři tlačítka (Opravit a zopakovat / Schválit tak, jak je / Zamítnout).
+
+**Otevřeno, nedokončeno (přerušeno na pokyn vlastníka „udělej commit"):** rozdělaný regresní test dokazující, že rozhodnutí přes oddělenou `ReviewService` instanci sdílející stejné úložiště funguje (simulace dvou samostatných HTTP požadavků na tutéž Durable Object, vzorem `RES-CRASH-001`sdílející `journalFile`/`auditFile`/`artifacts` mezi dvěma `createSlice()`). `InMemoryReviewTaskStore` už exportovaná z `review.ts` pro tenhle účel, `SliceOptions.reviewStore` a samotný test zatím nenapsané. **Live ověření na farmě taky zatím neproběhlo** — jen lokální brány.
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare/tsconfig.json`), 232 testů (beze změny počtu — nový regresní test ještě nenapsán), arch, farm:check. **Nepushnuto, nenasazeno** — jen lokální commit na pokyn vlastníka.
+
 ## 2026-09-08 (49) — Dohnáno z druhého PC (8 commitů bez HANDOFF záznamu): self-test kraviček, oprava klíče vizuálního razítka, UI polish, podklad pro oponenturu
 
 **Tenhle záznam vznikl zpětně** — session na druhém počítači udělala a pushnula osm commitů (`a3742f3`..`f30a22f`), ale nezapsala k nim HANDOFF, což porušuje zavedené pravidlo tohohle projektu („po každém malém celku HANDOFF + commit"). Rekonstruováno z podrobných commit zpráv, ne odhadem.
