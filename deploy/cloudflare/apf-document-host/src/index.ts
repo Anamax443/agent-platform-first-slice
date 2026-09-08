@@ -22,6 +22,8 @@ import { sha256 } from "../../../../src/platform/artifacts.js";
 import { SystemClock } from "../../../../src/platform/clock.js";
 import { CredentialResolver } from "../../../../src/platform/credentials.js";
 import { ExecutorHost } from "../../../../src/platform/executor-host.js";
+import type { HandlerOutcome } from "../../../../src/platform/types.js";
+import type { IdempotencyRecord, IdempotencyStore } from "../../../../src/platform/idempotency.js";
 import { newId } from "../../../../src/platform/ids.js";
 import { policyFor } from "../../../../src/platform/policy.js";
 import { Router } from "../../../../src/platform/router.js";
@@ -29,9 +31,13 @@ import { KeyRegistry } from "../../../../src/platform/signing.js";
 import { transportFailure } from "../../../../src/platform/transport.js";
 import type { DispatchEnvelope } from "../../../../src/platform/types.js";
 import { GATEWAY_ORIGIN, RelayAudit } from "./relay-audit.js";
+import { IdempotencyLedger } from "./idempotency-ledger.js";
+
+export { IdempotencyLedger };
 
 export interface Env {
   ARTIFACTS: R2Bucket;
+  IDEMPOTENCY: DurableObjectNamespace<IdempotencyLedger>;
   GATEWAY: Fetcher;
   FAKES: Fetcher;
   HOST_ID: string;
@@ -155,6 +161,33 @@ const artifactIdOf = (envelope: DispatchEnvelope): string | undefined => {
   return typeof v === "string" ? v : undefined;
 };
 
+/** Adapts the durable per-key IdempotencyLedger object to ExecutorHost's IdempotencyStore contract. */
+class DurableIdempotencyStore implements IdempotencyStore {
+  constructor(private readonly namespace: DurableObjectNamespace<IdempotencyLedger>) {}
+
+  private stubFor(dedupKey: string): DurableObjectStub<IdempotencyLedger> {
+    return this.namespace.get(this.namespace.idFromName(dedupKey));
+  }
+
+  async peek(dedupKey: string): Promise<IdempotencyRecord | undefined> {
+    const r = await this.stubFor(dedupKey).peek(dedupKey);
+    return r && { status: r.status, fingerprint: r.fingerprint, ...(r.outcomeJson ? { outcome: JSON.parse(r.outcomeJson) as HandlerOutcome } : {}) };
+  }
+
+  async reserveOrGet(dedupKey: string, fingerprint: string): Promise<IdempotencyRecord | undefined> {
+    const r = await this.stubFor(dedupKey).reserveOrGet(dedupKey, fingerprint);
+    return r && { status: r.status, fingerprint: r.fingerprint, ...(r.outcomeJson ? { outcome: JSON.parse(r.outcomeJson) as HandlerOutcome } : {}) };
+  }
+
+  async resolve(dedupKey: string, outcome: HandlerOutcome): Promise<void> {
+    await this.stubFor(dedupKey).resolve(dedupKey, JSON.stringify(outcome));
+  }
+
+  async release(dedupKey: string): Promise<void> {
+    await this.stubFor(dedupKey).release(dedupKey);
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
@@ -191,7 +224,7 @@ export default {
           credentialTable(installation, secretsOf(env), { [host.STAMP_HANDLER_ID]: [host.STAMP_CREDENTIAL], [archiveHandler.ARCHIVE_HANDLER_ID]: [archiveHandler.ARCHIVE_CREDENTIAL] }),
           audit,
         );
-        const executor = new ExecutorHost({ hostId: env.HOST_ID, clock, audit, credentials });
+        const executor = new ExecutorHost({ hostId: env.HOST_ID, clock, audit, credentials, idempotency: new DurableIdempotencyStore(env.IDEMPOTENCY) });
         executor.register(host.createStampHandler({ artifacts, dms: new HttpDmsAdapter(env.FAKES), credentials, clock }));
         executor.register(archiveHandler.createArchiveHandler({ artifacts, archive: new HttpArchiveAdapter(env.FAKES), credentials, clock }));
 

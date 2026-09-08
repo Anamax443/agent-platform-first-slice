@@ -2,7 +2,21 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
-## 2026-09-08 (53) — SEVERKA bod 2, první polovina: hlubší idempotency klíč + IDEMPOTENCY_CONFLICT; resourceTenant fail-open uzavřen
+## 2026-09-08 (54) — SEVERKA bod 2, druhá polovina: durable `IdempotencyLedger` (Durable Object) na `apf-document-host`
+
+**Kontext:** dokončení bodu 2 ze `SEVERKA.md` — (53) uzavřela kontraktovou část (hlubší klíč, `IDEMPOTENCY_CONFLICT`), tohle je skutečná durabilita, kterou (53) výslovně nechala otevřenou: `apf-document-host` je stateless Worker, `ExecutorHost` se staví nanovo při každém `/dispatch` requestu, výchozí `InMemoryIdempotencyStore` tedy na farmě nededupuje nic mezi požadavky ani isoláty.
+
+**Volba mezi D1 tabulkou a vyhrazenou Durable Object byla probrána explicitně s vlastníkem** (ne rozhodnuta tiše): D1 by dodala perzistenci, ale ne atomicitu — souběžné duplicitní doručení může projít mezerou „přečti, pak zapiš" dřív, než první požadavek stihne zapsat. Durable Object adresovaná podle `dedupKey` (`idFromName`) dává atomicitu zdarma, protože Cloudflare serializuje požadavky do jednoho objektu — přesně to, co `SqliteReviewTaskStore` z (50) už jednou dokázalo pro Human Review. Zvoleno DO, vlastníkovo kritérium „robustní a udržitelné".
+
+**`deploy/cloudflare/apf-document-host/src/idempotency-ledger.ts` (nový):** `IdempotencyLedger extends DurableObject`, jedna SQLite tabulka (`ledger`), čtyři metody (`peek`/`reserveOrGet`/`resolve`/`release`) — stejný vzor jako `SqliteReviewTaskStore`, jen samostatná DO třída místo store nad sdílenou `WorkflowInstance`. **Design rozhodnutí:** DO žije uvnitř `apf-document-host` samotného (ne cross-script binding na `apf-gateway`, co DO infrastrukturu už má) — vyhne se pořadí nasazení mezi dvěma samostatně nasazovanými Workery a drží nový prostředek jen tam, kde je potřeba.
+
+**`deploy/cloudflare/apf-document-host/src/index.ts`:** nová `DurableIdempotencyStore` (adaptér `IdempotencyStore` ze `src/platform/idempotency.ts` na DO stub, `env.IDEMPOTENCY.get(idFromName(dedupKey))`), zapojená do `new ExecutorHost({ ..., idempotency: new DurableIdempotencyStore(env.IDEMPOTENCY) })` v `/dispatch`. DO třída exportována z `index.ts` (Workers to vyžadují pro každou třídu v `durable_objects.bindings`).
+
+**`wrangler.jsonc`:** nový `durable_objects` binding (`IDEMPOTENCY` → `IdempotencyLedger`) + `migrations` (`new_sqlite_classes`), stejný tvar jako gatewayův `WORKFLOW` binding. Žádný záznam v `config/farm-bass443/farm.json` nepotřeba — je to stejný-Worker binding, ne externí prostředek s vlastním id.
+
+**Otevřeně zapsáno, ne skryto:** lokální testovací harness (`tests/dh.test.ts`) neumí ověřit skutečnou atomicitu/durabilitu DO — je to opravdový Cloudflare runtime primitiv, ne něco, co Node/vitest simuluje. Ověření jde stejnou cestou jako Human Review v (52): nasazení na farmu, živý test.
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare/tsconfig.json`), 233 testů (beze změny — DO durabilita se testuje živě, ne jednotkovým testem), arch, farm:check.
 
 **Kontext:** pokračování `## Pořadí` ze `SEVERKA.md` bodem 2 (durable idempotency/effect ledger), rozšířeno o nález z diskuze nad `docs/POSUDKY.md` (Posudek 5/6): `resourceTenant()` fail-open pattern. Explorace ukázala, že „durable ledger" jsou ve skutečnosti dvě oddělitelné věci — **tahle část je ta bez nové infrastruktury**, druhá (skutečně durable úložiště na `apf-document-host`, dnes stateless Worker bez DO/D1/KV) je rozpracovaná dál v tomhle celku.
 

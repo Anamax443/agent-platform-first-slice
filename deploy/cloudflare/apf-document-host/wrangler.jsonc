@@ -12,6 +12,13 @@
   // Derivations (stamps) are written next to the originals; the host may read and derive, never overwrite (EVD-001).
   "r2_buckets": [{ "binding": "ARTIFACTS", "bucket_name": "apf-artifacts", "jurisdiction": "eu" }],
 
+  // Durable idempotency ledger (SEVERKA.md item 2, Posudek 5/6): this Worker is otherwise stateless, so
+  // ExecutorHost's in-memory dedup map is rebuilt empty on every request. One object per dedup key.
+  "durable_objects": {
+    "bindings": [{ "name": "IDEMPOTENCY", "class_name": "IdempotencyLedger" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["IdempotencyLedger"] }],
+
   "services": [
     { "binding": "GATEWAY", "service": "apf-gateway" },
     { "binding": "FAKES", "service": "apf-fakes" }
