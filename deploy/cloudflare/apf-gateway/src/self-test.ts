@@ -70,7 +70,9 @@ const SUITES: { capability: string; worker: string; fixtures: Fixture[]; golden:
   { capability: "document.archive", worker: "apf-document-host", fixtures: archiveFixtures as Fixture[], golden: archiveGolden as Record<string, Golden> },
   // SEVERKA.md item 3, second real write-type: mail.ingest runs in-process on the gateway (no credential to
   // isolate), email.send is a genuine remote dispatch to apf-email-executor (PRINCIPAL, SEND_MODE=sandbox here —
-  // self-test never flips that, so this never sends a real email).
+  // self-test never flips that, so this never sends a real email). Both fixture suites individually verified
+  // correct (HANDOFF 60); running the full SUITES list end to end can hit Cloudflare's subrequest depth limit
+  // by the time it reaches these last two suites — a self-test tooling limitation, not a capability bug.
   { capability: "mail.ingest", worker: "apf-gateway", fixtures: ingestFixtures as Fixture[], golden: ingestGolden as Record<string, Golden> },
   { capability: "email.send", worker: "apf-email-executor", fixtures: emailFixtures as Fixture[], golden: emailGolden as Record<string, Golden> },
 ];

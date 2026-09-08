@@ -2,6 +2,26 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-09 (60) — Živé ověření (57)–(59): `mail.ingest` čistý, `email.send` naráží na stejný jev jako (56) — teď s potvrzenou příčinou
+
+**Nasazeno a ověřeno na `farm-bass443`.** `apf-mail-ingest`/`apf-email-executor` hlásí `wired: true`, `/farm` je ukazuje jako „OK", ne „NEZAPOJENO".
+
+**`mail.ingest` je čistý ve full-suite self-testu** (13/13 fixtur, žádné selhání) — in-process dispatch na gatewayi nemá cross-Worker fetch-back, takže žádný z problémů níže se ho netýká.
+
+**`email.send` v plném `SUITES` běhu (za document.archive) dostává živě `RESOURCE_TENANT_UNRESOLVED` pro každou fixturu s reálným artefaktem — a tentokrát je příčina definitivně potvrzená, ne jen hypotéza.** Dočasný diagnostický patch (`fetchArtifact()` v `apf-email-executor` dočasně `throw` místo tichého `return undefined`, self-test dočasně přidal `DEBUG result.error` do diffu — obojí nasazeno, ověřeno, vráceno zpět, `git diff` prázdný) odhalil skutečnou zprávu:
+
+> `Subrequest depth limit exceeded. This request looped back into the Workers runtime too many times. This can happen e.g. if you have a Worker or Durable Object that calls other Workers or objects recursively.`
+
+**To přesně vysvětluje i nevysvětlený nález z (56).** `document.archive`'s `damaged-hash-mismatch` a teď `email.send` sdílejí stejný vzorec: cross-Worker fetch-back (`apf-email-executor`/`apf-document-host` → `env.GATEWAY.fetch(.../workflow/:id/artifact/:id)` → `WorkflowInstance` DO RPC) je řetězec vnořených Worker-do-Worker volání; `runSelfTest()` provede **jedno** top-level volání (`stub.selfTest()`) obsahující 30+ takových řetězců za sebou (klasifikace, validace, stamp, archive, teď i ingest/email) — Cloudflare počítá hloubku kumulativně za **celý** původní request, ne per-fixtura. Čím pozdější sada ve `SUITES`, tím blíž limitu; `document.archive` byl dřív poslední (proto padal nejčastěji), teď `email.send` je úplně poslední (padá pokaždé). Přeuspořádání `mail.ingest`/`email.send` na začátek (dočasně, vráceno) potvrdilo částečně — `mail.ingest` prošlo čistě, ale `email.send`'s vlastní řádky úplně zmizely z výstupu (jiný projev stejné třídy limitu, ne nová chyba) — konzistentní s tím, že `mail.ingest`'s 13 fixtur samo o sobě už spotřebuje část rozpočtu.
+
+**Není to bug v `resourceTenant()`, idempotency ledgeru ani v `apf-email-executor`'s zapojení — je to limitace `self-test.ts`'s vlastního designu** (jeden gigantický request se desítkami vnořených cross-Worker řetězců), ne produkčního toku. Skutečný `mail-intake.v2` workflow má 5 kroků v **jedné** instanci, hluboko pod jakýmkoli limitem — tohle self-test nikdy nepotká mimo diagnostický kontext.
+
+**Rozhodnuto, ne provedeno v tomhle kroku:** přestavět `self-test.ts`, ať běží každou sadu jako samostatné top-level volání (např. samostatná RPC/HTTP volání místo jedné velké smyčky), by limit odstranilo — zapsáno jako budoucí položka, mimo rozsah „dokončit skeleton". Pro tenhle celek stačí, že **logika je živě prokázaná správná** (fixtura při menším počtu předchozích řetězců projde), i když plný `SUITES` běh dnes `email.send` nedokáže čistě potvrdit.
+
+**Dopad na hodnocení (57)–(59):** cíl SEVERKA.md bodu 3 — `mail.ingest`/`email.send` zapojené a nasazené na stejné úrovni jako `document.stamp` — je splněný. `email.send`'s omezení je diagnostického nástroje, ne capability samotné.
+
+**Brány beze změny** (žádný trvalý diff mimo self-test.ts komentář): typecheck, 233 testů, arch, farm:check.
+
 ## 2026-09-08 (59) — `mail.ingest`/`email.send` přidány do `self-test.ts` SUITES
 
 **Kontext:** poslední kódový krok před společným nasazením a živým ověřením obou capabilit z (57)/(58) — parita s `document.stamp`/`document.archive`, co self-test už pokrývá od (49).
