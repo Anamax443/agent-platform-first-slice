@@ -24,7 +24,7 @@ import { newId } from "./platform/ids.js";
 import { Journal } from "./platform/journal.js";
 import { Orchestrator, type WorkflowDef } from "./platform/orchestrator.js";
 import { policyFor } from "./platform/policy.js";
-import { ReviewService } from "./platform/review.js";
+import { ReviewService, type ReviewTaskStore } from "./platform/review.js";
 import { Router } from "./platform/router.js";
 import { generateKeyPair, KeyRegistry, Signer } from "./platform/signing.js";
 import { InProcessTransport } from "./platform/transport.js";
@@ -43,6 +43,8 @@ export interface SliceOptions {
   /** Durable stores can be shared between two slices to simulate a restart (RES-CRASH-001, IDM-RET-002). */
   artifacts?: ArtifactStore;
   artifactCapacityBytes?: number;
+  /** Shared between two slices to simulate two requests hitting the same Durable Object (RES-REVIEW-001). */
+  reviewStore?: ReviewTaskStore;
   dms?: FakeDmsAdapter;
   /** Any RegistryAdapter: the fake in process (default), or HttpRegistryAdapter over the fakes protocol (INT-HTTP-*). */
   registry?: RegistryAdapter;
@@ -162,7 +164,7 @@ export function createSlice(installation: Installation, secrets: SecretsSource, 
   // Transport: in this runtime gateway and router share the process. Orchestrators only ever see the interface.
   const transport = new InProcessTransport(gateway, router);
   const journal = new Journal(o.journalFile);
-  const review = new ReviewService(clock, audit);
+  const review = o.reviewStore ? new ReviewService(clock, audit, o.reviewStore) : new ReviewService(clock, audit);
   const workflow = o.workflow ?? workflowDef("document-intake");
   const mailWorkflow = workflowDef("mail-intake");
   const reconcilers = { "document.stamp": documentHost.reconcilerFor("document.stamp"), "email.send": emailHost.reconcilerFor("email.send") };

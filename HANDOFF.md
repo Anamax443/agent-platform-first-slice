@@ -2,6 +2,20 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-08 (51) — Dopsán regresní test z (50): RES-REVIEW-001, `SliceOptions.reviewStore`
+
+**Pokračování přerušené práce z (50)** (`6dea224`, „pokračuj"): dopsáno přesně to, co bylo rozpracované — regresní test dokazující, že rozhodnutí přes samostatně sestavenou `ReviewService` instanci sdílející stejné úložiště funguje, vzorem `RES-CRASH-001`.
+
+**`src/slice.ts`:** `SliceOptions` dostala `reviewStore?: ReviewTaskStore`; `createSlice()` ji předá do `new ReviewService(clock, audit, o.reviewStore)`, když je zadaná (beze změny výchozího chování — bez ní vznikne `InMemoryReviewTaskStore` jako dřív).
+
+**`tests/res.test.ts` — nový `RES-REVIEW-001`:** dvě samostatná volání `createSlice()` sdílející `journalFile`/`auditFile`/`artifacts`/**`reviewStore`** (přesně vzor `RES-CRASH-001`, jen review store místo DMS/journal). První slice doběhne intake do `WAITING(REVIEW)`, druhé (nová `ReviewService` instance — simuluje druhý HTTP požadavek na stejný Durable Object) najde stejný úkol, rozhodne (`REJECT`) a `resumeAfterReview()` dokončí instanci na `FAILED`.
+
+**Test ověřen, že skutečně chytá opravovaný bug, ne jen formálně existuje:** dočasně vrácen `after` slice bez sdíleného `reviewStore` (simulace stavu před opravou z (50)) → test spadl přesně na `expect(after.review.get(taskId)).toBeDefined()` s `undefined`. Vráceno zpět, změna zahozena, jen ověření.
+
+**Otevřeno, nedokončeno (stejně jako v (50)):** **živé ověření na farmě zatím neproběhlo** — jen lokální brány. Commit zůstává lokální na pokyn vlastníka z (50) („Nepushovat, nenasazovat"); push a nasazení čekají na výslovné potvrzení.
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare/tsconfig.json`), **233 testů** (232 + nový `RES-REVIEW-001`), arch, farm:check.
+
 ## 2026-09-08 (50) — Human Review dostal skutečnou decision cestu (oprava nejzávažnějšího nálezu z OPONENTURY)
 
 **Kontext:** po rozsáhlé diskuzi o cílové platformě (zapsáno do `SEVERKA.md`) se vlastník rozhodl pokračovat blízkým plánem a rovnou opravit nejzávažnější doloženou mezeru z (49)/`docs/OPONENTURA-BEZPECNOST-STABILITA.md` bod 1: na farmě dnes neexistovala žádná funkční cesta k rozhodnutí o review.
