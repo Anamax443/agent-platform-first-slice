@@ -2,6 +2,28 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-09 (61) — SEVERKA bod 4, první krok: `src/platform/registry.ts` — Agent Registry jako čtení nad `Router`, ne nová autorita
+
+**Kontext:** externí posudek nad commitem (60) navrhoval jít rovnou do Admission Gate; vlastník rozhodl (AskUserQuestion) pokračovat podle vlastního kanonického pořadí `SEVERKA.md` — bod 4, Agent Registry, ne přeskočit dopředu (`SEVERKA.md`'s vlastní podmínka pro čerpání z Admission Gate sekce — druhý reálný tenant — stejně ještě není splněná).
+
+**Explorace před psaním kódu potvrdila přesný rozsah:** `Router` už drží vše potřebné (`resolved: {component, capability, validateInput}[]`), ale `providers()` to zplošťuje na řetězec `"capability/vN@module"` a zahazuje riziko/izolaci/side effects, které `descriptor.json` už nese. Skutečný nález: `platform-wiring.ts` má **ruční, duplikované** `GATEWAY_CAPABILITIES`/`DOCUMENT_HOST_CAPABILITIES`/`EMAIL_EXECUTOR_CAPABILITIES` pole (přesně ta věc, kterou `SEVERKA.md`'s řádek pro Agent Registry pojmenovává jako "dnes ruční `router.register()` v `platform-wiring.ts`") — nic dřív neověřovalo, že se shodují s tím, co `apf-document-host`/`apf-email-executor` doopravdy registrují ve vlastním `Router`; drift by potichu skončil na `notWired`.
+
+**`src/platform/registry.ts` (nový):** `capabilityNamesOf(descriptor)` (jméno capability přímo z descriptoru — jediný zdroj pro cross-Worker dispatch tabulky) a `catalogEntry(descriptor, capability, version)` (jeden řádek katalogu: capability/version/module + riziko/izolace/sideEffects/scopes/usesLlm/conformanceTier z descriptoru, žádné secrets/granty). Čistě čtecí, žádná nová autorita — `Router.route()` beze změny jediné rozhoduje, co smí běžet.
+
+**`src/platform/router.ts`:** nová `catalog(): CapabilityRecord[]` metoda vedle `providers()` (beze změny), mapuje `resolved` přes `catalogEntry()`.
+
+**`deploy/cloudflare/apf-gateway/src/platform-wiring.ts`:** `GATEWAY_CAPABILITIES`/`DOCUMENT_HOST_CAPABILITIES`/`EMAIL_EXECUTOR_CAPABILITIES` teď `capabilityNamesOf(...)` nad přímo importovaným `descriptor.json` (`document-executor-host`, `email-executor`; classifier/validator/ingest descriptory už byly importované) — stejné hodnoty jako dřív (ověřeno testem i `farm:check`), ale odvozené, ne psané znovu vedle sebe.
+
+**`tests/reg.test.ts`** (nová rodina, `REG-001..004`): `catalog()` se neliší od `providers()` (stejné triple), nese správné riskClass/isolationClass/sideEffects pro `email.send`/`document.classify`, `document.stamp`+`document.archive` sdílí modul, `capabilityNamesOf()` na skutečných descriptorech vrací přesně to, co dřív bylo ručně napsané v `platform-wiring.ts`.
+
+**Vědomě mimo rozsah tohohle kroku** (druhá polovina, jako u mail.ingest/email.send): HTTP `/registry`/`/capabilities` endpoint (descriptory ho deklarují v `endpoints.capabilities`, nikde neimplementovaný — zjištěno, ne skryto), nahrazení natvrdo psaných `capabilities: [...]` polí ve `/version` handlerech `apf-document-host`/`apf-email-executor` něčím odvozeným z descriptoru, integrace do `/farm`'s Kravičky panelu, health/cena pole. Nic z tohohle nemění chování na farmě — nenasazeno, nepotřebuje živé ověření (hodnoty prokazatelně identické testem, ne jen okem).
+
+**`docs/SEVERKA.md`** Agent Registry řádek aktualizován (první krok hotov, co chybí vypsáno). **`docs/BUILD.md`** rozšířeno o `reg` testovací rodinu.
+
+**`docs/STATUS.html`/`STATUS.en.html` jsou pozadu** (232 testů, e-mail popsaný jako skeleton) — od Human Review opravy/idempotency ledgeru/mail.ingest+email.send se needitovaly. Otevřený dluh, ne skryto — přepis na aktuální stav je samostatný celek, ne součást tohohle kroku.
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare/tsconfig.json`), **241 testů** (233 + 8 nových `REG-*`), arch, farm:check.
+
 ## 2026-09-09 (60) — Živé ověření (57)–(59): `mail.ingest` čistý, `email.send` naráží na stejný jev jako (56) — teď s potvrzenou příčinou
 
 **Nasazeno a ověřeno na `farm-bass443`.** `apf-mail-ingest`/`apf-email-executor` hlásí `wired: true`, `/farm` je ukazuje jako „OK", ne „NEZAPOJENO".

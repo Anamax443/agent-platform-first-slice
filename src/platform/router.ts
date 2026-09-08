@@ -4,6 +4,7 @@ import { iso } from "./clock.js";
 import { newId } from "./ids.js";
 import { platformError } from "./errors.js";
 import { checkGrant, type Policy } from "./policy.js";
+import { catalogEntry, type CapabilityRecord, type ModuleDescriptorLike } from "./registry.js";
 import { compileSchema, validateContract, type Validation } from "./schemas.js";
 import { verifyBinding, type KeyRegistry } from "./signing.js";
 import type { DispatchEnvelope, ErrorObject, Handler, HandlerOutcome, ResultEnvelope } from "./types.js";
@@ -54,6 +55,11 @@ export class Router {
 
   providers(): string[] {
     return this.resolved.map((r) => `${r.capability.name}/v${r.capability.version}@${r.component.descriptor.module}`);
+  }
+
+  /** Agent Registry (SEVERKA.md item 4): the same registrations as providers(), with the descriptor's risk/isolation metadata instead of a flat string. */
+  catalog(): CapabilityRecord[] {
+    return this.resolved.map((r) => catalogEntry(r.component.descriptor as unknown as ModuleDescriptorLike, r.capability.name, r.capability.version));
   }
 
   async route(env: DispatchEnvelope): Promise<ResultEnvelope> {

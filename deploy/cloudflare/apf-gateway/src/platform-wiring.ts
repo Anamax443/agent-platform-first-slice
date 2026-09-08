@@ -7,7 +7,9 @@ import { classifyByRules, FakeLlmAdapter, KeywordClassifierAdapter, type LlmAdap
 import type { RegistryAdapter } from "../../../../src/adapters/registry.js";
 import { WorkersAiAdapter, type WorkersAiBinding } from "../../../../src/adapters/workers-ai.js";
 import * as classifier from "../../../../src/components/document-classifier/handler.js";
+import hostDescriptor from "../../../../src/components/document-executor-host/descriptor.json" with { type: "json" };
 import * as validator from "../../../../src/components/document-validator/handler.js";
+import emailDescriptor from "../../../../src/components/email-executor/descriptor.json" with { type: "json" };
 import * as ingest from "../../../../src/components/mail-ingest/handler.js";
 import { credentialTable, modelTable, type Installation, type SecretsSource } from "../../../../src/installation.js";
 import type { ArtifactWriter } from "../../../../src/platform/artifacts.js";
@@ -17,6 +19,7 @@ import { CredentialResolver } from "../../../../src/platform/credentials.js";
 import { ExecutorHost } from "../../../../src/platform/executor-host.js";
 import { Gateway, IdentityProvider } from "../../../../src/platform/gateway.js";
 import { policyFor } from "../../../../src/platform/policy.js";
+import { capabilityNamesOf } from "../../../../src/platform/registry.js";
 import { Router } from "../../../../src/platform/router.js";
 import { KeyRegistry, Signer } from "../../../../src/platform/signing.js";
 import { InProcessTransport, RemoteHostTransport, type DispatchTransport, type ServiceBindingLike } from "../../../../src/platform/transport.js";
@@ -27,13 +30,15 @@ export const CLASSIFY = "document.classify";
  * Capabilities the gateway itself provides; everything else is a host and stays "not wired" until its unit lands.
  * `mail.ingest` runs here too (not as a remote dispatch): it holds no credential to isolate and writes no external
  * system, only its own tenant's artifact store — the same reasoning that keeps document.classify/validate in-process.
+ * Derived from each component's own descriptor (Agent Registry, SEVERKA.md item 4), not hand-duplicated — a
+ * capability added to a descriptor without also touching this file used to risk silently misrouting to notWired.
  */
-export const GATEWAY_CAPABILITIES: readonly string[] = [CLASSIFY, "document.validate", "mail.ingest"];
+export const GATEWAY_CAPABILITIES: readonly string[] = [...capabilityNamesOf(classifier.descriptor), ...capabilityNamesOf(validator.descriptor), ...capabilityNamesOf(ingest.descriptor)];
 /** Capabilities apf-document-host serves over a signed dispatch across a service binding (celek D). */
-export const DOCUMENT_HOST_CAPABILITIES: readonly string[] = ["document.stamp", "document.archive"];
+export const DOCUMENT_HOST_CAPABILITIES: readonly string[] = capabilityNamesOf(hostDescriptor);
 export const DOCUMENT_HOST_ORIGIN = "https://apf-document-host.internal";
 /** email.send is PRINCIPAL (its own credential domain, the Email Sending binding) — stays a genuine remote dispatch. */
-export const EMAIL_EXECUTOR_CAPABILITIES: readonly string[] = ["email.send"];
+export const EMAIL_EXECUTOR_CAPABILITIES: readonly string[] = capabilityNamesOf(emailDescriptor);
 export const EMAIL_EXECUTOR_ORIGIN = "https://apf-email-executor.internal";
 
 export interface ModelChoice {
