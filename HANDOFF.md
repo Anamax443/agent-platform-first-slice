@@ -29,7 +29,11 @@ do scratchpadu, ne do repa.
 deployables) OK`. **259/259 testů**, typecheck, `arch`, `farm:check` zelené — ověřeno v prohlížeči (Edge headless
 screenshot) před commitem, ne jen staticky.
 
-**Zbývá:** skutečné `wrangler deploy` (účet bass443, potvrzen), pak zapsat živou URL sem.
+**Nasazeno:** `wrangler deploy` z `deploy/cloudflare/ai-farma-web/` (účet bass443) →
+**https://ai-farma-web.bass443.workers.dev**. Cestou zkusil `html_handling: "none"` kvůli 307 redirectu na interních
+odkazech (`href="kravy.html"` → `/kravy`) — zrušilo to ale i implicitní `/` → `index.html`, takže kořen webu vracel
+404. Vráceno na výchozí `auto-trailing-slash`: jeden levný edge redirect na klik je nesrovnatelně menší problém než
+mrtvá kořenová adresa.
 
 ## 2026-09-09 (79) — jednotlivé kontroly vidět a jednotlivě vyvolatelné; historie do D1
 

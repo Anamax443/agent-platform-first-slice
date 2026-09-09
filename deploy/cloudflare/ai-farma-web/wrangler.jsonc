@@ -9,6 +9,9 @@
   "$schema": "../../../node_modules/wrangler/config-schema.json",
   "name": "ai-farma-web",
   "compatibility_date": "2026-09-09",
+  // Default html_handling ("auto-trailing-slash"): "/" -> index.html and "/kravy.html" -> redirect to "/kravy"
+  // both come for free. Tried "none" to avoid that redirect on internal <a href="kravy.html"> links, but it also
+  // drops the "/" -> index.html mapping (404 on bare root) — far worse than one cheap edge redirect on nav clicks.
   "assets": {
     "directory": "."
   }
