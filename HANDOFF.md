@@ -2,6 +2,31 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-09 (74) — Kravičky/Kapability jako karty v ohradách, ne tabulky; `tests/page.test.ts`
+
+**Pokyn vlastníka po (73):** "si děláš prdel vždyť to je skoro stejný" — (73) byla jen paleta na
+stejné tabulkové kostře, ne skutečně jiná struktura. Zpřesněno (`AskUserQuestion`): karty místo
+tabulek, ne jen jiné barvy.
+
+**Kravičky (Workers) a Kapability (Admission Gate) teď jako karty**, ne řádky tabulky:
+`deployableCard()`/`capabilityRow()` (přejmenováno by asi šlo, ale drží se historický název)
+vrací `<div class="p-card">`, ne `<tr>`. Kapability navíc vizuálně seskupené do `.pen` boxů
+(přerušovaný okraj, jako výběh) po modulu — jedna ohrada = jeden modul, uvnitř karty jeho
+kapabilit. Ohrada (WAITING/FAILED instance) a Poslední instance/Deník zůstávají tabulkové —
+to je chronologická/drill-down data, ne stádo k pohledu, karty by tam nedávaly smysl.
+
+**Nový `tests/page.test.ts` (HANDOFF 73's vlastní lesson, [[never-deploy-untested]] — user
+2026-09-09: "nikdy nenasazuj co nemáš otestováno"):** `page.ts` nemá žádný Cloudflare-runtime
+import (jen typy z `src/platform` + `bank.js`/`farm-theme.js`, obojí čisté stringy) — jde ho tedy
+přímo zavolat z Node/vitestu, stejná logika jako `relay-audit.ts` vytažené z `index.ts` kvůli
+testovatelnosti. 4 testy skutečně VOLAJÍ `renderFarm()` s realistickými daty a ověřují, že
+neselže (přesně ta třída chyby, co typecheck a `wrangler deploy --dry-run` nechytí — (73)'s
+vlastní `ReferenceError: Cannot access 'ICONS' before initialization` by tenhle test odhalil
+lokálně, bez nutnosti nasazení).
+
+**253/253 testů** (249 → 253), typecheck (root i `deploy/cloudflare`), `arch`, `farm:check`
+zelené — a tentokrát `npm test`/`page.test.ts` skutečně proběhl PŘED nasazením, ne jen typecheck.
+
 ## 2026-09-09 (73) — `/farm` dostala vlastní farmářské téma a záložku Ohrada (autonomní návrh)
 
 **Pokyn vlastníka:** "chtěl jsem od tebe úplně nové stránky dle tvého autonomního názoru, aby to

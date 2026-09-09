@@ -61,4 +61,35 @@ export const FARM_THEME_CSS = String.raw`
   }
 .ui[data-style="farm"] .p-table tbody tr.pen-head .icon { color: var(--accent); vertical-align: -3px; margin-right: 6px; }
 .ui[data-style="farm"] .pen-empty { padding: 26px 14px; text-align: center; color: var(--dim); }
+
+/* Cards, not tables (owner's request 2026-09-09: the farm illustration groups agents into pens, not rows of a
+   grid). Kravičky/Kapability use these; Ohrada/Poslední instance/Deník stay tabular — that data is chronological
+   or drill-down, not a herd to look at. */
+.ui[data-style="farm"] .p-cardsec { padding: 14px 14px 4px; }
+.ui[data-style="farm"] .p-cardsec-label { font-family: var(--font-display); font-weight: 650; color: var(--dim); margin: 0 0 8px; display: flex; align-items: center; gap: 6px; }
+.ui[data-style="farm"] .p-cardsec-label .icon { color: var(--accent); }
+.ui[data-style="farm"] .p-cardgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; margin-bottom: 6px; }
+.ui[data-style="farm"] .p-card {
+    background: var(--pane);
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) + 4px);
+    padding: 12px 14px;
+    box-shadow: var(--pane-shadow);
+  }
+.ui[data-style="farm"] .p-card.st-crit-card { border-color: var(--crit); }
+.ui[data-style="farm"] .p-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-weight: 650; }
+.ui[data-style="farm"] .p-card-head code { background: none; padding: 0; font-size: 1em; }
+.ui[data-style="farm"] .p-card-role { color: var(--dim); font-size: calc(var(--fs-ui) - 1px); margin-top: 4px; line-height: 1.4; }
+.ui[data-style="farm"] .p-card-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 8px; font-size: calc(var(--fs-ui) - 1.5px); color: var(--dim); }
+.ui[data-style="farm"] .p-card-meta b { color: var(--text); font-weight: 600; }
+.ui[data-style="farm"] .pen {
+    border: 2px dashed var(--border);
+    border-radius: calc(var(--radius) + 8px);
+    padding: 12px 12px 4px;
+    margin: 0 14px 14px;
+    background: var(--chromehi);
+  }
+.ui[data-style="farm"] .pen-label { display: flex; align-items: center; gap: 7px; font-family: var(--font-display); font-weight: 650; margin-bottom: 10px; }
+.ui[data-style="farm"] .pen-label .icon { color: var(--accent); }
+.ui[data-style="farm"] .pen .p-cardgrid { margin-bottom: 6px; }
 `;

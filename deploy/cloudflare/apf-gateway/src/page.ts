@@ -231,7 +231,6 @@ const PLANNED_DEPLOYABLES: { name: string; role: string }[] = [
   { name: "cz.company.verify", role: "Ověří IČO v ARES (existence, právní forma, adresa) — krok 8b, návrh 7. 9. 2026, žádný kód" },
   { name: "cz.vat.verify", role: "Ověří DPH plátcovství, nespolehlivého plátce a zveřejněný bankovní účet u Finanční správy — krok 8b, návrh 7. 9. 2026, žádný kód" },
 ];
-const plannedRow = (p: { name: string; role: string }): string => `<tr><td><b>${esc(p.name)}</b><br><small class="dim">${esc(p.role)}</small></td><td class="c-state">${stateBadge("NÁVRH")}</td><td class="dim">—</td><td class="dim">zatím nepostaveno</td></tr>`;
 
 /** "Reachable" (HTTP 200 on /version) and "actually wired into the flow" are different claims — a skeleton answers fine but does nothing yet. */
 const workerReady = (d: DeployableStatus): boolean => d.ok && (d.body as Record<string, unknown> | null)?.wired !== false;
@@ -257,10 +256,10 @@ const riskBadge = (raw: string | undefined): string => {
   return `<span class="${cls}">${esc(RISK_LABEL[raw] ?? raw)}</span>`;
 };
 
-/** One row of the Admission Gate table: capability, which module serves it, its risk/isolation claim, live lifecycle. */
+/** One card of the Admission Gate pen: capability, its risk/isolation claim, live lifecycle. */
 const capabilityRow = (c: CapabilityRow): string => {
   const iso = isolationLabel(c.isolationClass ?? "");
-  return `<tr><td><code>${esc(c.capability)}</code>/v${esc(c.version)}${c.usesLlm ? ' <small class="dim" title="volá jazykový model">🤖</small>' : ""}</td>${stateTd(c.lifecycleStatus)}<td>${riskBadge(c.riskClass)}</td><td${iso.title ? ` title="${esc(iso.title)}"` : ""}>${esc(iso.label || "—")}</td><td class="dim">${esc(c.sideEffects ?? "—")}</td></tr>`;
+  return `<div class="p-card${c.lifecycleStatus === "QUARANTINED" ? " st-crit-card" : ""}"><div class="p-card-head"><code>${esc(c.capability)}</code>/v${esc(c.version)}${c.usesLlm ? ' <small title="volá jazykový model">🤖</small>' : ""}${stateBadge(c.lifecycleStatus)}</div><div class="p-card-meta"><span>riziko ${riskBadge(c.riskClass)}</span><span${iso.title ? ` title="${esc(iso.title)}"` : ""}>izolace <b>${esc(iso.label || "—")}</b></span><span>${esc(c.sideEffects ?? "—")}</span></div></div>`;
 };
 
 /**
@@ -292,42 +291,47 @@ export function renderFarm(m: FarmModel): string {
     diagram: icon('<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><line x1="8" y1="7.5" x2="10.5" y2="16.2"/><line x1="16" y1="7.5" x2="13.5" y2="16.2"/><line x1="8.5" y1="6" x2="15.5" y2="6"/>'),
   };
 
-  const deployableRow = (d: DeployableStatus): string => {
+  const deployableCard = (d: DeployableStatus): string => {
     const b = (d.body ?? {}) as Record<string, unknown>;
     const caps = Array.isArray(b.capabilities) ? (b.capabilities as unknown[]).join(", ") : undefined;
     const detail = caps ? `umí: ${caps}` : b.wired === false ? "zatím nezapojeno do toku" : b.error ? String(b.error) : "";
     const role = DEPLOYABLE_ROLE[d.name];
     const iso = isolationLabel(String(b.isolation ?? ""));
-    return `<tr><td><b>${esc(d.name)}</b>${role ? `<br><small class="dim">${esc(role)}</small>` : ""}</td>${stateTd(workerStateLabel(d))}<td${iso.title ? ` title="${esc(iso.title)}"` : ""}>${esc(iso.label)}</td><td class="dim">${esc(detail)}</td></tr>`;
+    const state = workerStateLabel(d);
+    return `<div class="p-card${state === "DOWN" ? " st-crit-card" : ""}"><div class="p-card-head"><code>${esc(d.name)}</code>${stateBadge(state)}</div>${role ? `<div class="p-card-role">${esc(role)}</div>` : ""}<div class="p-card-meta"><span${iso.title ? ` title="${esc(iso.title)}"` : ""}>izolace <b>${esc(iso.label)}</b></span>${detail ? `<span>${esc(detail)}</span>` : ""}</div></div>`;
   };
   // Not five peers: apf-gateway is the one that decides and calls the other four — a flat table hid that. Grouped so the
   // hierarchy shows (owner's own observation: "vypadá, že apf-gateway je na stejné úrovni jako ostatní, ne?").
   const byName = (name: string) => m.deployables.find((d) => d.name === name);
   const gatewayRow = byName("apf-gateway");
   const hostNames = ["apf-document-host", "apf-email-executor", "apf-mail-ingest"];
-  const groupHead = (label: string): string => `<tr class="group-head"><td colspan="4">${esc(label)}</td></tr>`;
-  const kravickyRows =
-    (gatewayRow ? groupHead("Řídí tok — přijímá dokument a rozhoduje, kam ho poslat dál") + deployableRow(gatewayRow) : "") +
-    groupHead("Hostitelé, které gateway volá") +
-    hostNames
-      .map((n) => byName(n))
-      .filter((d): d is DeployableStatus => !!d)
-      .map(deployableRow)
-      .join("") +
-    (byName("apf-fakes") ? groupHead("Testovací dvojník (jen pro vývoj a testy)") + deployableRow(byName("apf-fakes") as DeployableStatus) : "") +
-    groupHead("Návrh — zatím nepostaveno, jen v docs/NAVRHOVY-LIST-farma.md") +
-    PLANNED_DEPLOYABLES.map(plannedRow).join("");
+  const cardSection = (label: string, cardsHtml: string): string => (cardsHtml ? `<div class="p-cardsec"><div class="p-cardsec-label">${esc(label)}</div><div class="p-cardgrid">${cardsHtml}</div></div>` : "");
+  const plannedCard = (p: { name: string; role: string }): string => `<div class="p-card"><div class="p-card-head"><code>${esc(p.name)}</code>${stateBadge("NÁVRH")}</div><div class="p-card-role">${esc(p.role)}</div></div>`;
+  const kravickyCards =
+    cardSection("Řídí tok — přijímá dokument a rozhoduje, kam ho poslat dál", gatewayRow ? deployableCard(gatewayRow) : "") +
+    cardSection(
+      "Hostitelé, které gateway volá",
+      hostNames
+        .map((n) => byName(n))
+        .filter((d): d is DeployableStatus => !!d)
+        .map(deployableCard)
+        .join(""),
+    ) +
+    cardSection("Testovací dvojník (jen pro vývoj a testy)", byName("apf-fakes") ? deployableCard(byName("apf-fakes") as DeployableStatus) : "") +
+    cardSection("Návrh — zatím nepostaveno, jen v docs/NAVRHOVY-LIST-farma.md", PLANNED_DEPLOYABLES.map(plannedCard).join(""));
 
-  // Kapability seskupené po modulu — "ohrada" v obrázku farmy: kravička (modul) může mít víc kapabilit, ne
-  // naopak. Pořadí modulů = pořadí prvního výskytu v m.capabilities (stabilní, žádné další řazení).
-  const penHead = (label: string): string => `<tr class="pen-head"><td colspan="5">${ICONS.kravicky}${esc(label)}</td></tr>`;
-  const penRows = (() => {
+  // Kapability seskupené po modulu jako ohrady (owner's request 2026-09-09: karty, ne řádky tabulky —
+  // vizuálně blíž skutečné farmě, jedna ohrada = jeden modul, uvnitř jeho kapability jako kravičky).
+  // Pořadí modulů = pořadí prvního výskytu v m.capabilities (stabilní, žádné další řazení).
+  const penGrid = (() => {
     const byModule = new Map<string, CapabilityRow[]>();
     for (const c of m.capabilities) {
       if (!byModule.has(c.module)) byModule.set(c.module, []);
       (byModule.get(c.module) as CapabilityRow[]).push(c);
     }
-    return [...byModule.entries()].map(([mod, caps]) => penHead(mod) + caps.map(capabilityRow).join("")).join("");
+    return [...byModule.entries()]
+      .map(([mod, caps]) => `<div class="pen"><div class="pen-label">${ICONS.kravicky}${esc(mod)}</div><div class="p-cardgrid">${caps.map(capabilityRow).join("")}</div></div>`)
+      .join("");
   })();
 
   // Owner's request 2026-09-08: what carries the link belongs in column 1 (not buried mid-line), rows collapsed to a
@@ -462,17 +466,11 @@ export function renderFarm(m: FarmModel): string {
         <span class="grow"></span>
         <button class="p-btn" type="submit">Spustit self-test</button>
       </form>
-      <div class="p-gridwrap"><table class="p-table">
-        <thead><tr><th>Worker</th><th class="c-state">Stav</th><th title="Jak přísně je oddělený od ostatních">Izolace</th><th>Umí</th></tr></thead>
-        <tbody>${kravickyRows}</tbody>
-      </table></div>
+      ${kravickyCards}
 
       <div class="p-panehead">${ICONS.argos}<span>Argos hlídá — Kapability (Admission Gate)</span><span class="n">${m.capabilities.length}, ${m.capabilities.filter((c) => c.lifecycleStatus === "QUARANTINED").length} v karanténě</span></div>
-      <div class="p-toolbar"><span class="meta">Co každá kravička (seskupeno po modulu, jako ohrada) skutečně smí vykonat — riziko a izolace jsou vlastní tvrzení komponenty (descriptor), stav vpravo je to, co <b>Router doopravdy vynucuje</b> před každým dispatchem. Karanténa (config/&lt;instalace&gt;/lifecycle.json) se mění deploym, ne odsud — tahle stránka jen čte, nikdy nezapisuje</span></div>
-      <div class="p-gridwrap"><table class="p-table">
-        <thead><tr><th>Kapabilita</th><th class="c-state">Lifecycle</th><th>Riziko</th><th title="Jak přísně je oddělený od ostatních">Izolace</th><th>Side effect</th></tr></thead>
-        <tbody>${m.capabilities.length ? penRows : '<tr><td colspan="5" class="dim">zatím žádné (vzdálení Workeři neodpověděli)</td></tr>'}</tbody>
-      </table></div>
+      <div class="p-toolbar"><span class="meta">Co každá kravička skutečně smí vykonat, seskupeno po modulu jako ohrada — riziko a izolace jsou vlastní tvrzení komponenty (descriptor), stav na kartě je to, co <b>Router doopravdy vynucuje</b> před každým dispatchem. Karanténa (config/&lt;instalace&gt;/lifecycle.json) se mění deploym, ne odsud — tahle stránka jen čte, nikdy nezapisuje</span></div>
+      ${m.capabilities.length ? penGrid : '<div class="pen-empty">zatím žádné (vzdálení Workeři neodpověděli)</div>'}
     </div>
 
     <div id="view-ohrada" hidden>
