@@ -22,6 +22,14 @@ export class IdentityProvider {
     const i = this.byId.get(actorId);
     return i ? { ...i, scopes: [...i.scopes] } : undefined;
   }
+
+  /** True only if actorId resolves to a known identity, in the given tenant, holding the given scope.
+   * A caller must never derive this decision from a value the request itself supplied (e.g. a review
+   * task's own requiredRole) — that turns the check into a tautology instead of an authorization. */
+  authorizeRole(actorId: string, tenantId: string, requiredScope: string): boolean {
+    const id = this.authenticate(actorId);
+    return !!id && id.tenantId === tenantId && id.scopes.includes(requiredScope);
+  }
 }
 
 /** Creates the TrustedExecutionContext from identity and signs the dispatch envelope (FOUNDATION-core §4.2, §4.3). */

@@ -165,3 +165,64 @@ Shoda všech pěti: norma nevyvrácena, testy chytají konstrukční chyby, reus
 ### Co posudek nezměnil
 
 Pořadí (D dál, W20 jako jeho podmínka) zůstává. Doplněno: `docs/SHODA-NIS2-ISO27001.md` mezera 3 teď jmenuje `/purge` vedle budoucího `/review`.
+
+## Posudek 7 — externí „hlídací pes" nad `main` po WF-REV-003 (9. 9. 2026)
+
+**Zdroj:** externí čtenář, poslaný vlastníkem jako zpráva v chatu (ne přes GitHub), nad commitem
+`95de85d`. Skóre podle čtenáře: celková kvalita kódu **9,1/10**, doporučení „pokračovat,
+nepřepisovat". Detailní tabulka skóre po oblastech (Router/security pipeline 9,3, ExecutorHost
+tenant enforcement 9,5, Human Review mechanismus 8,3, Policy enforcement 7,2, COW
+Admission/Certification 5,0, Multi-tenant readiness 6,5, Audit trustworthiness 7,5, atd.) — viz
+zpráva samotná, sem se nekopíruje celá.
+
+**Metodologická poznámka, než dispozice:** vlastník zvolil (`AskUserQuestion`) nejdřív ověřit a
+opravit jen bod MAJOR 1, ne projít nezávisle celý posudek proti kódu jako Posudek 6 udělal se svým
+zdrojem. **MAJOR 1 je proto jediný bod z tohoto posudku dnes nezávisle ověřený přímo v kódu** —
+zbytek (MAJOR 2–5, MEDIUM) je zapsaný tak, jak přišel, nepotvrzený ani nevyvrácený proti aktuálnímu
+`main`. Posudek 6 je varování, proč to takhle rozlišovat: tenkrát citovaný kód na `main` už
+neexistoval (stale snapshot) — důvěra „posudek zní věrohodně" bez čtení souboru:řádku dřív vedla
+ke špatné dispozici.
+
+**MAJOR 1 (Human Review autorizace) — potvrzeno a opraveno dnes.** Nález byl přesný:
+`decideReview()` (`deploy/cloudflare/apf-gateway/src/index.ts`, tehdy řádek 490) posílalo
+`role: task.requiredRole` do `ReviewService.decide()`, jejíž vlastní kontrola
+`task.requiredRole !== by.role` tím porovnávala hodnotu se sebou samou — nikdy nemohla selhat.
+Souvisí s [[verify-core-before-building]] stylem ověření (přečtení skutečného kódu, ne převzetí
+tvrzení) a navazuje přímo na **Posudek 6, bod 4** („`ReviewService` bez trusted principal — Z,
+precondition pro `/review`") — tehdy `/review` ještě neexistovalo, takže šlo o poznámku na
+budoucnost; dnes `/review/decide` na farmě běží od (50)–(52), takže mezera byla živá.
+
+**Oprava (HANDOFF 68):** `IdentityProvider.authorizeRole(actorId, tenantId, requiredScope)` (nová
+metoda, `src/platform/gateway.ts`) rozhoduje výhradně z identity samotné (tenant + přiřazené
+scopes), nikdy z hodnoty, kterou nese request/task. `decideReview()` ji zavolá dřív, než cokoli
+předá `review.decide()`; při zamítnutí zapíše `kind: "security"` audit
+(`REVIEW_ROLE_NOT_AUTHORIZED`) a vyhodí chybu. `installation.profile.identities` na farmě dřív
+neměla **žádnou** lidskou identitu (jen `svc-orchestrator`/`svc-orchestrator-t7`/`ai-doc-classifier`)
+— doplněna `access:bass443@gmail.com` (`actorType: "human"`, `tenantId: "tenant-42"`, scopes
+`["document.reviewer", "document.supervisor"]`) — přesný string ověřený ne odhadem, ale z reálného
+`/audit.json` záznamu živého rozhodnutí z (50)–(52). **Vědomé omezení:** identita je vázaná jen na
+`tenant-42` (jediný reálný tenant); `tenant-7` je čistě protistrana bezpečnostních testů (SEVERKA.md
+Tenant Layer), takže review úkol tam by dnešní jediný lidský reviewer rozhodnout nemohl — přijato
+jako správný default, ne přehlédnutí. 4 nové testy (`tests/sec.test.ts`, `SEC-REV-001..004`):
+autorizovaná identita projde, neznámý actor nikdy neprojde bez ohledu na požadovanou roli,
+cross-tenant zamítnuto, role mimo přiřazené scopes zamítnuta. 246/246 testů, typecheck, arch,
+farm:check zelené; nasazeno na `farm-bass443`.
+
+### Dispozice
+
+| # | Bod posudku | Dispozice | Poznámka |
+|---|---|---|---|
+| MAJOR 1 | Human Review role-check je tautologie (`by.role` odvozené z `task.requiredRole`) | **P, opraveno** | `authorizeRole()` + human identita v `config/farm-bass443/profile.json` + `SEC-REV-001..004`; nasazeno (HANDOFF 68) |
+| MAJOR 2 | Access identita není kryptograficky ověřená (`accessJwtVerified: false`) | **Z, nezávisle neověřeno dnes** | shoduje se s Posudek 6 bod 8 / `docs/SHODA-NIS2-ISO27001.md` mezera 3 — už dřív známá mezera, ne nové zjištění |
+| MAJOR 3 | Policy Engine vynucuje jen actorId/scope/tenant, ne `approval`/`rateLimit`/`isolation` z popisu Policy | **Z, nezávisle neověřeno dnes** | shoduje se s `SEVERKA.md` Policy Engine řádkem (č. 32) — už dřív zapsaný směr, ne nové zjištění |
+| MAJOR 4 | `email.send` executor nemá durable idempotency (fresh `ExecutorHost` na `/dispatch`) | **Z, nezávisle neověřeno dnes** | shoduje se s `SEVERKA.md` Execution Engine řádkem (č. 33) — beze změny, `SEND_MODE=sandbox` snižuje naléhavost |
+| MAJOR 5 | `/audit` přijímá `tenantId`/`actorId`/`capability`/detaily skoro beze změny od volající COW — kompromitovaná COW může vyrábět falešné audit záznamy | **Z, nová platná poznámka, neověřeno dnes** | nezapsáno takhle konkrétně dřív; kandidát na budoucí COW zero-trust kontrakt (`SEVERKA.md`, ne tenhle snapshot) |
+| MEDIUM | interní endpointy (`/mail-intake`, `/audit`, artefakty) nekontrolují volajícího, spoléhají na CF topologii | **Z, nezávisle neověřeno dnes** | vědomá volba dneška (perimeter trust); budoucí service identity je součást stejného zero-trust kontraktu jako MAJOR 5 |
+| — | Multi-tenant readiness, Admission Gate stav | **Z, potvrzuje známý stav** | odpovídá `SEVERKA.md` Tenant Layer / Capability Marketplace řádkům, žádné nové zjištění |
+| — | WF-REV-003 alarm živě ověřen, business transakce ne | **Z, potvrzuje HANDOFF 67** | zapsáno už tam, posudek to jen nezávisle potvrzuje ze stejného commitu |
+
+### Co posudek nezměnil
+
+Pořadí `SEVERKA.md` (Registry hotové → Policy/Risk → Admission Gate → ...) beze změny. MAJOR 2–5 a
+MEDIUM čekají na stejnou disciplínu ověření jako MAJOR 1 (přečíst kód, ne převzít tvrzení), než
+dostanou vlastní opravu — vlastník rozhodne, kdy na ně dojde.

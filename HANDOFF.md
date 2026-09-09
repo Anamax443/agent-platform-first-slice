@@ -2,6 +2,43 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-09 (68) — Human Review autorizace: tautologická kontrola role opravena (externí posudek 7)
+
+**Nález (externí čtenář, poslán vlastníkem, `docs/POSUDKY.md` Posudek 7, MAJOR 1):** `decideReview()`
+(`deploy/cloudflare/apf-gateway/src/index.ts`) posílalo `role: task.requiredRole` přímo do
+`ReviewService.decide()`, jejíž vlastní kontrola `task.requiredRole !== by.role` tím porovnávala
+hodnotu se sebou samou — nikdy nemohla selhat. Ověřeno přímo v kódu (ne převzato od posudku).
+Navazuje na **Posudek 6, bod 4** (6. 9. 2026, „`ReviewService` bez trusted principal" — tehdy `Z`,
+protože `/review` ještě neexistovalo; od (50)–(52) existuje, takže mezera byla živá).
+
+**Oprava:** nová `IdentityProvider.authorizeRole(actorId, tenantId, requiredScope)`
+(`src/platform/gateway.ts`) — rozhoduje výhradně z identity (tenant + přiřazené `scopes`), nikdy
+z hodnoty, kterou nese request/task. `decideReview()` ji volá dřív, než cokoli předá
+`review.decide()`; při zamítnutí zapíše `kind: "security"` audit (`REVIEW_ROLE_NOT_AUTHORIZED`)
+a vyhodí chybu (existující `/workflow/:id/review/decide` route ji už zachytávala a vracela 400).
+
+**`installation.profile.identities` na farmě neměla žádnou lidskou identitu** (jen
+`svc-orchestrator`/`svc-orchestrator-t7`/`ai-doc-classifier`). Doplněna
+`{"actorId": "access:bass443@gmail.com", "actorType": "human", "tenantId": "tenant-42", "scopes": ["document.reviewer", "document.supervisor"]}`
+— přesný `access:`-string nebyl odhad, ale ověřený z reálného `/audit.json` záznamu živého
+rozhodnutí z (50)–(52) (`grep -o '"access:[^"]*"' ` přes živý audit trail). **Vědomé omezení:**
+identita je vázaná jen na `tenant-42`; `tenant-7` je čistě protistrana bezpečnostních testů
+(SEVERKA.md Tenant Layer), `Identity` má jediné `tenantId`, ne pole — jediný lidský reviewer by
+dnes review úkol pod `tenant-7` rozhodnout nemohl. Přijato jako správný default, ne přehlédnutí.
+
+**Testy (`tests/sec.test.ts`, nový blok `SEC-REV`):** 4 nové (`SEC-REV-001..004`) — autorizovaná
+identita se svým scope ve svém tenantu projde; neznámý actor nikdy neprojde bez ohledu na
+požadovanou roli; známá identita mimo svůj tenant zamítnuta (žádná cross-tenant eskalace); známá
+identita bez přiřazeného scope zamítnuta i ve svém tenantu. **246/246 testů** (242 → 246), typecheck
+(root i `deploy/cloudflare`), `arch`, `farm:check` zelené. Nasazeno na `farm-bass443`.
+
+**Vědomě mimo rozsah dneška:** posudek přinesl ještě MAJOR 2–5 a MEDIUM (Access JWT
+kryptografické ověření, Policy Engine enforcement za popisem descriptoru, email executor durable
+idempotency, `/audit` důvěra ke kompromitované COW, interní endpointy bez service identity) —
+vlastník zvolil ověřit a opravit nejdřív jen MAJOR 1; zbytek zapsán v `docs/POSUDKY.md` Posudek 7
+jako **Z, nezávisle neověřeno** (většina se kryje s už existujícími řádky v `SEVERKA.md`), čeká na
+rozhodnutí, kdy na ně dojde stejnou disciplínou ověření (přečíst kód, ne převzít tvrzení).
+
 ## 2026-09-09 (67) — WF-REV-003 nasazeno a alarm mechanismus živě ověřen dočasnou izolovanou diagnostikou
 
 **Nasazení (66):** `165fe38` nasazen na `farm-bass443` (`node scripts/farm-deploy.mjs farm-bass443`), `/version` potvrdil `gitSha: "165fe38"`. Commit byl do té doby jen lokální — pushnut na `origin/main` (`f351483..165fe38`).

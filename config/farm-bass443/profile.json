@@ -5,7 +5,8 @@
   "identities": [
     { "actorId": "svc-orchestrator", "actorType": "service", "tenantId": "tenant-42", "scopes": ["document.classify", "document.validate", "document.stamp", "document.archive", "mail.ingest", "email.send"], "authStrength": "client-credentials" },
     { "actorId": "svc-orchestrator-t7", "actorType": "service", "tenantId": "tenant-7", "scopes": ["document.classify", "document.validate", "document.stamp", "document.archive", "mail.ingest", "email.send"], "authStrength": "client-credentials" },
-    { "actorId": "ai-doc-classifier", "actorType": "ai-agent", "tenantId": "tenant-42", "scopes": ["document.classify"], "authStrength": "client-credentials" }
+    { "actorId": "ai-doc-classifier", "actorType": "ai-agent", "tenantId": "tenant-42", "scopes": ["document.classify"], "authStrength": "client-credentials" },
+    { "actorId": "access:bass443@gmail.com", "actorType": "human", "tenantId": "tenant-42", "scopes": ["document.reviewer", "document.supervisor"], "authStrength": "oidc-user" }
   ],
   "roles": { "orchestrator": "svc-orchestrator" },
   "credentials": {

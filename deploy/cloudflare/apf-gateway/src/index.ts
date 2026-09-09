@@ -20,6 +20,7 @@ import { iso, SystemClock, type Clock } from "../../../../src/platform/clock.js"
 import { platformError } from "../../../../src/platform/errors.js";
 import { newId } from "../../../../src/platform/ids.js";
 import { Orchestrator, type WorkflowDef } from "../../../../src/platform/orchestrator.js";
+import { IdentityProvider } from "../../../../src/platform/gateway.js";
 import type { Instance } from "../../../../src/platform/journal.js";
 import { ReviewService, type Decision } from "../../../../src/platform/review.js";
 import type { MessageEnvelope, ResultEnvelope } from "../../../../src/platform/types.js";
@@ -481,6 +482,22 @@ export class WorkflowInstance extends DurableObject<Env> {
     if (!inst) throw new Error("no instance in this object");
     const task = this.reviewStore.get(reviewTaskId);
     if (!task) throw new Error(`review task ${reviewTaskId} not found`);
+    // Authorization must come from the actor's own identity (tenant + granted scopes), never from
+    // task.requiredRole itself (found by external review 2026-09-09: the old code passed
+    // `role: task.requiredRole` straight into ReviewService.decide(), so its own
+    // `task.requiredRole !== by.role` check compared a value against itself — always true, never a
+    // real check). `installation.profile.identities` today only lists svc-*/ai-* actors; a human
+    // reviewer must be added there with the scopes they actually hold before they can decide anything.
+    if (!new IdentityProvider(installation.profile.identities).authorizeRole(actorId, task.tenantId, task.requiredRole)) {
+      this.audit.append({
+        kind: "security",
+        tenantId: task.tenantId,
+        actorId,
+        correlationId: task.correlationId,
+        details: { code: "REVIEW_ROLE_NOT_AUTHORIZED", reviewTaskId, requiredRole: task.requiredRole },
+      });
+      throw new Error(`actor ${actorId} is not authorized for role ${task.requiredRole} in tenant ${task.tenantId}`);
+    }
     // Always the same top-level correction field regardless of which step is waiting: the workflow definition
     // (document-intake.v2.json) maps $input.documentType to each step's own expected payload key itself — classify
     // reads it as `documentType`, validate's own `inputs` mapping renames it to `correctedDocumentType` for its

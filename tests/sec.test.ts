@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { FakeDmsAdapter } from "../src/adapters/dms.js";
 import { FakeRegistryAdapter } from "../src/adapters/registry.js";
 import { iso, MINUTE } from "../src/platform/clock.js";
+import { IdentityProvider } from "../src/platform/gateway.js";
 import type { Router } from "../src/platform/router.js";
 import { projectRoot } from "./harness/paths.js";
 import { generateKeyPair, Signer } from "../src/platform/signing.js";
@@ -222,6 +223,34 @@ describe("SEC-CRED signing key rotation", () => {
     // the envelope signed while k1 was valid is still delivered inside validUntil + grace
     slice.clock.advance(14 * MINUTE); // 20 min after signing, 15 min after retirement
     expect((await slice.router.route(signedBeforeRetirement)).status).toBe("SUCCEEDED");
+  });
+});
+
+describe("SEC-REV human review authorization", () => {
+  // Reproduces the real gap found by external review 2026-09-09 and confirmed against
+  // apf-gateway/src/index.ts decideReview(): before the fix, the caller passed
+  // `role: task.requiredRole` straight into ReviewService.decide(), so its own
+  // `task.requiredRole !== by.role` check compared a value against itself — always true,
+  // never a real authorization. authorizeRole() must depend only on the actor's own identity
+  // (tenant + granted scopes), never on a value the request/task itself supplied.
+  const identities = new IdentityProvider([
+    { actorId: "access:reviewer@example.com", actorType: "human", tenantId: "tenant-42", scopes: ["document.reviewer"], authStrength: "oidc-user" },
+  ]);
+
+  it("SEC-REV-001 a real identity holding the required scope in its own tenant is authorized", () => {
+    expect(identities.authorizeRole("access:reviewer@example.com", "tenant-42", "document.reviewer")).toBe(true);
+  });
+
+  it("SEC-REV-002 an unknown actor is never authorized, no matter which role is asked for", () => {
+    expect(identities.authorizeRole("access:attacker@example.com", "tenant-42", "document.reviewer")).toBe(false);
+  });
+
+  it("SEC-REV-003 a known identity is denied outside its own tenant (no cross-tenant escalation)", () => {
+    expect(identities.authorizeRole("access:reviewer@example.com", "tenant-7", "document.reviewer")).toBe(false);
+  });
+
+  it("SEC-REV-004 a known identity is denied a role it was never granted, even claiming its own tenant", () => {
+    expect(identities.authorizeRole("access:reviewer@example.com", "tenant-42", "document.supervisor")).toBe(false);
   });
 });
 
