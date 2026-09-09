@@ -2,6 +2,25 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-09 (77) — `apf-gateway` je Erwin, ne kravička — karta přesunuta
+
+**Pokyn vlastníka** (screenshot Kraviček tabu se zakroužkovanou kartou `apf-gateway`): "toto je
+spíš farmář, ne?" — přesně tak. `apf-gateway` rozhoduje a řídí (Erwin), Kravičky jsou hostitelé,
+co on volá, ne on sám.
+
+**`erwinGatewayCard`** (nová proměnná, sdílí `deployableCard()`/`gatewayRow` s Kravičkami) se
+teď renderuje na Erwinově záložce, ne na Kravičkách. Kravičky panehead počítá `m.deployables.length
+- 1` (bez gateway), toolbar text upraven na "Workerů, co Erwin volá".
+
+**Test nejdřív chytil vlastní chybu ve mně:** `tests/page.test.ts` dostal assertion
+`kravickySection.not.toContain("apf-gateway")` — spadlo, protože `apf-gateway` legitimně zůstává
+zmíněné v self-testovém popisku (`(na <code>apf-gateway</code>)`, vysvětluje kde běží
+classify/validate) i po přesunu karty. Zpřesněno na strukturální kontrolu přesně
+`<div class="p-card-head"><code>apf-gateway</code>` (unikátní vzor `deployableCard()`), ne
+libovolný výskyt řetězce — teď testuje přesně to, co má, ne "je/není tam slovo".
+
+**256/256 testů, typecheck, `arch`, `farm:check` zelené — spuštěno před nasazením.**
+
 ## 2026-09-09 (76) — `/farm` přestavěna na 7 sekcí podle rolí z obrázku, ne podle typu dat
 
 **Pokyn vlastníka po (75):** "proč jsi udělal stránky cca z 95% stejné?" — (74) restrukturovalo

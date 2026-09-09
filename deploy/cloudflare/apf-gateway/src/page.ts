@@ -302,15 +302,15 @@ export function renderFarm(m: FarmModel): string {
     const state = workerStateLabel(d);
     return `<div class="p-card${state === "DOWN" ? " st-crit-card" : ""}"><div class="p-card-head"><code>${esc(d.name)}</code>${stateBadge(state)}</div>${role ? `<div class="p-card-role">${esc(role)}</div>` : ""}<div class="p-card-meta"><span${iso.title ? ` title="${esc(iso.title)}"` : ""}>izolace <b>${esc(iso.label)}</b></span>${detail ? `<span>${esc(detail)}</span>` : ""}</div></div>`;
   };
-  // Not five peers: apf-gateway is the one that decides and calls the other four — a flat table hid that. Grouped so the
-  // hierarchy shows (owner's own observation: "vypadá, že apf-gateway je na stejné úrovni jako ostatní, ne?").
+  // apf-gateway IS Erwin (decides, plans, routes) — not one of the cows he directs. Owner's own observation
+  // (2026-09-09, screenshot of the Kravičky tab): "toto je spíš farmář, ne?" — moved to Erwin's own section.
   const byName = (name: string) => m.deployables.find((d) => d.name === name);
   const gatewayRow = byName("apf-gateway");
   const hostNames = ["apf-document-host", "apf-email-executor", "apf-mail-ingest"];
   const cardSection = (label: string, cardsHtml: string): string => (cardsHtml ? `<div class="p-cardsec"><div class="p-cardsec-label">${esc(label)}</div><div class="p-cardgrid">${cardsHtml}</div></div>` : "");
   const plannedCard = (p: { name: string; role: string }): string => `<div class="p-card"><div class="p-card-head"><code>${esc(p.name)}</code>${stateBadge("NÁVRH")}</div><div class="p-card-role">${esc(p.role)}</div></div>`;
+  const erwinGatewayCard = cardSection("Erwin sám (apf-gateway) — přijímá dokument a rozhoduje, kam ho poslat dál", gatewayRow ? deployableCard(gatewayRow) : "");
   const kravickyCards =
-    cardSection("Řídí tok — přijímá dokument a rozhoduje, kam ho poslat dál", gatewayRow ? deployableCard(gatewayRow) : "") +
     cardSection(
       "Hostitelé, které gateway volá",
       hostNames
@@ -469,6 +469,7 @@ export function renderFarm(m: FarmModel): string {
     <div id="view-erwin" hidden>
       <div class="p-panehead">${ICONS.erwin}<span>Erwin</span><span class="n">2 · plánování</span></div>
       <div class="p-toolbar"><span class="meta">Rozumí požadavku, rozdělí ho na kroky (workflow) a pošle správné kravičce — instalace ${esc(m.installation)}, podpis ${esc(m.gatewaySigning)}</span></div>
+      ${erwinGatewayCard}
       <div class="p-cardsec">
         <div class="p-cardsec-label">Toky, co Erwin umí naplánovat</div>
         <div class="p-cardgrid">${m.workflows.map((w) => `<div class="p-card"><div class="p-card-head"><code>${esc(w)}</code></div></div>`).join("")}</div>
@@ -496,8 +497,8 @@ export function renderFarm(m: FarmModel): string {
     </div>
 
     <div id="view-kravicky" hidden>
-      <div class="p-panehead"><span>Kravičky</span><span class="n">4 · práce · ${m.deployables.length} Workerů</span></div>
-      <div class="p-toolbar"><span class="meta">Zdraví a role jednotlivých Workerů farmy — kdo co dělá a jestli běží</span></div>
+      <div class="p-panehead"><span>Kravičky</span><span class="n">4 · práce · ${m.deployables.length - 1} Workerů</span></div>
+      <div class="p-toolbar"><span class="meta">Zdraví a role jednotlivých Workerů, co Erwin volá — kdo co dělá a jestli běží</span></div>
       <form class="p-toolbar" method="post" action="/farm/self-test">
         <span class="meta">„OK" výš dokazuje jen, že proces odpovídá — self-test skutečně spustí <code>document.classify</code>/<code>document.validate</code> (na <code>apf-gateway</code>) i <code>document.stamp</code>/<code>document.archive</code> (na <code>apf-document-host</code>, přes síť) proti reálnému modelu a porovná s golden výsledkem</span>
         <span class="grow"></span>

@@ -86,12 +86,20 @@ describe("PAGE-FARM-001 renderFarm() actually runs, not just typechecks", () => 
     expect(argosSection).toContain("QUARANTINED");
   });
 
-  it("Erwin's sekce ukazuje workflows a modely", () => {
+  it("Erwin's sekce ukazuje workflows a modely, a apf-gateway je JEHO karta, ne krávy", () => {
     const html = renderFarm(model);
     const erwinSection = html.slice(html.indexOf('id="view-erwin"'), html.indexOf('id="view-argos"'));
     expect(erwinSection).toContain("document-intake");
     expect(erwinSection).toContain("mail-intake");
     expect(erwinSection).toContain("Llama 8B");
+    expect(erwinSection).toContain("apf-gateway");
+
+    // owner's screenshot 2026-09-09: "toto je spíš farmář, ne?" — apf-gateway may still be *mentioned* on
+    // Kravičky (e.g. the self-test description explains classify/validate run there, in <code>), just never
+    // as its own p-card (that exact structural pattern is unique to deployableCard()'s output).
+    const kravickySection = html.slice(html.indexOf('id="view-kravicky"'), html.indexOf('id="view-ohrada"'));
+    expect(kravickySection).not.toContain('<div class="p-card-head"><code>apf-gateway</code>');
+    expect(kravickySection).toContain("apf-document-host");
   });
 
   it("Ohrada filtruje na WAITING/FAILED/UNKNOWN_OUTCOME a nezahrnuje SUCCEEDED ani PURGED", () => {
