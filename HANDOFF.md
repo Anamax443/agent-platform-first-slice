@@ -2,6 +2,36 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-09 (69) — email executor dostal durable idempotency (dokončení posudku 7, MAJOR 4)
+
+**Dokončeno ověření zbylých bodů Posudku 7** (`docs/POSUDKY.md`) proti kódu — MAJOR 2
+(`accessJwtVerified: false` doslova na `index.ts:90`), MAJOR 3 (`checkGrant()` v `src/platform/policy.ts:46-51`
+čte jen `actorId`/`scopes`/`tenants`, nikdy `approval`/`effectFieldValidators`/`isolation`/`rateLimit`
+z `Policy`/`Grant`) — oba potvrzené, oba ponechané jako `Z` (architektonicky velké, mimo dnešní
+rozsah). MEDIUM nález je stejná mezera jako MAJOR 5 (68), zapsáno společně.
+
+**MAJOR 4 opraven:** `apf-email-executor`'s `/dispatch` stavěl `new ExecutorHost({...})` bez
+`idempotency` volby → výchozí `InMemoryIdempotencyStore`, který se zahazuje s každým fresh
+`ExecutorHost` per request — žádná deduplikace napříč požadavky (stejný nález jako `document-host`
+mělo předtím, `SEVERKA.md` to už evidovalo jako otevřený bod). Oprava = přesná kopie
+`apf-document-host`'s už fungujícího a živě ověřeného vzoru, ne nový mechanismus:
+`deploy/cloudflare/apf-email-executor/src/idempotency-ledger.ts` (nový soubor, `IdempotencyLedger`
+Durable Object, identický s document-host verzí — duplikováno, ne sdíleno napříč deployables,
+stejná konvence jako `relay-audit.ts`), `DurableIdempotencyStore` adapter v `index.ts` (taky
+duplikovaný z document-host), `wrangler.jsonc` dostal `durable_objects`/`migrations` binding
+`IDEMPOTENCY` → `IdempotencyLedger`.
+
+**Vědomě bez nového testu:** stejná disciplína jako u `document-host`'s vlastní `IdempotencyLedger`
+(taky nikdy neměla dedikovaný unit test) — dedup KEY logika (`tenantId + handlerId + idempotencyKey`,
+fingerprint, `IDEMPOTENCY_CONFLICT`) je sdílený, host-nezávislý kód v `src/platform/executor-host.ts`
+a je pokrytý `tests/idm.test.ts`; jediné nové je Cloudflare Durable Object plumbing, které
+typecheck/`farm:check` (`wrangler deploy --dry-run` nad novým configem) pokryje staticky, živé
+ověření dokáže chování skutečně — stejný vzor jako `/capabilities` (64) a alarm (67).
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare`), 246/246 testů (beze změny počtu — čistě
+Cloudflare-only kód), `arch`, `farm:check` (10 configů včetně nového `IDEMPOTENCY` bindingu na
+`apf-email-executor`). Nasazeno na `farm-bass443`.
+
 ## 2026-09-09 (68) — Human Review autorizace: tautologická kontrola role opravena (externí posudek 7)
 
 **Nález (externí čtenář, poslán vlastníkem, `docs/POSUDKY.md` Posudek 7, MAJOR 1):** `decideReview()`

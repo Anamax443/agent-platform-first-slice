@@ -15,6 +15,13 @@
   // Read-only: the notification names an artifact id and must check it exists and belongs to the tenant.
   "r2_buckets": [{ "binding": "ARTIFACTS", "bucket_name": "apf-artifacts", "jurisdiction": "eu" }],
 
+  // Durable idempotency ledger (docs/POSUDKY.md Posudek 7 MAJOR 4): this Worker is otherwise stateless, so
+  // ExecutorHost's in-memory dedup map was rebuilt empty on every request — same fix apf-document-host already has.
+  "durable_objects": {
+    "bindings": [{ "name": "IDEMPOTENCY", "class_name": "IdempotencyLedger" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["IdempotencyLedger"] }],
+
   "services": [{ "binding": "GATEWAY", "service": "apf-gateway" }],
 
   "vars": {

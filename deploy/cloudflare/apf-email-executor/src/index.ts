@@ -12,18 +12,23 @@ import type { Artifact, ArtifactReader } from "../../../../src/platform/artifact
 import { SystemClock } from "../../../../src/platform/clock.js";
 import { CredentialResolver } from "../../../../src/platform/credentials.js";
 import { ExecutorHost } from "../../../../src/platform/executor-host.js";
+import type { IdempotencyRecord, IdempotencyStore } from "../../../../src/platform/idempotency.js";
 import { policyFor } from "../../../../src/platform/policy.js";
 import { capabilityNamesOf, catalogOf } from "../../../../src/platform/registry.js";
 import { Router } from "../../../../src/platform/router.js";
 import { KeyRegistry } from "../../../../src/platform/signing.js";
 import { transportFailure } from "../../../../src/platform/transport.js";
-import type { DispatchEnvelope } from "../../../../src/platform/types.js";
+import type { DispatchEnvelope, HandlerOutcome } from "../../../../src/platform/types.js";
+import { IdempotencyLedger } from "./idempotency-ledger.js";
 import { GATEWAY_ORIGIN, RelayAudit } from "./relay-audit.js";
 import { CloudflareSmtpAdapter } from "./smtp-adapter.js";
+
+export { IdempotencyLedger };
 
 export interface Env {
   EMAIL: SendEmail;
   ARTIFACTS: R2Bucket;
+  IDEMPOTENCY: DurableObjectNamespace<IdempotencyLedger>;
   GATEWAY: Fetcher;
   HOST_ID: string;
   ISOLATION_CLASS: string;
@@ -111,6 +116,35 @@ const artifactIdOf = (envelope: DispatchEnvelope): string | undefined => {
   return typeof params?.artifactId === "string" ? params.artifactId : undefined;
 };
 
+/** Adapts the durable per-key IdempotencyLedger object to ExecutorHost's IdempotencyStore contract.
+ * Duplicated from apf-document-host/src/index.ts's DurableIdempotencyStore — same reasoning as
+ * idempotency-ledger.ts itself: each deployable stays self-contained. */
+class DurableIdempotencyStore implements IdempotencyStore {
+  constructor(private readonly namespace: DurableObjectNamespace<IdempotencyLedger>) {}
+
+  private stubFor(dedupKey: string): DurableObjectStub<IdempotencyLedger> {
+    return this.namespace.get(this.namespace.idFromName(dedupKey));
+  }
+
+  async peek(dedupKey: string): Promise<IdempotencyRecord | undefined> {
+    const r = await this.stubFor(dedupKey).peek(dedupKey);
+    return r && { status: r.status, fingerprint: r.fingerprint, ...(r.outcomeJson ? { outcome: JSON.parse(r.outcomeJson) as HandlerOutcome } : {}) };
+  }
+
+  async reserveOrGet(dedupKey: string, fingerprint: string): Promise<IdempotencyRecord | undefined> {
+    const r = await this.stubFor(dedupKey).reserveOrGet(dedupKey, fingerprint);
+    return r && { status: r.status, fingerprint: r.fingerprint, ...(r.outcomeJson ? { outcome: JSON.parse(r.outcomeJson) as HandlerOutcome } : {}) };
+  }
+
+  async resolve(dedupKey: string, outcome: HandlerOutcome): Promise<void> {
+    await this.stubFor(dedupKey).resolve(dedupKey, JSON.stringify(outcome));
+  }
+
+  async release(dedupKey: string): Promise<void> {
+    await this.stubFor(dedupKey).release(dedupKey);
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
@@ -145,7 +179,7 @@ export default {
         const artifacts = new ReadOnlyArtifactStore(fetched);
 
         const credentials = new CredentialResolver(credentialTable(installation, secretsOf(), { [email.SEND_HANDLER_ID]: [email.SMTP_CREDENTIAL] }), audit);
-        const executor = new ExecutorHost({ hostId: env.HOST_ID, clock, audit, credentials });
+        const executor = new ExecutorHost({ hostId: env.HOST_ID, clock, audit, credentials, idempotency: new DurableIdempotencyStore(env.IDEMPOTENCY) });
 
         const policy = policyFor(installation.policies, "email.send", "1");
         const recipients: RecipientDirectory = (tenantId, ref) => policy.recipientAllowlist?.[tenantId]?.[ref];
