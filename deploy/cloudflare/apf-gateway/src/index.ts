@@ -19,13 +19,14 @@ import { sha256Bytes, type Artifact } from "../../../../src/platform/artifacts.j
 import { iso, SystemClock, type Clock } from "../../../../src/platform/clock.js";
 import { platformError } from "../../../../src/platform/errors.js";
 import { newId } from "../../../../src/platform/ids.js";
+import type { CapabilityRecord } from "../../../../src/platform/registry.js";
 import { Orchestrator, type WorkflowDef } from "../../../../src/platform/orchestrator.js";
 import { IdentityProvider } from "../../../../src/platform/gateway.js";
 import type { Instance } from "../../../../src/platform/journal.js";
 import { ReviewService, type Decision } from "../../../../src/platform/review.js";
 import type { MessageEnvelope, ResultEnvelope } from "../../../../src/platform/types.js";
 import { WORKFLOW_NAMES, workflowDef } from "../../../../src/platform/workflow.js";
-import { renderError, renderFarm, renderHome, renderInstance, renderSelfTest, type AuditLogRow, type FarmInstanceRow, type FarmStats, type InboxItem, type InstanceView, type ModelsInfo, type SelfTestRow, type Wired } from "./page.js";
+import { renderError, renderFarm, renderHome, renderInstance, renderSelfTest, type AuditLogRow, type CapabilityRow, type FarmInstanceRow, type FarmStats, type InboxItem, type InstanceView, type ModelsInfo, type SelfTestRow, type Wired } from "./page.js";
 import { describeModels, gatewayCatalog, wirePlatform, type Wiring } from "./platform-wiring.js";
 import { runSelfTest, SELF_TEST_WORKFLOW_ID } from "./self-test.js";
 import { D1_AUDIT_DDL, DDL, SqliteArtifacts, SqliteAudit, SqliteJournal, SqliteReviewTaskStore } from "./store.js";
@@ -115,6 +116,19 @@ const deployableInfo = async (fetcher: Fetcher, origin: string): Promise<{ ok: b
     return { ok: r.ok, status: r.status, body: await r.json().catch(() => undefined) };
   } catch (e) {
     return { ok: false, status: 0, body: { error: String(e) } };
+  }
+};
+
+/** A remote deployable's own /capabilities (its declared endpoint, docs/SEVERKA.md "Agent Registry") — never thrown,
+ * an unreachable Worker just contributes zero rows to the Kravičky lifecycle table. */
+const capabilitiesOf = async (fetcher: Fetcher, origin: string): Promise<CapabilityRecord[]> => {
+  try {
+    const r = await fetcher.fetch(`${origin}/capabilities`);
+    if (!r.ok) return [];
+    const body = (await r.json().catch(() => undefined)) as { capabilities?: CapabilityRecord[] } | undefined;
+    return body?.capabilities ?? [];
+  } catch {
+    return [];
   }
 };
 
@@ -938,7 +952,7 @@ export default {
       const rawLimit = Number(url.searchParams.get("limit"));
       const instanceLimit = [15, 30, 50, 100, 200].includes(rawLimit) ? rawLimit : 15;
       const instanceWindow = url.searchParams.get("window") ?? "";
-      const [documentHost, emailExecutor, mailIngest, fakes, instances, log, inbox, stats] = await Promise.all([
+      const [documentHost, emailExecutor, mailIngest, fakes, instances, log, inbox, stats, documentHostCaps, emailExecutorCaps] = await Promise.all([
         deployableInfo(env.DOCUMENT_HOST, "https://apf-document-host.internal"),
         deployableInfo(env.EMAIL_EXECUTOR, "https://apf-email-executor.internal"),
         deployableInfo(env.MAIL_INGEST, "https://apf-mail-ingest.internal"),
@@ -947,7 +961,16 @@ export default {
         auditLog(env, 50),
         inboxDetail(env),
         farmStats(env),
+        capabilitiesOf(env.DOCUMENT_HOST, "https://apf-document-host.internal"),
+        capabilitiesOf(env.EMAIL_EXECUTOR, "https://apf-email-executor.internal"),
       ]);
+      // Admission Gate visibility (HANDOFF 70/71): the same LifecycleRegistry the Router enforces, read here only —
+      // this page never writes it. Quarantining a module still means editing config/<installation>/lifecycle.json
+      // and redeploying (a human decision with its own commit), not a button on this page.
+      const capabilities: CapabilityRow[] = [...gatewayCatalog(), ...documentHostCaps, ...emailExecutorCaps].map((c) => ({
+        ...c,
+        lifecycleStatus: installation.lifecycle.statusOf(c.module),
+      }));
       return html(
         renderFarm({
           installation: INSTALLATION,
@@ -960,6 +983,7 @@ export default {
             { name: "apf-mail-ingest", ...mailIngest },
             { name: "apf-fakes", ...fakes },
           ],
+          capabilities,
           instances,
           instanceLimit,
           instanceWindow,

@@ -2,6 +2,31 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-09 (72) — `/farm`'s Kravičky dostaly tabulku "Kapability — Admission Gate"
+
+**Pokyn vlastníka:** ať `/farm` "umožňuje monitoring nasazování nových kraviček, jejich testování" a
+odpovídá farma-obrázku (Erwin/Argos/krávy/ohrada/Policy tabule s "Kdo smí co"). **Vědomě nepostaveno:**
+žádná fingovaná "testing pipeline" pro verification runner, co ještě neexistuje (SEVERKA.md Admission
+Gate řádek) — jen to, co je dnes skutečně živé a pravdivé.
+
+**Nová tabulka v záložce Kravičky, pod stávajícím přehledem Workerů:** jeden řádek na kapabilitu
+(`document.classify`, `document.stamp`, `email.send`, …), sloučeno ze tří zdrojů —
+`gatewayCatalog()` (in-process), a živé `GET /capabilities` z `apf-document-host`/`apf-email-executor`
+přes service binding (nová `capabilitiesOf()`, stejný vzorec jako `deployableInfo()`). Každý řádek
+ukazuje modul, **živý `lifecycleStatus`** (`installation.lifecycle.statusOf(module)` — přesně ta
+samá `LifecycleRegistry`, co `Router` skutečně vynucuje, ne kopie/odhad), riziko a izolaci z
+descriptoru, side effect. **Stránka jen čte** — karanténa se pořád mění editací
+`config/<instalace>/lifecycle.json` a deployem (řádek nadpisu to říká výslovně), žádné tlačítko na
+zápis odsud (stejná hranice jako u `/chaos`, co se taky mění jen přes `wrangler kv`).
+
+**"Testování":** self-test tlačítko a jeho výsledková tabulka na téže záložce (nezměněno) tohle
+už pokrývá — nová tabulka jen dává admission-gate kontext (riziko/izolace/lifecycle) vedle toho,
+co self-test skutečně ověřuje.
+
+**Beze změny testů** (čistě HTML rendering + fetch přes service binding, žádná nová business
+logika — stejná disciplína jako `/capabilities` (64)). 249/249 testů, typecheck (root i
+`deploy/cloudflare`), `arch`, `farm:check` zelené.
+
 ## 2026-09-09 (71) — Admission Gate: `lifecycleStatus` rozšířen na všechny Routery na farmě
 
 **Dokončení (70) na pokyn vlastníka ("dodělej"):** mechanismus byl dřív wire-nutý jen na

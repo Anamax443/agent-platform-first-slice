@@ -83,11 +83,28 @@ export interface AuditLogRow {
   details: unknown;
 }
 
+/** One row of the Admission Gate table (Kravičky tab): a registered capability + the descriptor's own risk/isolation
+ * claim + its live lifecycleStatus (HANDOFF 70/71, docs/SEVERKA.md "Admission Gate") — read-only here, the Router
+ * is what actually enforces it. */
+export interface CapabilityRow {
+  capability: string;
+  version: string;
+  module: string;
+  componentVersion?: string;
+  riskClass?: string;
+  sideEffects?: string;
+  isolationClass?: string;
+  trustClass?: string;
+  usesLlm?: boolean;
+  lifecycleStatus: "ACTIVE" | "QUARANTINED";
+}
+
 export interface FarmModel {
   installation: string;
   gitSha: string;
   gatewaySigning: string;
   deployables: DeployableStatus[];
+  capabilities: CapabilityRow[];
   instances: FarmInstanceRow[];
   instanceLimit: number;
   instanceWindow: string;
@@ -180,6 +197,8 @@ const STATE_CLASS: Record<string, string> = {
   OK: "st-ok",
   "OK (dvojník)": "st-ok",
   SUCCEEDED: "st-ok",
+  ACTIVE: "st-ok",
+  QUARANTINED: "st-crit",
   DOWN: "st-crit",
   FAILED: "st-crit",
   WAITING: "st-warn",
@@ -227,6 +246,20 @@ const isolationLabel = (raw: string): { label: string; title?: string } => {
   if (raw === "LOGICAL") return { label: "sdílený proces", title: "LOGICAL: běží ve stejném Workeru jako další úkol, ale s odděleným přístupovým klíčem" };
   if (raw === "PRINCIPAL") return { label: "vlastní proces", title: "PRINCIPAL: běží zcela odděleně, s vlastním přístupovým klíčem — nejsilnější izolace" };
   return { label: raw };
+};
+
+/** Risk class → Czech label + a colour cue for HIGH/CRITICAL (docs/POSUDKY.md Posudek 7, Admission Gate discussion). */
+const RISK_LABEL: Record<string, string> = { LOW: "nízké", MEDIUM: "střední", HIGH: "vysoké", CRITICAL: "kritické" };
+const riskBadge = (raw: string | undefined): string => {
+  if (!raw) return `<span class="dim">—</span>`;
+  const cls = raw === "HIGH" || raw === "CRITICAL" ? "st-crit" : raw === "MEDIUM" ? "st-warn" : "st-ok";
+  return `<span class="${cls}">${esc(RISK_LABEL[raw] ?? raw)}</span>`;
+};
+
+/** One row of the Admission Gate table: capability, which module serves it, its risk/isolation claim, live lifecycle. */
+const capabilityRow = (c: CapabilityRow): string => {
+  const iso = isolationLabel(c.isolationClass ?? "");
+  return `<tr><td><code>${esc(c.capability)}</code>/v${esc(c.version)}${c.usesLlm ? ' <small class="dim" title="volá jazykový model">🤖</small> ' : ""}<br><small class="dim">${esc(c.module)}</small></td>${stateTd(c.lifecycleStatus)}<td>${riskBadge(c.riskClass)}</td><td${iso.title ? ` title="${esc(iso.title)}"` : ""}>${esc(iso.label || "—")}</td><td class="dim">${esc(c.sideEffects ?? "—")}</td></tr>`;
 };
 
 /**
@@ -401,6 +434,13 @@ export function renderFarm(m: FarmModel): string {
       <div class="p-gridwrap"><table class="p-table">
         <thead><tr><th>Worker</th><th class="c-state">Stav</th><th title="Jak přísně je oddělený od ostatních">Izolace</th><th>Umí</th></tr></thead>
         <tbody>${kravickyRows}</tbody>
+      </table></div>
+
+      <div class="p-panehead"><span>Kapability — Admission Gate</span><span class="n">${m.capabilities.length}, ${m.capabilities.filter((c) => c.lifecycleStatus === "QUARANTINED").length} v karanténě</span></div>
+      <div class="p-toolbar"><span class="meta">Co každá kravička skutečně smí vykonat — riziko a izolace jsou vlastní tvrzení komponenty (descriptor), stav vpravo je to, co <b>Router doopravdy vynucuje</b> před každým dispatchem. Karanténa (config/&lt;instalace&gt;/lifecycle.json) se mění deploym, ne odsud — tahle stránka jen čte, nikdy nezapisuje</span></div>
+      <div class="p-gridwrap"><table class="p-table">
+        <thead><tr><th>Kapabilita</th><th class="c-state">Lifecycle</th><th>Riziko</th><th title="Jak přísně je oddělený od ostatních">Izolace</th><th>Side effect</th></tr></thead>
+        <tbody>${m.capabilities.length ? m.capabilities.map(capabilityRow).join("") : '<tr><td colspan="5" class="dim">zatím žádné (vzdálení Workeři neodpověděli)</td></tr>'}</tbody>
       </table></div>
     </div>
 
