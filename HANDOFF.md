@@ -41,6 +41,14 @@ typecheck (root i `deploy/cloudflare`), `arch`, `farm:check` zelené.
 **`docs/SEVERKA.md`:** nová položka "Admission Gate (module lifecycle)" — co je hotové, co zbývá
 (automatický verification runner nad `verificationProfiles`, auto-quarantine, rozšíření na zbylé hosty).
 
+**Živě ověřeno na `farm-bass443`** (s dočasným svolením vlastníka — jde o skutečné vypnutí živé
+kapability, ne jen diagnostiku): `config/farm-bass443/lifecycle.json` na chvíli nastaven
+`{"document-executor-host": "QUARANTINED"}`, nasazeno, `POST /farm/self-test` ukázal **všechny**
+`document.stamp`/`document.archive` fixtures selhat s `error.code: "MODULE_QUARANTINED"`,
+`class: "POLICY"` — `document.classify`/`document.validate`/`email.send` beze změny (karanténa je
+skutečně per-modul, ne globální vypínač). Soubor pak smazán, redeploy, `/farm/self-test` zpátky na
+`40/41` (stejně jako před testem), `gitSha` potvrzuje čistý stav `e340afa`.
+
 ## 2026-09-09 (69) — email executor dostal durable idempotency (dokončení posudku 7, MAJOR 4)
 
 **Dokončeno ověření zbylých bodů Posudku 7** (`docs/POSUDKY.md`) proti kódu — MAJOR 2
