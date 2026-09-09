@@ -2,6 +2,20 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-09 (66) — WF-REV-003 časové expirace dostaly funkční cestu na farmě: Durable Object Alarm
+
+**Nález (asistent, čtením `docs/SEVERKA.md` proti kódu, ne od vlastníka):** řádek „Human Review" v `SEVERKA.md` byl zastaralý stejným způsobem jako dřív Execution Engine (62) — popisoval stav před (50)/(52) jako aktuální, ačkoli decision cesta (`/review/decide` → `decideReview()`) je hotová a živě ověřená od (52). Skutečná zbývající mezera: `orchestrator.applyReviewExpiries()` (WF-REV-003 — `EXPIRE_TO_FAILED`/`EXPIRE_TO_CANCELLED`/`ESCALATE`/`CREATE_NEW_REVIEW`) existuje a je otestovaný (`tests/wf.test.ts`) od (50)/M1, ale nic na farmě ho nikdy nevolalo — ruční rozhodnutí fungovalo, časové politiky ne.
+
+**Proč ne cron:** `apf-gateway`'s `scheduled()` řeší jen R2 inbox. Globální cron nemůže vyjmenovat „všechny instance dnes ve `WAITING(REVIEW)`" — každá `WorkflowInstance` je vlastní Durable Object bez sdíleného adresáře. Řešení: každá instance si sama nastaví alarm na deadline svého vlastního otevřeného review úkolu — žádný nový registr, žádný zásah do zmrazených kontraktů.
+
+**`deploy/cloudflare/apf-gateway/src/index.ts`:** nová `rearmReviewAlarm()` (čte `this.reviewStore.all()`, najde nejbližší `expiresAt` mezi úkoly se `status: OPEN`, `ctx.storage.setAlarm(...)`, nebo `ctx.storage.deleteAlarm()` když žádný není) volaná po každém místě, kde může vzniknout nebo se změnit review úkol: konec `intake()`, konec `mailIntake()`, konec `decideReview()`. Nová `alarm()` metoda (Durable Object built-in hook) sestaví orchestrátor přes existující `orchestratorFor()`, zavolá `applyReviewExpiries()` (beze změny — už řeší FAILED/CANCELLED/ESCALATE/NEW_REVIEW), zrcadlí audit do D1 (`copyOut()`) a znovu zavolá `rearmReviewAlarm()` (ESCALATE nechává instanci čekat na nový úkol s pozdějším deadline, alarm se musí přenastavit na ten).
+
+**Vědomě mimo rozsah:** žádný nový lokální test — `alarm()` je čistě Cloudflare Durable Object chování (žádný `vitest-pool-workers` v projektu), stejná disciplína jako `/capabilities` (63)/(65): typecheck a `farm:check` ho pokryjí staticky, živé ověření (jako u (50)–(52)) dokáže chování skutečně.
+
+**`docs/SEVERKA.md`:** Human Review řádek opraven na aktuální stav (decision cesta hotová a ověřená, expirace teď implementovaná, čeká na nasazení a živé ověření).
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare/tsconfig.json`), 242 testů (beze změny počtu — Cloudflare-only kód, viz výše), arch, farm:check. **Nenasazeno zatím** — nasazení a živé ověření (krátký `expiresInMs` review úkol, počkat na alarm, potvrdit transition) je bezprostředně další krok, stejná rigoróznost jako (50)–(52).
+
 ## 2026-09-09 (65) — `/farm`'s Deník dostal živý terminál ("vidět co se šustne")
 
 **Pokyn vlastníka:** chtěl v GUI "terminal kde uvidím co se šustne" — vybral (AskUserQuestion) nejdřív živý pohled na existující D1 audit trail, skutečný `wrangler tail`-styl přes Tail Workers zapsat do `SEVERKA.md` jako budoucí krok, ne stavět hned.

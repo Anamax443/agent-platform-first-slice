@@ -279,6 +279,7 @@ export class WorkflowInstance extends DurableObject<Env> {
     this.recordClassifyResult(input.workflowId, input.tenantId, inst.correlationId);
     this.ctx.waitUntil(this.copyOut());
     this.ctx.waitUntil(this.visualStampIfApplicable(original, input.workflowId));
+    await this.rearmReviewAlarm();
     return this.view() as InstanceView;
   }
 
@@ -304,6 +305,7 @@ export class WorkflowInstance extends DurableObject<Env> {
     });
     await orchestrator.run(inst.workflowId);
     this.ctx.waitUntil(this.copyOut());
+    await this.rearmReviewAlarm();
     return this.view() as InstanceView;
   }
 
@@ -440,6 +442,35 @@ export class WorkflowInstance extends DurableObject<Env> {
   }
 
   /**
+   * WF-REV-003 time-based expiry (found 2026-09-09, docs/SEVERKA.md Human Review row): `orchestrator
+   * .applyReviewExpiries()` and `review.expire()` existed and were tested since (50), but nothing on the farm ever
+   * called them — decide() worked, but a review nobody decided on just sat there past its deadline. A single global
+   * `scheduled()` cron can't do it: there is no directory of "every WorkflowInstance currently WAITING(REVIEW)",
+   * each one is its own Durable Object. So each instance arms its own alarm for its own open review's deadline
+   * instead — no new registry, no change to the frozen contracts.
+   */
+  private async rearmReviewAlarm(): Promise<void> {
+    const openDeadlines = this.reviewStore.all().filter((t) => t.status === "OPEN").map((t) => Date.parse(t.expiresAt));
+    if (openDeadlines.length === 0) {
+      await this.ctx.storage.deleteAlarm();
+      return;
+    }
+    await this.ctx.storage.setAlarm(Math.min(...openDeadlines));
+  }
+
+  /** Fires at the earliest open review's deadline (armed by rearmReviewAlarm()). ESCALATE keeps the instance waiting
+   * on a new task with a later deadline, so the alarm re-arms itself for that one too. */
+  async alarm(): Promise<void> {
+    const inst = this.journal.list()[0];
+    if (!inst) return;
+    const wiring = this.wiring();
+    const orchestrator = this.orchestratorFor(workflowDef(inst.workflow), wiring);
+    orchestrator.applyReviewExpiries();
+    this.ctx.waitUntil(this.copyOut());
+    await this.rearmReviewAlarm();
+  }
+
+  /**
    * The missing decision path (found 2026-09-08, docs/OPONENTURA-BEZPECNOST-STABILITA.md #1): a human can now
    * actually resolve a WAITING(REVIEW) instance instead of it staying stuck forever. Reuses the orchestrator's own
    * resumeAfterReview() as-is (already tested, WF-REV-003/004) — the only thing missing was a durable place for the
@@ -464,6 +495,7 @@ export class WorkflowInstance extends DurableObject<Env> {
     this.ctx.waitUntil(this.copyOut());
     const original = this.artifacts.list().find((a) => !a.derivedFrom);
     if (original) this.ctx.waitUntil(this.visualStampIfApplicable(original, inst.workflowId));
+    await this.rearmReviewAlarm();
     return updated;
   }
 
