@@ -2,6 +2,35 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-09 (80) — nový deployable ai-farma-web: veřejný zákaznický web, katalog COW ze společného zdroje
+
+**Pokyn vlastníka:** dostal statický mockup zákaznického webu (6 stránek, žádné knihovny) s poznámkou "mazlivý
+frontend a tvrdý backend" a požadavkem nasadit ho na Cloudflare tak, aby "čerpal z projektu
+agent-platform-first-slice" — konkrétně: web žije a nasazuje se **z tohoto repa** (`deploy/cloudflare/ai-farma-web/`),
+ne z odděleného repa (první pokus s vlastním repem `ai-farma-web` zrušen a nahrazen touto variantou).
+
+**`docs/cow-catalog.json`** (repo root): nový kanonický seznam COW/kapabilit — `live`/`plan`/`future` podle toho, co
+je skutečně postavené (`src/components/*`: document-classifier, document-validator, document-executor-host,
+mail-ingest, email-executor = live; `PLANNED_DEPLOYABLES` v `page.ts` = plan; zbytek beze stopy v kódu = future).
+Marketingový web tohle nesmí tvrdit sám za sebe.
+
+**`deploy/cloudflare/ai-farma-web/`**: static-assets-only Worker (žádný `main`, `assets.directory: "."`), bez Access,
+bez instalačního overlaye/secrets/bindingů — na rozdíl od pěti farm deployables se nenasazuje přes
+`farm-config.mjs`/`farm-deploy.mjs` (nemá co parametrizovat per instalaci), jen `wrangler deploy` z adresáře.
+`scripts/build-cow-catalog.mjs` čte `../../../docs/cow-catalog.json` a přepisuje karty na `index.html`
+(teaser: jen live/plan) a `kravy.html` (celý katalog) mezi značkami `<!-- COW-CATALOG:START/END -->` — oprava
+i drobné nekonzistence mezi stránkami (VAT/ARES COW měla jiné emoji a text na každé stránce).
+
+Hero ilustrace (3,7 MB PNG) zkomprimována na WebP+JPEG přes `<picture>` (~370 KB) — sharp nainstalován jednorázově
+do scratchpadu, ne do repa.
+
+`arch-dep.mjs` `checkWranglerConfigs` prochází i tenhle adresář automaticky (žádná zvláštní výjimka potřeba, nemá
+`src/`); `farm-check.mjs`/`farm-config.mjs` `deployables()` ho taky sebraly samy — `12 configs (2 instalace × 6
+deployables) OK`. **259/259 testů**, typecheck, `arch`, `farm:check` zelené — ověřeno v prohlížeči (Edge headless
+screenshot) před commitem, ne jen staticky.
+
+**Zbývá:** skutečné `wrangler deploy` (účet bass443, potvrzen), pak zapsat živou URL sem.
+
 ## 2026-09-09 (79) — jednotlivé kontroly vidět a jednotlivě vyvolatelné; historie do D1
 
 **Pokyn vlastníka po (78):** "ale já chci vidět kontroly a i si je být schopen individuálně

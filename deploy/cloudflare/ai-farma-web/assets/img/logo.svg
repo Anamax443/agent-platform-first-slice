@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 64" role="img" aria-label="AI Farma">
+  <g fill="none" stroke="#2c7a3f" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M28 52V29"/>
+    <path d="M28 30C12 27 10 12 10 12c13-2 23 4 24 15"/>
+    <path d="M28 30C43 27 49 14 49 14c-13-3-23 3-25 13"/>
+  </g>
+  <text x="67" y="31" font-family="Arial, sans-serif" font-weight="800" font-size="24" fill="#15231a">AI FARMA</text>
+  <text x="67" y="49" font-family="Arial, sans-serif" font-weight="600" font-size="10" fill="#5b6c60" letter-spacing="1">BEZPEČNÍ AI PRACOVNÍCI PRO FIRMY</text>
+</svg>

@@ -1,0 +1,15 @@
+{
+  // Public customer-facing marketing site — deliberately its own Worker, not a route on apf-gateway: apf-gateway is
+  // entirely behind Cloudflare Access (the farm's admin/document-intake surface), this is the opposite, unauthenticated
+  // by design. Lives in this repo (not a separate one) so the COW catalog on kravy.html/index.html can be generated
+  // from docs/cow-catalog.json — the same source of truth the platform itself uses for live/planned/future — instead
+  // of drifting as hand-duplicated marketing copy. No installation overlay, no secrets, no bindings: unlike the five
+  // farm deployables this isn't parameterized per installation, so it deploys directly with plain `wrangler deploy`
+  // from this directory, not through scripts/farm-config.mjs / farm-deploy.mjs.
+  "$schema": "../../../node_modules/wrangler/config-schema.json",
+  "name": "ai-farma-web",
+  "compatibility_date": "2026-09-09",
+  "assets": {
+    "directory": "."
+  }
+}
