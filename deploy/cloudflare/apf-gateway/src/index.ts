@@ -1029,6 +1029,15 @@ export default {
     // Same treatment (owner: "a proč to není v GUI?" — docs/MATICE-ODPOVEDNOSTI.md alone wasn't reachable from the console).
     if (url.pathname === "/MATICE-ODPOVEDNOSTI.html" && request.method === "GET") return html(MATICE_ODPOVEDNOSTI_HTML);
 
+    // The "AI FARMA" illustration (owner's own concept art, embedded on /farm's Přehled) — a fixed asset in R2
+    // (uploaded once via `wrangler r2 object put`, not through any app code path), cached hard since the object
+    // never changes without a new key.
+    if (url.pathname === "/farm/ilustrace.png" && request.method === "GET") {
+      const obj = await env.ARTIFACTS.get("assets/farma-ilustrace.png");
+      if (!obj) return Response.json({ error: "NOT_FOUND" }, { status: 404 });
+      return new Response(obj.body, { headers: { "content-type": "image/png", "cache-control": "public, max-age=31536000, immutable" } });
+    }
+
     if (url.pathname === "/" && request.method === "GET") return html(renderHome(homeModel(request, env)));
 
     if (url.pathname === "/intake" && request.method === "POST") {

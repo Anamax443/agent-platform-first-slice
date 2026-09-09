@@ -63,6 +63,7 @@ describe("PAGE-FARM-001 renderFarm() actually runs, not just typechecks", () => 
     expect(html).toContain('data-style="farm"');
     expect(html).toContain("Kravičky");
     expect(html).toContain("Argos hlídá");
+    expect(html).toContain('src="/farm/ilustrace.png"');
   });
 
   it("Kapability karty jsou seskupené po modulu (pen), jedna karta pro každou kapabilitu", () => {

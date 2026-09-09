@@ -2,6 +2,27 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-09 (75) — vlastníkova "AI FARMA" ilustrace na Přehledu
+
+**Pokyn vlastníka:** "klidně do stránek vlož i ten obrázek farmy" — vlastní koncept-art (2,9 MB
+PNG, 1536×1024), poslaný do chatu, uložen na `C:\Users\trnkam\Downloads\farma_.png`.
+
+**Nahráno do R2** (`apf-artifacts`, EU jurisdikce — `wrangler r2 bucket list` bez `--jurisdiction
+eu` bucket vůbec nevidí, i když je to ten samý účet): `wrangler r2 object put
+apf-artifacts/assets/farma-ilustrace.png --file ... --jurisdiction eu --remote`. Jednorázový
+nahraný asset, ne přes žádnou app cestu — stejný vzor jako `document.stamp`'s originály v R2,
+jen ne přes intake.
+
+**Nová route `GET /farm/ilustrace.png`** (`apf-gateway/src/index.ts`) čte z R2, `cache-control:
+public, max-age=31536000, immutable` (fixní asset, nikdy se nemění bez nového klíče). `<img
+class="p-hero">` nahoře na záložce Přehled, `object-fit: cover` (ořízne na max-height 260px,
+neroztáhne).
+
+**Otestováno před nasazením** (znovu `tests/page.test.ts`, `[[never-deploy-untested]]`): nová
+assertion na `src="/farm/ilustrace.png"` v `renderFarm()` výstupu. 253/253 testů, typecheck,
+`arch`, `farm:check` zelené — a živě ověřeno, že `/farm/ilustrace.png` skutečně vrací obrázek
+(ne 404), ne jen že se HTML vyrenderovalo.
+
 ## 2026-09-09 (74) — Kravičky/Kapability jako karty v ohradách, ne tabulky; `tests/page.test.ts`
 
 **Pokyn vlastníka po (73):** "si děláš prdel vždyť to je skoro stejný" — (73) byla jen paleta na

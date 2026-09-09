@@ -402,6 +402,7 @@ export function renderFarm(m: FarmModel): string {
 
   <main class="p-main">
     <div id="view-prehled">
+      <img class="p-hero" src="/farm/ilustrace.png" alt="AI Farma — Erwin, Argos a kravičky ve svých ohradách" loading="lazy">
       <div class="p-panehead"><span>Přehled</span><span class="n">farma ${esc(m.installation)}</span></div>
       <div class="p-toolbar">
         <span class="meta">instalace ${esc(m.installation)}</span>

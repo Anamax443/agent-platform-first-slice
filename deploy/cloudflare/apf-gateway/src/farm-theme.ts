@@ -92,4 +92,7 @@ export const FARM_THEME_CSS = String.raw`
 .ui[data-style="farm"] .pen-label { display: flex; align-items: center; gap: 7px; font-family: var(--font-display); font-weight: 650; margin-bottom: 10px; }
 .ui[data-style="farm"] .pen-label .icon { color: var(--accent); }
 .ui[data-style="farm"] .pen .p-cardgrid { margin-bottom: 6px; }
+
+/* The owner's own "AI FARMA" concept art, top of Přehled — a fixed R2 asset, not generated. */
+.ui[data-style="farm"] .p-hero { display: block; width: 100%; max-height: 260px; object-fit: cover; object-position: center 30%; border-bottom: var(--border-w) solid var(--border); }
 `;
