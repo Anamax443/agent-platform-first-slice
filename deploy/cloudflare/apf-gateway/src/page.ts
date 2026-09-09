@@ -273,6 +273,25 @@ export function renderFarm(m: FarmModel): string {
   // (a skeleton that hasn't been wired into the flow yet). "OK" here must mean the second thing too.
   const up = m.deployables.filter((d) => workerReady(d)).length;
 
+  // Declared first: penHead() (built further down, inside an IIFE that runs immediately) reads ICONS too —
+  // a const only hoists its binding, not its value, so anything that reads it before this line throws
+  // ReferenceError (found live on farm-bass443, this exact bug, HANDOFF 73's own first deploy).
+  const icon = (paths: string): string => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
+  const ICONS = {
+    menu: icon('<line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/>'),
+    prehled: icon('<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>'),
+    // A cow face: two small ear/horn curves, a rounded muzzle, two spot dots, a smile — deliberately simple at 16px.
+    kravicky: icon('<path d="M6 8.5a2.3 2.3 0 0 1 3-2.2M18 8.5a2.3 2.3 0 0 0-3-2.2"/><rect x="5" y="8" width="14" height="10" rx="5"/><circle cx="9.5" cy="13" r=".7" fill="currentColor" stroke="none"/><circle cx="14.5" cy="13" r=".7" fill="currentColor" stroke="none"/><path d="M10 16.5c.7.5 1.3.5 2 0"/>'),
+    // A dog face (Argos): ears, head, two eyes — same visual family as kravicky, so the two feel like they belong together.
+    argos: icon('<path d="M6 9c-1.2-.8-1.6-2.4 0-3.2.8.4 1.2 1.2 1.2 2M18 9c1.2-.8 1.6-2.4 0-3.2-.8.4-1.2 1.2-1.2 2"/><path d="M6 10.5a6 6 0 0 1 12 0c0 3.5-2.7 6-6 6s-6-2.5-6-6Z"/><circle cx="10" cy="11" r=".6" fill="currentColor" stroke="none"/><circle cx="14" cy="11" r=".6" fill="currentColor" stroke="none"/>'),
+    // A holding pen: three posts, two rails.
+    ohrada: icon('<line x1="5" y1="4" x2="5" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="19" y1="4" x2="19" y2="20"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/>'),
+    instance: icon('<line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="14" y2="18"/>'),
+    denik: icon('<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/>'),
+    novy: icon('<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>'),
+    diagram: icon('<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><line x1="8" y1="7.5" x2="10.5" y2="16.2"/><line x1="16" y1="7.5" x2="13.5" y2="16.2"/><line x1="8.5" y1="6" x2="15.5" y2="6"/>'),
+  };
+
   const deployableRow = (d: DeployableStatus): string => {
     const b = (d.body ?? {}) as Record<string, unknown>;
     const caps = Array.isArray(b.capabilities) ? (b.capabilities as unknown[]).join(", ") : undefined;
@@ -350,21 +369,6 @@ export function renderFarm(m: FarmModel): string {
   };
   const terminalSeed = [...m.auditLog].reverse().map(terminalLine).join("");
 
-  const icon = (paths: string): string => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
-  const ICONS = {
-    menu: icon('<line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/>'),
-    prehled: icon('<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>'),
-    // A cow face: two small ear/horn curves, a rounded muzzle, two spot dots, a smile — deliberately simple at 16px.
-    kravicky: icon('<path d="M6 8.5a2.3 2.3 0 0 1 3-2.2M18 8.5a2.3 2.3 0 0 0-3-2.2"/><rect x="5" y="8" width="14" height="10" rx="5"/><circle cx="9.5" cy="13" r=".7" fill="currentColor" stroke="none"/><circle cx="14.5" cy="13" r=".7" fill="currentColor" stroke="none"/><path d="M10 16.5c.7.5 1.3.5 2 0"/>'),
-    // A dog face (Argos): ears, head, two eyes — same visual family as kravicky, so the two feel like they belong together.
-    argos: icon('<path d="M6 9c-1.2-.8-1.6-2.4 0-3.2.8.4 1.2 1.2 1.2 2M18 9c1.2-.8 1.6-2.4 0-3.2-.8.4-1.2 1.2-1.2 2"/><path d="M6 10.5a6 6 0 0 1 12 0c0 3.5-2.7 6-6 6s-6-2.5-6-6Z"/><circle cx="10" cy="11" r=".6" fill="currentColor" stroke="none"/><circle cx="14" cy="11" r=".6" fill="currentColor" stroke="none"/>'),
-    // A holding pen: three posts, two rails.
-    ohrada: icon('<line x1="5" y1="4" x2="5" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="19" y1="4" x2="19" y2="20"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/>'),
-    instance: icon('<line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="14" y2="18"/>'),
-    denik: icon('<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/>'),
-    novy: icon('<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>'),
-    diagram: icon('<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><line x1="8" y1="7.5" x2="10.5" y2="16.2"/><line x1="16" y1="7.5" x2="13.5" y2="16.2"/><line x1="8.5" y1="6" x2="15.5" y2="6"/>'),
-  };
 
   const bodyHtml = `<div class="ui" id="ui" data-layout="side-nav" data-style="farm">
   <div class="p-title">
