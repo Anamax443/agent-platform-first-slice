@@ -58,30 +58,57 @@ const model: FarmModel = {
 };
 
 describe("PAGE-FARM-001 renderFarm() actually runs, not just typechecks", () => {
-  it("renders without throwing and carries the farm theme + new sections", () => {
+  it("renders without throwing and carries the farm theme + hero image", () => {
     const html = renderFarm(model);
     expect(html).toContain('data-style="farm"');
-    expect(html).toContain("Kravičky");
-    expect(html).toContain("Argos hlídá");
     expect(html).toContain('src="/farm/ilustrace.png"');
   });
 
-  it("Kapability karty jsou seskupené po modulu (pen), jedna karta pro každou kapabilitu", () => {
+  it("all 7 role sections exist (owner's request 2026-09-09: strana podle rolí z obrázku, ne podle typu dat)", () => {
     const html = renderFarm(model);
-    expect(html).toContain(">document-executor-host<");
-    expect(html).toContain(">email-executor<");
-    expect(html).toContain("document.stamp");
-    expect(html).toContain("document.archive");
-    expect(html).toContain("QUARANTINED");
+    for (const id of ["view-zadani", "view-erwin", "view-argos", "view-kravicky", "view-ohrada", "view-vysledek", "view-denik"]) {
+      expect(html).toContain(`id="${id}"`);
+    }
+    expect(html).toContain(">Erwin<");
+    expect(html).toContain("Argos hlídá");
+    expect(html).toContain(">Kravičky<");
+    expect(html).toContain(">Výsledek<");
+    expect(html).toContain("Audit — Deník");
+  });
+
+  it("Kapability karty (na Argosovi) jsou seskupené po modulu (pen), jedna karta pro každou kapabilitu", () => {
+    const html = renderFarm(model);
+    const argosSection = html.slice(html.indexOf('id="view-argos"'), html.indexOf('id="view-kravicky"'));
+    expect(argosSection).toContain(">document-executor-host<");
+    expect(argosSection).toContain(">email-executor<");
+    expect(argosSection).toContain("document.stamp");
+    expect(argosSection).toContain("document.archive");
+    expect(argosSection).toContain("QUARANTINED");
+  });
+
+  it("Erwin's sekce ukazuje workflows a modely", () => {
+    const html = renderFarm(model);
+    const erwinSection = html.slice(html.indexOf('id="view-erwin"'), html.indexOf('id="view-argos"'));
+    expect(erwinSection).toContain("document-intake");
+    expect(erwinSection).toContain("mail-intake");
+    expect(erwinSection).toContain("Llama 8B");
   });
 
   it("Ohrada filtruje na WAITING/FAILED/UNKNOWN_OUTCOME a nezahrnuje SUCCEEDED ani PURGED", () => {
     const html = renderFarm(model);
     expect(html).toContain("Ohrada (1)");
-    const ohradaSection = html.slice(html.indexOf('id="view-ohrada"'), html.indexOf('id="view-instance"'));
+    const ohradaSection = html.slice(html.indexOf('id="view-ohrada"'), html.indexOf('id="view-vysledek"'));
     expect(ohradaSection).toContain("wf-waiting1");
     expect(ohradaSection).not.toContain("wf-ok1");
     expect(ohradaSection).not.toContain("wf-purged1");
+  });
+
+  it("Výsledek sekce ukazuje statistiky i poslední instance (SUCCEEDED tam být má, na rozdíl od Ohrady)", () => {
+    const html = renderFarm(model);
+    const vysledekSection = html.slice(html.indexOf('id="view-vysledek"'), html.indexOf('id="view-denik"'));
+    expect(vysledekSection).toContain("wf-waiting1");
+    expect(vysledekSection).toContain("wf-ok1");
+    expect(vysledekSection).toContain("12"); // totalProcessed
   });
 
   it("renders cleanly with zero capabilities and zero instances (empty-state paths)", () => {

@@ -278,14 +278,16 @@ export function renderFarm(m: FarmModel): string {
   const icon = (paths: string): string => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
   const ICONS = {
     menu: icon('<line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/>'),
-    prehled: icon('<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>'),
     // A cow face: two small ear/horn curves, a rounded muzzle, two spot dots, a smile — deliberately simple at 16px.
     kravicky: icon('<path d="M6 8.5a2.3 2.3 0 0 1 3-2.2M18 8.5a2.3 2.3 0 0 0-3-2.2"/><rect x="5" y="8" width="14" height="10" rx="5"/><circle cx="9.5" cy="13" r=".7" fill="currentColor" stroke="none"/><circle cx="14.5" cy="13" r=".7" fill="currentColor" stroke="none"/><path d="M10 16.5c.7.5 1.3.5 2 0"/>'),
     // A dog face (Argos): ears, head, two eyes — same visual family as kravicky, so the two feel like they belong together.
     argos: icon('<path d="M6 9c-1.2-.8-1.6-2.4 0-3.2.8.4 1.2 1.2 1.2 2M18 9c1.2-.8 1.6-2.4 0-3.2-.8.4-1.2 1.2-1.2 2"/><path d="M6 10.5a6 6 0 0 1 12 0c0 3.5-2.7 6-6 6s-6-2.5-6-6Z"/><circle cx="10" cy="11" r=".6" fill="currentColor" stroke="none"/><circle cx="14" cy="11" r=".6" fill="currentColor" stroke="none"/>'),
     // A holding pen: three posts, two rails.
     ohrada: icon('<line x1="5" y1="4" x2="5" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="19" y1="4" x2="19" y2="20"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/>'),
-    instance: icon('<line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="14" y2="18"/>'),
+    // Erwin's own hat: brim + dome, the same simple silhouette family as kravicky/argos.
+    erwin: icon('<path d="M4 15.5c0-1 3.6-2 8-2s8 1 8 2"/><path d="M8 13.5c0-3.3 1.8-6 4-6s4 2.7 4 6"/>'),
+    // A result: checkmark in a circle.
+    vysledek: icon('<circle cx="12" cy="12" r="9"/><polyline points="8 12.5 10.8 15.3 16 9.5"/>'),
     denik: icon('<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/>'),
     novy: icon('<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>'),
     diagram: icon('<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><line x1="8" y1="7.5" x2="10.5" y2="16.2"/><line x1="16" y1="7.5" x2="13.5" y2="16.2"/><line x1="8.5" y1="6" x2="15.5" y2="6"/>'),
@@ -389,42 +391,47 @@ export function renderFarm(m: FarmModel): string {
   </div>
 
   <nav class="p-nav">
-    <a class="p-navitem" href="#prehled" data-view="prehled" title="Přehled">${ICONS.prehled}<span class="lbl">Přehled</span></a>
-    <a class="p-navitem" href="#kravicky" data-view="kravicky" title="Kravičky">${ICONS.kravicky}<span class="lbl">Kravičky</span></a>
+    <a class="p-navitem" href="#zadani" data-view="zadani" title="Zadání požadavku">${ICONS.novy}<span class="lbl">Zadání požadavku</span></a>
+    <a class="p-navitem" href="#erwin" data-view="erwin" title="Erwin — plánování">${ICONS.erwin}<span class="lbl">Erwin</span></a>
+    <a class="p-navitem" href="#argos" data-view="argos" title="Argos — kontrola">${ICONS.argos}<span class="lbl">Argos</span></a>
+    <a class="p-navitem" href="#kravicky" data-view="kravicky" title="Kravičky — práce">${ICONS.kravicky}<span class="lbl">Kravičky</span></a>
     <a class="p-navitem" href="#ohrada" data-view="ohrada" title="Ohrada — čeká na člověka">${ICONS.ohrada}<span class="lbl">Ohrada${ohradaInstances.length ? ` (${ohradaInstances.length})` : ""}</span></a>
-    <a class="p-navitem" href="#instance" data-view="instance" title="Poslední instance">${ICONS.instance}<span class="lbl">Poslední instance</span></a>
-    <a class="p-navitem" href="#denik" data-view="denik" title="Deník">${ICONS.denik}<span class="lbl">Deník</span></a>
-    <a class="p-navitem" href="#novy" data-view="novy" title="Nový dokument">${ICONS.novy}<span class="lbl">Nový dokument</span></a>
+    <a class="p-navitem" href="#vysledek" data-view="vysledek" title="Výsledek">${ICONS.vysledek}<span class="lbl">Výsledek</span></a>
+    <a class="p-navitem" href="#denik" data-view="denik" title="Audit">${ICONS.denik}<span class="lbl">Audit</span></a>
     <div class="p-navsec">Farma</div>
     <a class="p-navitem" href="/VYVOJOVY-DIAGRAM.html" title="Jak to funguje — bezpečnostní řetězec a běh toku">${ICONS.diagram}<span class="lbl">Jak to funguje</span></a>
     <a class="p-navitem" href="/MATICE-ODPOVEDNOSTI.html" title="Kdo (kravička/kapabilita) odpovídá za co">${ICONS.diagram}<span class="lbl">Matice odpovědnosti</span></a>
   </nav>
 
   <main class="p-main">
-    <div id="view-prehled">
+    <div id="view-zadani">
       <img class="p-hero" src="/farm/ilustrace.png" alt="AI Farma — Erwin, Argos a kravičky ve svých ohradách" loading="lazy">
-      <div class="p-panehead"><span>Přehled</span><span class="n">farma ${esc(m.installation)}</span></div>
-      <div class="p-toolbar">
-        <span class="meta">instalace ${esc(m.installation)}</span>
-        <span class="vsep"></span>
-        <span class="meta">podpis ${esc(m.gatewaySigning)}</span>
-        <span class="vsep"></span>
-        <span class="meta">${up}/${m.deployables.length} Workerů OK · ${m.instances.length} instancí · ${m.auditLog.length} v deníku</span>
-        <span class="grow"></span>
-        <a class="p-btn" href="#novy">Nový dokument</a>
-      </div>
-      <div class="p-panehead"><span>Statistiky</span><span class="n">za celou dobu</span></div>
-      <div class="p-stats">
-        <div class="p-stat"><b>${m.stats.totalProcessed}</b><span>zpracováno celkem</span></div>
-        <div class="p-stat"><b>${m.stats.processedToday}</b><span>dnes</span></div>
-        <div class="p-stat"><b>${formatDuration(m.stats.avgProcessingMs)}</b><span>průměrný čas zpracování</span></div>
-      </div>
-      ${
-        m.stats.byType.length
-          ? `<div class="p-toolbar"><span class="meta">Podle typu dokumentu (classify)</span></div>
-      <div class="p-bars">${barChart(m.stats.byType)}</div>`
-          : ""
-      }
+      <div class="p-panehead">${ICONS.novy}<span>Zadání požadavku</span><span class="n">1 · vstup</span></div>
+      <div class="p-toolbar"><span class="meta">Ruční jednotlivé podání — stejná cesta (<code>startIntake</code>) jako dávkový příjem, jen výsledek uvidíš hned, ne až po dalším běhu cronu</span></div>
+      <form class="p-form" method="post" action="/intake" enctype="multipart/form-data">
+        <label for="novy-file">Soubor: PDF, fotka (jpg, png, webp), docx, ISDOC / XML, txt, md, eml (do 4 MB)</label>
+        <input id="novy-file" type="file" name="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.docx,.isdoc,.xml,.txt,.md,.eml,application/pdf,image/*,application/xml,text/xml,text/plain,message/rfc822">
+        <label for="novy-text">Nebo vložený text (faktura, smlouva, e-mail…)</label>
+        <textarea id="novy-text" name="text" placeholder="Když je nahraný soubor, text se nepoužije."></textarea>
+        <label for="novy-workflow">Tok</label>
+        <select id="novy-workflow" name="workflow">${m.workflows.map((w) => `<option value="${esc(w)}"${w === "document-intake" ? " selected" : ""}>${esc(w)}</option>`).join("")}</select>
+        <label for="novy-model">Model AI pro posouzení (classify)</label>
+        ${
+          "error" in m.models
+            ? `<div class="meta" style="color:var(--crit)">Bez modelu nelze spustit tok. ${esc(m.models.error)}</div>`
+            : `<select id="novy-model" name="model">${m.models.choices
+                .map((c) =>
+                  c.unavailable
+                    ? `<option value="${esc(c.key)}" disabled>${esc(c.label)} — nedostupné: ${esc(c.unavailable)}</option>`
+                    : `<option value="${esc(c.key)}"${c.isDefault ? " selected" : ""}>${esc(c.label)}${c.isDefault ? " (výchozí)" : ""}</option>`,
+                )
+                .join("")}</select>`
+        }
+        <label for="novy-stampText">Text razítka (nepovinné)</label>
+        <input id="novy-stampText" type="text" name="stampText" placeholder="VALIDATED INVOICE">
+        <button class="p-btn" type="submit">Odeslat do toku</button>
+      </form>
+
       <div class="p-panehead"><span>Dávkový příjem (inbox)</span><span class="n">${m.inbox.pending.length} čeká${m.inbox.failed.length ? ` · ${m.inbox.failed.length} selhalo` : ""}</span></div>
       <form class="p-toolbar" method="post" action="/farm/inbox" enctype="multipart/form-data">
         <input type="file" name="files" multiple>
@@ -459,8 +466,37 @@ export function renderFarm(m: FarmModel): string {
       }
     </div>
 
+    <div id="view-erwin" hidden>
+      <div class="p-panehead">${ICONS.erwin}<span>Erwin</span><span class="n">2 · plánování</span></div>
+      <div class="p-toolbar"><span class="meta">Rozumí požadavku, rozdělí ho na kroky (workflow) a pošle správné kravičce — instalace ${esc(m.installation)}, podpis ${esc(m.gatewaySigning)}</span></div>
+      <div class="p-cardsec">
+        <div class="p-cardsec-label">Toky, co Erwin umí naplánovat</div>
+        <div class="p-cardgrid">${m.workflows.map((w) => `<div class="p-card"><div class="p-card-head"><code>${esc(w)}</code></div></div>`).join("")}</div>
+      </div>
+      <div class="p-cardsec">
+        <div class="p-cardsec-label">Modely pro posouzení dokumentu (document.classify)</div>
+        <div class="p-cardgrid">${
+          "error" in m.models
+            ? `<div class="p-card st-crit-card"><div class="p-card-role">${esc(m.models.error)}</div></div>`
+            : m.models.choices
+                .map(
+                  (c) =>
+                    `<div class="p-card${c.unavailable ? " st-crit-card" : ""}"><div class="p-card-head">${esc(c.label)}${c.isDefault ? stateBadge("ACTIVE") : ""}</div><div class="p-card-role">${esc(c.provider)} · <code>${esc(c.model)}</code>${c.unavailable ? `<br>nedostupné: ${esc(c.unavailable)}` : ""}</div></div>`,
+                )
+                .join("")
+        }</div>
+      </div>
+      <div class="p-toolbar"><span class="meta">${up}/${m.deployables.length} Workerů OK · ${m.instances.length} instancí zpracováno · ${m.auditLog.length} v deníku</span></div>
+    </div>
+
+    <div id="view-argos" hidden>
+      <div class="p-panehead">${ICONS.argos}<span>Argos hlídá — Kapability (Admission Gate)</span><span class="n">3 · kontrola · ${m.capabilities.length}, ${m.capabilities.filter((c) => c.lifecycleStatus === "QUARANTINED").length} v karanténě</span></div>
+      <div class="p-toolbar"><span class="meta">Co každá kravička skutečně smí vykonat, seskupeno po modulu jako ohrada — riziko a izolace jsou vlastní tvrzení komponenty (descriptor), stav na kartě je to, co <b>Router doopravdy vynucuje</b> před každým dispatchem. Karanténa (config/&lt;instalace&gt;/lifecycle.json) se mění deploym, ne odsud — tahle stránka jen čte, nikdy nezapisuje</span></div>
+      ${m.capabilities.length ? penGrid : '<div class="pen-empty">zatím žádné (vzdálení Workeři neodpověděli)</div>'}
+    </div>
+
     <div id="view-kravicky" hidden>
-      <div class="p-panehead"><span>Kravičky</span><span class="n">${m.deployables.length} Workerů</span></div>
+      <div class="p-panehead"><span>Kravičky</span><span class="n">4 · práce · ${m.deployables.length} Workerů</span></div>
       <div class="p-toolbar"><span class="meta">Zdraví a role jednotlivých Workerů farmy — kdo co dělá a jestli běží</span></div>
       <form class="p-toolbar" method="post" action="/farm/self-test">
         <span class="meta">„OK" výš dokazuje jen, že proces odpovídá — self-test skutečně spustí <code>document.classify</code>/<code>document.validate</code> (na <code>apf-gateway</code>) i <code>document.stamp</code>/<code>document.archive</code> (na <code>apf-document-host</code>, přes síť) proti reálnému modelu a porovná s golden výsledkem</span>
@@ -468,10 +504,6 @@ export function renderFarm(m: FarmModel): string {
         <button class="p-btn" type="submit">Spustit self-test</button>
       </form>
       ${kravickyCards}
-
-      <div class="p-panehead">${ICONS.argos}<span>Argos hlídá — Kapability (Admission Gate)</span><span class="n">${m.capabilities.length}, ${m.capabilities.filter((c) => c.lifecycleStatus === "QUARANTINED").length} v karanténě</span></div>
-      <div class="p-toolbar"><span class="meta">Co každá kravička skutečně smí vykonat, seskupeno po modulu jako ohrada — riziko a izolace jsou vlastní tvrzení komponenty (descriptor), stav na kartě je to, co <b>Router doopravdy vynucuje</b> před každým dispatchem. Karanténa (config/&lt;instalace&gt;/lifecycle.json) se mění deploym, ne odsud — tahle stránka jen čte, nikdy nezapisuje</span></div>
-      ${m.capabilities.length ? penGrid : '<div class="pen-empty">zatím žádné (vzdálení Workeři neodpověděli)</div>'}
     </div>
 
     <div id="view-ohrada" hidden>
@@ -483,10 +515,23 @@ export function renderFarm(m: FarmModel): string {
       </table></div>
     </div>
 
-    <div id="view-instance" hidden>
+    <div id="view-vysledek" hidden>
+      <div class="p-panehead">${ICONS.vysledek}<span>Výsledek</span><span class="n">5 · ${m.instances.length} instancí</span></div>
+      <div class="p-toolbar"><span class="meta">Výsledek se složí, uloží a zaznamená — statistika za celou dobu a poslední zpracované dokumenty</span></div>
+      <div class="p-stats">
+        <div class="p-stat"><b>${m.stats.totalProcessed}</b><span>zpracováno celkem</span></div>
+        <div class="p-stat"><b>${m.stats.processedToday}</b><span>dnes</span></div>
+        <div class="p-stat"><b>${formatDuration(m.stats.avgProcessingMs)}</b><span>průměrný čas zpracování</span></div>
+      </div>
+      ${
+        m.stats.byType.length
+          ? `<div class="p-toolbar"><span class="meta">Podle typu dokumentu (classify)</span></div>
+      <div class="p-bars">${barChart(m.stats.byType)}</div>`
+          : ""
+      }
       <div class="p-panehead"><span>Poslední instance</span><span class="n">${m.instances.length}</span></div>
       <div class="p-toolbar"><span class="meta">Pohled na dokument: řádek se souborem a stavem, klikni pro rozbalení kroků (classify → validate → stamp)</span></div>
-      <form class="p-toolbar" method="get" action="/farm#instance">
+      <form class="p-toolbar" method="get" action="/farm#vysledek">
         <span class="meta">Zobrazit</span>
         <select name="limit" onchange="this.form.submit()">${[15, 30, 50, 100, 200].map((n) => `<option value="${n}"${n === m.instanceLimit ? " selected" : ""}>${n}</option>`).join("")}</select>
         <span class="meta">dokumentů</span>
@@ -508,7 +553,7 @@ export function renderFarm(m: FarmModel): string {
     </div>
 
     <div id="view-denik" hidden>
-      <div class="p-panehead"><span>Deník</span><span class="n">posledních ${m.auditLog.length}</span></div>
+      <div class="p-panehead">${ICONS.denik}<span>Audit — Deník</span><span class="n">posledních ${m.auditLog.length}</span></div>
       <div class="p-toolbar">
         <span class="meta">Živý terminál: syrový auditní záznam napříč celou farmou, jeden řádek = jedna událost, nejnovější dole (jako <code>tail -f</code>)</span>
         <span class="grow"></span>
@@ -520,33 +565,6 @@ export function renderFarm(m: FarmModel): string {
         <thead><tr><th class="c-date">Čas</th><th>Druh</th><th>Instance</th><th>Capability</th><th>Detail</th></tr></thead>
         <tbody>${denikRows}</tbody>
       </table></div>
-    </div>
-    <div id="view-novy" hidden>
-      <div class="p-panehead"><span>Nový dokument</span><span class="n">document-intake</span></div>
-      <div class="p-toolbar"><span class="meta">Ruční jednotlivé podání — stejná cesta (startIntake) jako dávkový příjem, jen výsledek uvidíš hned, ne až po dalším běhu cronu</span></div>
-      <form class="p-form" method="post" action="/intake" enctype="multipart/form-data">
-        <label for="novy-file">Soubor: PDF, fotka (jpg, png, webp), docx, ISDOC / XML, txt, md, eml (do 4 MB)</label>
-        <input id="novy-file" type="file" name="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.docx,.isdoc,.xml,.txt,.md,.eml,application/pdf,image/*,application/xml,text/xml,text/plain,message/rfc822">
-        <label for="novy-text">Nebo vložený text (faktura, smlouva, e-mail…)</label>
-        <textarea id="novy-text" name="text" placeholder="Když je nahraný soubor, text se nepoužije."></textarea>
-        <label for="novy-workflow">Tok</label>
-        <select id="novy-workflow" name="workflow">${m.workflows.map((w) => `<option value="${esc(w)}"${w === "document-intake" ? " selected" : ""}>${esc(w)}</option>`).join("")}</select>
-        <label for="novy-model">Model AI pro posouzení (classify)</label>
-        ${
-          "error" in m.models
-            ? `<div class="meta" style="color:var(--crit)">Bez modelu nelze spustit tok. ${esc(m.models.error)}</div>`
-            : `<select id="novy-model" name="model">${m.models.choices
-                .map((c) =>
-                  c.unavailable
-                    ? `<option value="${esc(c.key)}" disabled>${esc(c.label)} — nedostupné: ${esc(c.unavailable)}</option>`
-                    : `<option value="${esc(c.key)}"${c.isDefault ? " selected" : ""}>${esc(c.label)}${c.isDefault ? " (výchozí)" : ""}</option>`,
-                )
-                .join("")}</select>`
-        }
-        <label for="novy-stampText">Text razítka (nepovinné)</label>
-        <input id="novy-stampText" type="text" name="stampText" placeholder="VALIDATED INVOICE">
-        <button class="p-btn" type="submit">Odeslat do toku</button>
-      </form>
     </div>
   </main>
 
@@ -606,10 +624,10 @@ ${FARM_THEME_CSS}
 </head><body>${bodyHtml}
 <script>
 (function () {
-  var VIEWS = ["prehled", "kravicky", "ohrada", "instance", "denik", "novy"];
+  var VIEWS = ["zadani", "erwin", "argos", "kravicky", "ohrada", "vysledek", "denik"];
   function applyView() {
-    var v = (location.hash || "#prehled").slice(1);
-    if (VIEWS.indexOf(v) === -1) v = "prehled";
+    var v = (location.hash || "#zadani").slice(1);
+    if (VIEWS.indexOf(v) === -1) v = "zadani";
     VIEWS.forEach(function (id) {
       var el = document.getElementById("view-" + id);
       if (el) el.hidden = id !== v;

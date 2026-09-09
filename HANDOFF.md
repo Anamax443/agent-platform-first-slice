@@ -2,6 +2,37 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-09 (76) — `/farm` přestavěna na 7 sekcí podle rolí z obrázku, ne podle typu dat
+
+**Pokyn vlastníka po (75):** "proč jsi udělal stránky cca z 95% stejné?" — (74) restrukturovalo
+jen 2 sekce z ~6 (Kravičky→karty), zbytek beze změny, proto pořád "skoro stejné". Přesná
+specifikace: "samostatná sekce na zadávání požadavku / samostatně Erwin / samostatně Argos /
+samostatně kravičky / samostatně výsledek / i role mají svoje místo" — podle legendy "ROLE NA
+FARMĚ" z ilustrace. Potvrzeno (`AskUserQuestion`) 7 samostatných záložek, ne jedna dlouhá stránka.
+
+**Nová navigace, 1:1 na obrázkovou legendu a číslovaný tok (1→5):**
+1. **Zadání požadavku** — sloučeno z bývalého "Nový dokument" + "Dávkový příjem (inbox)" (obojí
+   bylo o vstupu, dřív rozházené mezi Přehled a samostatnou záložku); hero ilustrace nahoře, tady,
+   ne na obecném Přehledu, co už neexistuje
+2. **Erwin** — nová sekce: toky (workflows) + modely pro classify jako karty — "co Erwin umí
+   naplánovat", instalace/podpis/agregátní počty dole
+3. **Argos** — Kapability/Admission Gate (z (74)), teď **oddělené** od Kraviček do vlastní záložky
+4. **Kravičky** — jen zdraví Workerů + self-test tlačítko, bez Kapability tabulky
+5. **Ohrada** — beze změny (byla už samostatná)
+6. **Výsledek** — sloučeno ze statistik (byly na starém Přehledu) + Poslední instance (byla
+   samostatná záložka) — obojí je "výsledek práce"
+7. **Audit** (interně `view-denik`) — Deník, beze změny, jen panehead teď říká "Audit — Deník"
+
+**2 nové ikony** (`erwin`: klobouk, `vysledek`: fajfka v kolečku), 2 osiřelé smazané (`prehled`,
+`instance` — nahrazené novými view jmény). Default landing view `#zadani` (dřív `#prehled`) —
+sedí na obrázek, kde tok začíná "1 Uživatel/Vstup".
+
+**Tentokrát rovnou testováno, ne až po nálezu živého bugu:** `tests/page.test.ts` rozšířen na
+7 testů — kontroluje, že všech 7 `id="view-*"` existuje, že Erwin/Argos/Výsledek sekce mají
+správný obsah v ohraničené části HTML (ne jen "je to někde na stránce"). Spuštěno PŘED nasazením
+(`[[never-deploy-untested]]`). **256/256 testů** (253→256), typecheck, `arch`, `farm:check`
+zelené.
+
 ## 2026-09-09 (75) — vlastníkova "AI FARMA" ilustrace na Přehledu
 
 **Pokyn vlastníka:** "klidně do stránek vlož i ten obrázek farmy" — vlastní koncept-art (2,9 MB
