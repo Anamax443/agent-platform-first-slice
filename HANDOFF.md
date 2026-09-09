@@ -2,6 +2,27 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-09 (71) — Admission Gate: `lifecycleStatus` rozšířen na všechny Routery na farmě
+
+**Dokončení (70) na pokyn vlastníka ("dodělej"):** mechanismus byl dřív wire-nutý jen na
+`apf-document-host` (referenční implementace, ověřená živě). Teď zapojen do zbylých míst, kde
+vůbec nějaký `Router` existuje: `deploy/cloudflare/apf-gateway/src/platform-wiring.ts`
+(`document.classify`/`document.validate`/`mail.ingest` běží in-process na gateway) a
+`deploy/cloudflare/apf-email-executor/src/index.ts` (`email.send`). **`apf-mail-ingest` vlastní
+Router nemá** — jen přijme mail a předá gateway `/mail-intake`, `mail.ingest` samotné se
+vykonává na gateway, takže tam už bylo pokryto první úpravou platform-wiring.ts.
+
+**Beze změny testů** — jde čistě o zapojení stejného, už proto testovaného mechanismu
+(`SEC-LCY-001..003`) do dalších volacích míst, ne o novou logiku (stejná úvaha jako u rozšíření
+`IdempotencyLedger` na email-executor v (69)). 249/249 testů, typecheck (root i
+`deploy/cloudflare`), `arch`, `farm:check` zelené.
+
+**Vědomě bez druhého živého "flip a revert" testu:** (70) už mechanismus prokázal živě na
+`document-host` s dočasným svolením vlastníka (skutečné vypnutí kapability). Tohle je stejný,
+strukturně identický kód na dvou dalších, taky již existujících Routerech — opakovat stejné
+riziko (dočasně vypnout `email.send`/`document.classify` na živé farmě) bez nového svolení
+nedává smysl, když typecheck/farm:check dry-run + nezměněná sada testů dává srovnatelnou jistotu.
+
 ## 2026-09-09 (70) — Admission Gate, první krok: `lifecycleStatus` (ACTIVE/QUARANTINED), Router ho vynucuje
 
 **Kontext (rozhovor s vlastníkem, "kdy už půjde kupovat nové krávy"):** externí posudek navrhl COW

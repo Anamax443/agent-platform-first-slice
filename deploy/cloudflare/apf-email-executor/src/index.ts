@@ -187,7 +187,7 @@ export default {
         executor.register(email.createEmailSendHandler({ artifacts, smtp, credentials, recipients, clock }));
 
         const { registry } = keyRegistryFrom(env.SIGNING_PUBLIC_KEYS);
-        const router = new Router({ registry, clock, audit });
+        const router = new Router({ registry, clock, audit, lifecycle: installation.lifecycle });
         router.register({
           descriptor: email.descriptor as never,
           policies: { "email.send": policy },

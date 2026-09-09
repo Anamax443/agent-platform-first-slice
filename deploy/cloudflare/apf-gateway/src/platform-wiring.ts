@@ -138,7 +138,7 @@ export function wirePlatform(o: WiringOptions): Wiring {
   const registry = new KeyRegistry();
   registry.add({ keyId: o.keyId, publicKey: createPublicKey(privateKey), validFrom: iso(new Date(0)) });
   const gateway = new Gateway({ identities: new IdentityProvider(profile.identities), signer: new Signer(o.keyId, privateKey), clock: o.clock });
-  const router = new Router({ registry, clock: o.clock, audit: o.audit });
+  const router = new Router({ registry, clock: o.clock, audit: o.audit, lifecycle: o.installation.lifecycle });
   const policy = (capability: string) => policyFor(o.installation.policies, capability, "1");
 
   router.register({
