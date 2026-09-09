@@ -2,6 +2,37 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-09 (73) — `/farm` dostala vlastní farmářské téma a záložku Ohrada (autonomní návrh)
+
+**Pokyn vlastníka:** "chtěl jsem od tebe úplně nové stránky dle tvého autonomního názoru, aby to
+vycházelo z obrázku farmy" — (72) byla jen přílepek tabulky do existujícího bank/SaaS vzhledu, ne
+skutečný redesign. Než jsem začal, navrhl jsem směr a nechal potvrdit (`AskUserQuestion`): teplejší
+paleta + ploché ikony (ne doslovné kreslené postavičky — na operátorské konzole s reálnými čísly by
+nefungovaly) + Kravičky jako ohrady podle modulu + nová záložka Ohrada. Potvrzeno, postaveno.
+
+**Nové `deploy/cloudflare/apf-gateway/src/farm-theme.ts`:** `FARM_THEME_CSS` — sibling "style" vedle
+vendorovaného `bank.ts`'s `BANK_SAAS_MODERN_CSS` (`bank.ts` zůstal nedotčený, je to verbatim kopie
+z Interface-Par, "do not hand-edit"), stejný `--l-*`/`--d-*` token kontrakt, co `BANK_UI_CSS` čte —
+jen teplá paleta (pšeničná/krémová `--l-pane`, stodolová červená `--l-accent`, pastvinová zelená
+`--l-ok`) místo indigo. `renderFarm()` teď skládá `BANK_UI_CSS` (strukturální mechanika, beze
+změny) + `FARM_THEME_CSS` (nové), `data-style="saas-modern"` → `data-style="farm"`.
+
+**Nové ikony** (`page.ts` ICONS): kravička (obličej, dvě oušk a/rohy, dvě skvrny, úsměv), Argos
+(psí hlava, stejná vizuální rodina jako kravička), ohrada (plot — tři sloupky, dvě laťky) — všechny
+ve stejném stroke-based stylu jako existující ikony, 16px, `currentColor`.
+
+**Kravičky:** tabulka "Kapability" (72) teď seskupená po modulu jako ohrady (`pen-head` řádky s
+ikonou kravičky), panehead přejmenován na "Argos hlídá — Kapability (Admission Gate)" s ikonou psa.
+
+**Nová záložka Ohrada:** filtruje `m.instances` (stejná data jako Poslední instance, žádný nový
+dotaz — tedy stejné poctivé omezení na `instanceLimit`/`instanceWindow`) na `WAITING`/`FAILED`/
+`UNKNOWN_OUTCOME` — instance, co čekají na člověka nebo skončily chybou. Počet v názvu nav položky
+(`Ohrada (N)`). Refaktorováno: `instanceRows` sdílí stavbu řádku (`instanceRowsOf()`) s Ohradou,
+místo duplikace.
+
+**Beze změny testů** (čistě HTML/CSS rendering, žádná nová business logika). 249/249 testů,
+typecheck (root i `deploy/cloudflare`), `arch`, `farm:check` zelené.
+
 ## 2026-09-09 (72) — `/farm`'s Kravičky dostaly tabulku "Kapability — Admission Gate"
 
 **Pokyn vlastníka:** ať `/farm` "umožňuje monitoring nasazování nových kraviček, jejich testování" a

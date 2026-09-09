@@ -3,7 +3,8 @@
 import type { Artifact } from "../../../../src/platform/artifacts.js";
 import type { AuditRecord } from "../../../../src/platform/audit.js";
 import type { Instance } from "../../../../src/platform/journal.js";
-import { BANK_SAAS_MODERN_CSS, BANK_UI_CSS } from "./bank.js";
+import { BANK_UI_CSS } from "./bank.js";
+import { FARM_THEME_CSS } from "./farm-theme.js";
 
 export interface FarmStats {
   totalProcessed: number;
@@ -259,7 +260,7 @@ const riskBadge = (raw: string | undefined): string => {
 /** One row of the Admission Gate table: capability, which module serves it, its risk/isolation claim, live lifecycle. */
 const capabilityRow = (c: CapabilityRow): string => {
   const iso = isolationLabel(c.isolationClass ?? "");
-  return `<tr><td><code>${esc(c.capability)}</code>/v${esc(c.version)}${c.usesLlm ? ' <small class="dim" title="volá jazykový model">🤖</small> ' : ""}<br><small class="dim">${esc(c.module)}</small></td>${stateTd(c.lifecycleStatus)}<td>${riskBadge(c.riskClass)}</td><td${iso.title ? ` title="${esc(iso.title)}"` : ""}>${esc(iso.label || "—")}</td><td class="dim">${esc(c.sideEffects ?? "—")}</td></tr>`;
+  return `<tr><td><code>${esc(c.capability)}</code>/v${esc(c.version)}${c.usesLlm ? ' <small class="dim" title="volá jazykový model">🤖</small>' : ""}</td>${stateTd(c.lifecycleStatus)}<td>${riskBadge(c.riskClass)}</td><td${iso.title ? ` title="${esc(iso.title)}"` : ""}>${esc(iso.label || "—")}</td><td class="dim">${esc(c.sideEffects ?? "—")}</td></tr>`;
 };
 
 /**
@@ -298,20 +299,40 @@ export function renderFarm(m: FarmModel): string {
     groupHead("Návrh — zatím nepostaveno, jen v docs/NAVRHOVY-LIST-farma.md") +
     PLANNED_DEPLOYABLES.map(plannedRow).join("");
 
+  // Kapability seskupené po modulu — "ohrada" v obrázku farmy: kravička (modul) může mít víc kapabilit, ne
+  // naopak. Pořadí modulů = pořadí prvního výskytu v m.capabilities (stabilní, žádné další řazení).
+  const penHead = (label: string): string => `<tr class="pen-head"><td colspan="5">${ICONS.kravicky}${esc(label)}</td></tr>`;
+  const penRows = (() => {
+    const byModule = new Map<string, CapabilityRow[]>();
+    for (const c of m.capabilities) {
+      if (!byModule.has(c.module)) byModule.set(c.module, []);
+      (byModule.get(c.module) as CapabilityRow[]).push(c);
+    }
+    return [...byModule.entries()].map(([mod, caps]) => penHead(mod) + caps.map(capabilityRow).join("")).join("");
+  })();
+
   // Owner's request 2026-09-08: what carries the link belongs in column 1 (not buried mid-line), rows collapsed to a
   // one-line summary by default, click to see the steps — a document block is evidence to check, not to always read in full.
-  const instanceRows = m.instances
-    .map((i) => {
-      if (i.purged) return `<tr class="group-head"><td><a href="/workflow/${esc(i.workflowId)}"><code>${esc(i.workflowId)}</code></a></td><td colspan="4" class="dim">smazáno (PURGED), poslední audit ${esc(i.at)}</td></tr>`;
-      const size = i.originalByteLength !== undefined ? ` · ${kb(i.originalByteLength)}` : "";
-      const linkText = i.originalName ? esc(i.originalName) : `<code>${esc(i.workflowId)}</code>`;
-      const head = `<tr class="group-head gh-toggle" data-wf="${esc(i.workflowId)}" aria-expanded="false"><td><span class="gh-chevron" aria-hidden="true">▸</span> <a href="/workflow/${esc(i.workflowId)}">${linkText}</a>${i.originalName ? ` <small class="dim"><code>${esc(i.workflowId)}</code></small>` : ""}</td><td colspan="4" class="dim">${esc(i.workflow)}/v${esc(i.workflowVersion)}${size} · tenant ${esc(i.tenantId)} · aktér ${esc(i.actorId)} · ${stateBadge(i.status)} · založeno ${esc(i.createdAt)}, změněno ${esc(i.updatedAt)}</td></tr>`;
-      const steps = i.steps
-        .map((s) => `<tr class="step-row" data-wf="${esc(i.workflowId)}" hidden><td>${esc(s.stepId)}</td><td>${esc(s.capability)}/v${esc(s.capabilityVersion)}</td>${stateTd(s.status)}<td>${s.attempt} / ${s.logicalAttempt} <span class="dim">${esc(s.strategy)}</span></td><td class="wrap">${humanStepResult(s)}</td></tr>`)
-        .join("");
-      return head + steps;
-    })
-    .join("");
+  const instanceRowsOf = (rows: FarmInstanceRow[]): string =>
+    rows
+      .map((i) => {
+        if (i.purged) return `<tr class="group-head"><td><a href="/workflow/${esc(i.workflowId)}"><code>${esc(i.workflowId)}</code></a></td><td colspan="4" class="dim">smazáno (PURGED), poslední audit ${esc(i.at)}</td></tr>`;
+        const size = i.originalByteLength !== undefined ? ` · ${kb(i.originalByteLength)}` : "";
+        const linkText = i.originalName ? esc(i.originalName) : `<code>${esc(i.workflowId)}</code>`;
+        const head = `<tr class="group-head gh-toggle" data-wf="${esc(i.workflowId)}" aria-expanded="false"><td><span class="gh-chevron" aria-hidden="true">▸</span> <a href="/workflow/${esc(i.workflowId)}">${linkText}</a>${i.originalName ? ` <small class="dim"><code>${esc(i.workflowId)}</code></small>` : ""}</td><td colspan="4" class="dim">${esc(i.workflow)}/v${esc(i.workflowVersion)}${size} · tenant ${esc(i.tenantId)} · aktér ${esc(i.actorId)} · ${stateBadge(i.status)} · založeno ${esc(i.createdAt)}, změněno ${esc(i.updatedAt)}</td></tr>`;
+        const steps = i.steps
+          .map((s) => `<tr class="step-row" data-wf="${esc(i.workflowId)}" hidden><td>${esc(s.stepId)}</td><td>${esc(s.capability)}/v${esc(s.capabilityVersion)}</td>${stateTd(s.status)}<td>${s.attempt} / ${s.logicalAttempt} <span class="dim">${esc(s.strategy)}</span></td><td class="wrap">${humanStepResult(s)}</td></tr>`)
+          .join("");
+        return head + steps;
+      })
+      .join("");
+  const instanceRows = instanceRowsOf(m.instances);
+  // Ohrada (owner's request 2026-09-09, farm illustration: the pen for unclear/failed/waiting cases, "zde se nic
+  // samo neprovede"): the same instances as Poslední instance, filtered to what actually needs a human decision.
+  // Reads the same already-fetched m.instances — no separate query, so it only ever shows what's within
+  // instanceLimit/instanceWindow, same honest limit as the full list.
+  const ohradaInstances = m.instances.filter((i) => !i.purged && (i.status === "WAITING" || i.status === "FAILED" || i.status === "UNKNOWN_OUTCOME"));
+  const ohradaRows = instanceRowsOf(ohradaInstances);
 
   const denikRows = m.auditLog
     .map((r) => {
@@ -333,17 +354,22 @@ export function renderFarm(m: FarmModel): string {
   const ICONS = {
     menu: icon('<line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/>'),
     prehled: icon('<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>'),
-    kravicky: icon('<rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/>'),
+    // A cow face: two small ear/horn curves, a rounded muzzle, two spot dots, a smile — deliberately simple at 16px.
+    kravicky: icon('<path d="M6 8.5a2.3 2.3 0 0 1 3-2.2M18 8.5a2.3 2.3 0 0 0-3-2.2"/><rect x="5" y="8" width="14" height="10" rx="5"/><circle cx="9.5" cy="13" r=".7" fill="currentColor" stroke="none"/><circle cx="14.5" cy="13" r=".7" fill="currentColor" stroke="none"/><path d="M10 16.5c.7.5 1.3.5 2 0"/>'),
+    // A dog face (Argos): ears, head, two eyes — same visual family as kravicky, so the two feel like they belong together.
+    argos: icon('<path d="M6 9c-1.2-.8-1.6-2.4 0-3.2.8.4 1.2 1.2 1.2 2M18 9c1.2-.8 1.6-2.4 0-3.2-.8.4-1.2 1.2-1.2 2"/><path d="M6 10.5a6 6 0 0 1 12 0c0 3.5-2.7 6-6 6s-6-2.5-6-6Z"/><circle cx="10" cy="11" r=".6" fill="currentColor" stroke="none"/><circle cx="14" cy="11" r=".6" fill="currentColor" stroke="none"/>'),
+    // A holding pen: three posts, two rails.
+    ohrada: icon('<line x1="5" y1="4" x2="5" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="19" y1="4" x2="19" y2="20"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/>'),
     instance: icon('<line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="14" y2="18"/>'),
     denik: icon('<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/>'),
     novy: icon('<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>'),
     diagram: icon('<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><line x1="8" y1="7.5" x2="10.5" y2="16.2"/><line x1="16" y1="7.5" x2="13.5" y2="16.2"/><line x1="8.5" y1="6" x2="15.5" y2="6"/>'),
   };
 
-  const bodyHtml = `<div class="ui" id="ui" data-layout="side-nav" data-style="saas-modern">
+  const bodyHtml = `<div class="ui" id="ui" data-layout="side-nav" data-style="farm">
   <div class="p-title">
     <button type="button" class="p-titlebtn" id="railToggle" title="Sbalit/rozbalit menu" aria-label="Sbalit/rozbalit menu">${ICONS.menu}</button>
-    <span class="p-brand"><span class="mark"></span>Farmář<span class="sub">— farma ${esc(m.installation)}</span></span>
+    <span class="p-brand"><span class="mark"></span>🌾 Farmář<span class="sub">— farma ${esc(m.installation)}</span></span>
     <span class="vsep"></span>
     <span class="p-field">podpis ${esc(m.gatewaySigning)}</span>
     <span class="grow"></span>
@@ -357,6 +383,7 @@ export function renderFarm(m: FarmModel): string {
   <nav class="p-nav">
     <a class="p-navitem" href="#prehled" data-view="prehled" title="Přehled">${ICONS.prehled}<span class="lbl">Přehled</span></a>
     <a class="p-navitem" href="#kravicky" data-view="kravicky" title="Kravičky">${ICONS.kravicky}<span class="lbl">Kravičky</span></a>
+    <a class="p-navitem" href="#ohrada" data-view="ohrada" title="Ohrada — čeká na člověka">${ICONS.ohrada}<span class="lbl">Ohrada${ohradaInstances.length ? ` (${ohradaInstances.length})` : ""}</span></a>
     <a class="p-navitem" href="#instance" data-view="instance" title="Poslední instance">${ICONS.instance}<span class="lbl">Poslední instance</span></a>
     <a class="p-navitem" href="#denik" data-view="denik" title="Deník">${ICONS.denik}<span class="lbl">Deník</span></a>
     <a class="p-navitem" href="#novy" data-view="novy" title="Nový dokument">${ICONS.novy}<span class="lbl">Nový dokument</span></a>
@@ -436,11 +463,20 @@ export function renderFarm(m: FarmModel): string {
         <tbody>${kravickyRows}</tbody>
       </table></div>
 
-      <div class="p-panehead"><span>Kapability — Admission Gate</span><span class="n">${m.capabilities.length}, ${m.capabilities.filter((c) => c.lifecycleStatus === "QUARANTINED").length} v karanténě</span></div>
-      <div class="p-toolbar"><span class="meta">Co každá kravička skutečně smí vykonat — riziko a izolace jsou vlastní tvrzení komponenty (descriptor), stav vpravo je to, co <b>Router doopravdy vynucuje</b> před každým dispatchem. Karanténa (config/&lt;instalace&gt;/lifecycle.json) se mění deploym, ne odsud — tahle stránka jen čte, nikdy nezapisuje</span></div>
+      <div class="p-panehead">${ICONS.argos}<span>Argos hlídá — Kapability (Admission Gate)</span><span class="n">${m.capabilities.length}, ${m.capabilities.filter((c) => c.lifecycleStatus === "QUARANTINED").length} v karanténě</span></div>
+      <div class="p-toolbar"><span class="meta">Co každá kravička (seskupeno po modulu, jako ohrada) skutečně smí vykonat — riziko a izolace jsou vlastní tvrzení komponenty (descriptor), stav vpravo je to, co <b>Router doopravdy vynucuje</b> před každým dispatchem. Karanténa (config/&lt;instalace&gt;/lifecycle.json) se mění deploym, ne odsud — tahle stránka jen čte, nikdy nezapisuje</span></div>
       <div class="p-gridwrap"><table class="p-table">
         <thead><tr><th>Kapabilita</th><th class="c-state">Lifecycle</th><th>Riziko</th><th title="Jak přísně je oddělený od ostatních">Izolace</th><th>Side effect</th></tr></thead>
-        <tbody>${m.capabilities.length ? m.capabilities.map(capabilityRow).join("") : '<tr><td colspan="5" class="dim">zatím žádné (vzdálení Workeři neodpověděli)</td></tr>'}</tbody>
+        <tbody>${m.capabilities.length ? penRows : '<tr><td colspan="5" class="dim">zatím žádné (vzdálení Workeři neodpověděli)</td></tr>'}</tbody>
+      </table></div>
+    </div>
+
+    <div id="view-ohrada" hidden>
+      <div class="p-panehead">${ICONS.ohrada}<span>Ohrada</span><span class="n">${ohradaInstances.length} čeká na člověka</span></div>
+      <div class="p-toolbar"><span class="meta">Instance, co čekají na rozhodnutí, nebo skončily s chybou, co si žádá pohled člověka — zde se nic samo neprovede. Stejný zdroj dat jako Poslední instance, jen vyfiltrovaný na ${esc("WAITING")}/${esc("FAILED")}/${esc("UNKNOWN_OUTCOME")}</span></div>
+      <div class="p-gridwrap"><table class="p-table">
+        <thead><tr><th>Krok</th><th>Capability</th><th class="c-state">Stav</th><th>Pokus</th><th>Výsledek</th></tr></thead>
+        <tbody>${ohradaInstances.length ? ohradaRows : '<tr><td colspan="5" class="dim">prázdno — nic dnes nečeká na člověka</td></tr>'}</tbody>
       </table></div>
     </div>
 
@@ -562,12 +598,12 @@ html,body{height:100%;margin:0}
 .ui .p-bar-fill{height:100%;background:var(--accent);border-radius:4px}
 .ui .p-bar-count{width:2.5rem;flex:none;text-align:right;font:.85em var(--font-data)}
 ${BANK_UI_CSS}
-${BANK_SAAS_MODERN_CSS}
+${FARM_THEME_CSS}
 </style>
 </head><body>${bodyHtml}
 <script>
 (function () {
-  var VIEWS = ["prehled", "kravicky", "instance", "denik", "novy"];
+  var VIEWS = ["prehled", "kravicky", "ohrada", "instance", "denik", "novy"];
   function applyView() {
     var v = (location.hash || "#prehled").slice(1);
     if (VIEWS.indexOf(v) === -1) v = "prehled";
