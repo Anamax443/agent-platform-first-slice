@@ -115,9 +115,19 @@ function goldenDiff(result: ResultEnvelope, golden: Golden, vars: Record<string,
   return subsetDiff(result, substitute(golden, vars));
 }
 
-export async function runSelfTest(opts: { transport: DispatchTransport; artifacts: ArtifactWriter; clock: Clock; defaultActor: string; deadlineMs: number }): Promise<SelfTestRow[]> {
+export async function runSelfTest(opts: {
+  transport: DispatchTransport;
+  artifacts: ArtifactWriter;
+  clock: Clock;
+  defaultActor: string;
+  deadlineMs: number;
+  /** Owner's request 2026-09-09: "chci vidět kontroly a i si je být schopen individuálně vyvolat" — run just
+   * one capability's suite (or one worker's suites) instead of always all 72 fixtures. Absent = everything. */
+  only?: { capability?: string; worker?: string };
+}): Promise<SelfTestRow[]> {
+  const suitesToRun = SUITES.filter((s) => (!opts.only?.capability || s.capability === opts.only.capability) && (!opts.only?.worker || s.worker === opts.only.worker));
   const rows: SelfTestRow[] = [];
-  for (const suite of SUITES) {
+  for (const suite of suitesToRun) {
     for (const f of suite.fixtures) {
       if (f.adapters || f.storage) {
         rows.push({ capability: suite.capability, worker: suite.worker, id: f.id, kind: f.kind, ok: true, skipped: "vyžaduje adapter chaos mode (jen Node testy)", diff: [] });

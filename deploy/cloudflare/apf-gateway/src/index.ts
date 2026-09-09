@@ -26,7 +26,7 @@ import type { Instance } from "../../../../src/platform/journal.js";
 import { ReviewService, type Decision } from "../../../../src/platform/review.js";
 import type { MessageEnvelope, ResultEnvelope } from "../../../../src/platform/types.js";
 import { WORKFLOW_NAMES, workflowDef } from "../../../../src/platform/workflow.js";
-import { renderError, renderFarm, renderHome, renderInstance, renderSelfTest, type AuditLogRow, type CapabilityRow, type FarmInstanceRow, type FarmStats, type InboxItem, type InstanceView, type ModelsInfo, type SelfTestRow, type Wired } from "./page.js";
+import { renderError, renderFarm, renderHome, renderInstance, renderSelfTest, type AuditLogRow, type CapabilityRow, type FarmInstanceRow, type FarmStats, type InboxItem, type InstanceView, type ModelsInfo, type SelfTestFixtureState, type SelfTestRow, type Wired } from "./page.js";
 import { describeModels, gatewayCatalog, wirePlatform, type Wiring } from "./platform-wiring.js";
 import { runSelfTest, SELF_TEST_WORKFLOW_ID } from "./self-test.js";
 import { D1_AUDIT_DDL, DDL, SqliteArtifacts, SqliteAudit, SqliteJournal, SqliteReviewTaskStore } from "./store.js";
@@ -132,44 +132,78 @@ const capabilitiesOf = async (fetcher: Fetcher, origin: string): Promise<Capabil
   }
 };
 
-/** How many self-test fixtures passed/skipped-excluded, per worker and per capability — owner's request
- * 2026-09-09 ("nevím, jestli jsou zdravé, jen je zelené OK" / "kde jsou slibované testy kraviček?"): a bare
- * "OK" badge on the Kravičky/Argos cards proves nothing on its own; this is what makes the last real
- * self-test's result visible there instead of only on the throwaway /farm/self-test report page. */
+/** Merged across runs — owner's request 2026-09-09 ("nevím, jestli jsou zdravé, jen je zelené OK" / "kde
+ * jsou slibované testy kraviček?" / "ale já chci vidět kontroly a i si je být schopen individuálně
+ * vyvolat"): a bare "OK" badge proves nothing; this is what makes the last real self-test's per-check
+ * result visible on the Kravičky/Argos cards instead of only on the throwaway /farm/self-test report page,
+ * and survives a partial (single-capability) re-run without losing every other capability's last-known
+ * state. SelfTestFixtureState itself lives in page.ts, next to SelfTestRow it extends. */
 export interface SelfTestSummary {
-  at: string;
-  byWorker: Record<string, { passed: number; total: number }>;
-  byCapability: Record<string, { passed: number; total: number }>;
+  updatedAt: string;
+  fixtures: SelfTestFixtureState[];
 }
 
-/** Stored as a normal audit record (kind: "self-test") — no new binding, same D1 table every other read
- * already trusts. Skipped fixtures (chaos-mode-only) never count toward passed/total: matches the header
- * line self-test's own report already shows ("58/72 fixtures prošlo — 10 přeskočeno"). */
+const SELF_TEST_STATE_AUDIT_ID = "self-test-state";
+
+/** Merge this run's rows into the stored state (read-modify-write, keyed by capability+id) and write it back
+ * to ONE fixed-id audit row (INSERT OR REPLACE) — a single-capability run only ever touches its own fixtures,
+ * every other capability's last-known card state is untouched. Also appends one history row per non-skipped
+ * fixture (kind: "self-test-check", normal append, never replaced) — owner's request 2026-09-09: "logování do
+ * DB jednotlivých kontrol, protože pokud se budou opakovat chyby v kontrole tak je někde problém". That history
+ * is queryable the same way as any other audit record (kind = 'self-test-check'); nothing new to build for it
+ * to exist, only to later have a dedicated trend view read it. */
 async function recordSelfTestSummary(env: Env, rows: SelfTestRow[]): Promise<void> {
   await ensureD1Audit(env.AUDIT);
-  const byWorker: Record<string, { passed: number; total: number }> = {};
-  const byCapability: Record<string, { passed: number; total: number }> = {};
-  for (const r of rows) {
-    if (r.skipped) continue;
-    const w = (byWorker[r.worker] ??= { passed: 0, total: 0 });
-    w.total += 1;
-    if (r.ok) w.passed += 1;
-    const c = (byCapability[r.capability] ??= { passed: 0, total: 0 });
-    c.total += 1;
-    if (r.ok) c.passed += 1;
-  }
   const at = iso(new Date());
-  const record: SelfTestSummary = { at, byWorker, byCapability };
-  await env.AUDIT.prepare("INSERT OR IGNORE INTO audit (audit_id, at, kind, correlation_id, workflow_id, tenant_id, actor_id, capability, json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-    .bind(newId("aud"), at, "self-test", null, null, null, "self-test", null, JSON.stringify(record))
-    .run();
+  const existing = await latestSelfTestSummary(env);
+  const merged = new Map<string, SelfTestFixtureState>((existing?.fixtures ?? []).map((f) => [`${f.capability}::${f.id}`, f]));
+  for (const r of rows) merged.set(`${r.capability}::${r.id}`, { ...r, at });
+  const summary: SelfTestSummary = { updatedAt: at, fixtures: [...merged.values()] };
+  const insertHistory = env.AUDIT.prepare(
+    "INSERT OR IGNORE INTO audit (audit_id, at, kind, correlation_id, workflow_id, tenant_id, actor_id, capability, json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  );
+  const historyWrites = rows
+    .filter((r) => !r.skipped)
+    .map((r) => insertHistory.bind(newId("aud"), at, "self-test-check", null, null, null, "self-test", r.capability, JSON.stringify({ ...r, at })));
+  await env.AUDIT.batch([
+    env.AUDIT.prepare("INSERT OR REPLACE INTO audit (audit_id, at, kind, correlation_id, workflow_id, tenant_id, actor_id, capability, json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(
+      SELF_TEST_STATE_AUDIT_ID,
+      at,
+      "self-test-state",
+      null,
+      null,
+      null,
+      "self-test",
+      null,
+      JSON.stringify(summary),
+    ),
+    ...historyWrites,
+  ]);
 }
 
-/** The most recent stored summary, or undefined if self-test was never run on this farm yet. */
+/** The current merged state (every capability's last-known per-fixture result), or undefined if self-test was
+ * never run on this farm yet. */
 async function latestSelfTestSummary(env: Env): Promise<SelfTestSummary | undefined> {
   await ensureD1Audit(env.AUDIT);
-  const row = await env.AUDIT.prepare("SELECT json FROM audit WHERE kind = 'self-test' ORDER BY at DESC LIMIT 1").first<{ json: string }>();
+  const row = await env.AUDIT.prepare("SELECT json FROM audit WHERE audit_id = ?").bind(SELF_TEST_STATE_AUDIT_ID).first<{ json: string }>();
   return row ? (JSON.parse(row.json) as SelfTestSummary) : undefined;
+}
+
+/** byWorker/byCapability pass/total, derived from the merged fixture state — skipped fixtures never count
+ * toward either (matches self-test's own report header, "58/72 fixtures prošlo — 10 přeskočeno"). */
+function selfTestAggregates(summary: SelfTestSummary | undefined): { byWorker: Record<string, { passed: number; total: number }>; byCapability: Record<string, { passed: number; total: number }> } {
+  const byWorker: Record<string, { passed: number; total: number }> = {};
+  const byCapability: Record<string, { passed: number; total: number }> = {};
+  for (const f of summary?.fixtures ?? []) {
+    if (f.skipped) continue;
+    const w = (byWorker[f.worker] ??= { passed: 0, total: 0 });
+    w.total += 1;
+    if (f.ok) w.passed += 1;
+    const c = (byCapability[f.capability] ??= { passed: 0, total: 0 });
+    c.total += 1;
+    if (f.ok) c.passed += 1;
+  }
+  return { byWorker, byCapability };
 }
 
 const MAX_TEXT_CHARS = 1_000_000;
@@ -422,13 +456,14 @@ export class WorkflowInstance extends DurableObject<Env> {
    * via wiring.transport.dispatch(), the same primitive the orchestrator itself uses per step, no journal entry, no
    * workflow instance created (this DO's own "self-test" identity never shows up in "Poslední instance").
    */
-  async selfTest(): Promise<SelfTestRow[]> {
+  async selfTest(only?: { capability?: string; worker?: string }): Promise<SelfTestRow[]> {
     return runSelfTest({
       transport: this.wiring().transport,
       artifacts: this.artifacts,
       clock: this.clock,
       defaultActor: installation.profile.roles.orchestrator,
       deadlineMs: 60_000,
+      only,
     });
   }
 
@@ -1008,12 +1043,19 @@ export default {
       // Admission Gate visibility (HANDOFF 70/71): the same LifecycleRegistry the Router enforces, read here only —
       // this page never writes it. Quarantining a module still means editing config/<installation>/lifecycle.json
       // and redeploying (a human decision with its own commit), not a button on this page.
+      const selfTestAgg = selfTestAggregates(selfTestSummary);
+      const fixturesOf = (predicate: (f: SelfTestFixtureState) => boolean): SelfTestFixtureState[] => (selfTestSummary?.fixtures ?? []).filter(predicate);
       const capabilities: CapabilityRow[] = [...gatewayCatalog(), ...documentHostCaps, ...emailExecutorCaps].map((c) => ({
         ...c,
         lifecycleStatus: installation.lifecycle.statusOf(c.module),
-        selfTest: selfTestSummary?.byCapability[c.capability],
+        selfTest: selfTestAgg.byCapability[c.capability],
+        selfTestFixtures: fixturesOf((f) => f.capability === c.capability),
       }));
-      const deployableName = (name: string): { name: string; selfTest: { passed: number; total: number } | undefined } => ({ name, selfTest: selfTestSummary?.byWorker[name] });
+      const deployableName = (name: string): { name: string; selfTest: { passed: number; total: number } | undefined; selfTestFixtures: SelfTestFixtureState[] } => ({
+        name,
+        selfTest: selfTestAgg.byWorker[name],
+        selfTestFixtures: fixturesOf((f) => f.worker === name),
+      });
       return html(
         renderFarm({
           installation: INSTALLATION,
@@ -1035,7 +1077,7 @@ export default {
           workflows: [...WORKFLOW_NAMES],
           models: modelsOf(env),
           stats,
-          selfTestAt: selfTestSummary?.at,
+          selfTestAt: selfTestSummary?.updatedAt,
         }),
       );
     }
@@ -1045,8 +1087,12 @@ export default {
     // (recentInstances() excludes it explicitly) or clashes with a real document's workflowId; purgeable like any
     // instance at /workflow/wf-selftest/purge if its artifact store grows.
     if (url.pathname === "/farm/self-test" && request.method === "POST") {
+      // Owner's request 2026-09-09: "chci vidět kontroly a i si je být schopen individuálně vyvolat" — an
+      // Argos capability card or a Kravičky worker card can each post their own narrower run instead of
+      // always the full 72-fixture suite.
+      const only = { capability: url.searchParams.get("capability") ?? undefined, worker: url.searchParams.get("worker") ?? undefined };
       const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(SELF_TEST_WORKFLOW_ID));
-      const rows = (await stub.selfTest()) as SelfTestRow[];
+      const rows = (await stub.selfTest(only.capability || only.worker ? only : undefined)) as SelfTestRow[];
       await recordSelfTestSummary(env, rows);
       return html(renderSelfTest(rows));
     }

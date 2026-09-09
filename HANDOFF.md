@@ -2,6 +2,38 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-09 (79) — jednotlivé kontroly vidět a jednotlivě vyvolatelné; historie do D1
+
+**Pokyn vlastníka po (78):** "ale já chci vidět kontroly a i si je být schopen individuálně
+vyvolat" + "a samozřejmostí je logování do DB jednotlivých kontrol, protože pokud se budou
+opakovat chyby v kontrole tak je někde problém."
+
+**`self-test.ts`:** `runSelfTest()` dostal volitelný `only: {capability?, worker?}` — filtruje
+`SUITES` před spuštěním, takže `/farm/self-test?capability=document.classify` proběhne jen za tu
+jednu kapabilitu (18 fixtures), ne vždy všech 72. `WorkflowInstance.selfTest()` a `/farm/self-test`
+POST route to protahují přes `?capability=`/`?worker=` query param.
+
+**Přepsané ukládání (`recordSelfTestSummary`/`latestSelfTestSummary`):** dřív jen agregát
+{passed,total}, teď **plný merge jednotlivých fixtures**. Jeden pevný audit řádek
+(`audit_id: "self-test-state"`, `INSERT OR REPLACE`) drží mapu `capability::id → poslední
+výsledek` — dílčí běh (jedna kapabilita) přepíše jen svoje fixtures, zbytek zůstává z minula
+(žádná regrese "self-test: nikdy" pro nedotčené kapability). **Navíc historie**: každá
+neskipnutá fixture se při každém běhu zapíše i jako samostatný append-only audit řádek
+(`kind: "self-test-check"`) — to je přesně to "logování do DB", co umožní později najít
+opakující se selhání (stejná fixture, stejná kapabilita, víc záznamů FAILED za sebou), i když
+dneska ještě nestavím dedikovaný pohled na tenhle trend, jen zdroj dat.
+
+**`page.ts`:** karty Argos/Kravičky dostaly `<details>Zobrazit kontroly (N)</details>` s
+jednotlivými fixtures (id, druh, stav, detail rozdílu) plus tlačítko "Spustit jen
+`document.classify`" (POST na `/farm/self-test?capability=...`) — jen na Argos kartách
+(kapabilita vždy odpovídá reálné sadě fixtures); Kravičky karty mají jen výpis, ne tlačítko
+(worker jako `apf-mail-ingest`/`apf-fakes` nemá vlastní sadu, tlačítko by bylo zavádějící).
+
+**Test nejdřív chytil vlastní chybu:** assertion s doslovnými uvozovkami v diffu spadla — `esc()`
+správně HTML-escapuje na `&quot;` pro bezpečné vložení do `title` atributu, oprava byla v testu,
+ne v kódu. **258/258 testů** (257→258), typecheck, `arch`, `farm:check` zelené — spuštěno před
+nasazením.
+
 ## 2026-09-09 (78) — self-test výsledek se ukládá a zobrazuje na kartách (ne jen holé OK)
 
 **Pokyn vlastníka** (čtyři zprávy za sebou): "vůbec není jasné co dělá!!!" / "ani kolik toho

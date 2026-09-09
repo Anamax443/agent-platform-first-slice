@@ -95,4 +95,15 @@ export const FARM_THEME_CSS = String.raw`
 
 /* The owner's own "AI FARMA" concept art, top of Přehled — a fixed R2 asset, not generated. */
 .ui[data-style="farm"] .p-hero { display: block; width: 100%; max-height: 260px; object-fit: cover; object-position: center 30%; border-bottom: var(--border-w) solid var(--border); }
+
+/* Per-card self-test drill-down (owner's request 2026-09-09: "chci vidět kontroly a i si je být schopen
+   individuálně vyvolat") — the individual fixtures behind a card's "self-test N/M" count, and a small button
+   to (re-)run just this card's own suite instead of always all 72 fixtures. */
+.ui[data-style="farm"] .fx-row { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; font-size: calc(var(--fs-ui) - 1.5px); border-bottom: 1px dotted var(--bordersoft); }
+.ui[data-style="farm"] .fx-row:last-child { border-bottom: 0; }
+.ui[data-style="farm"] .fx-row code { font-size: .95em; }
+.ui[data-style="farm"] .fx-detail { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ui[data-style="farm"] .p-card details { margin-top: 8px; }
+.ui[data-style="farm"] .p-card form { margin-top: 8px; }
+.ui[data-style="farm"] .p-btn-sm { padding: 3px 10px; font-size: calc(var(--fs-ui) - 2px); font-weight: 500; }
 `;

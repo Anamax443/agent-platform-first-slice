@@ -57,6 +57,8 @@ export interface DeployableStatus {
   /** Last stored self-test result for this worker (docs: owner 2026-09-09, "nevím, jestli jsou zdravé, jen je
    * zelené OK") — undefined when self-test was never run on this farm. */
   selfTest?: { passed: number; total: number };
+  /** The individual fixtures behind that count, across every capability this worker serves. */
+  selfTestFixtures?: SelfTestFixtureState[];
 }
 
 /** Purged instances still show up (D1 audit remembers them) but the Durable Object has nothing left to fetch. */
@@ -103,6 +105,8 @@ export interface CapabilityRow {
   lifecycleStatus: "ACTIVE" | "QUARANTINED";
   /** Last stored self-test result for this exact capability — undefined when self-test was never run. */
   selfTest?: { passed: number; total: number };
+  /** The individual fixtures behind that count — owner's request 2026-09-09: "chci vidět kontroly". */
+  selfTestFixtures?: SelfTestFixtureState[];
 }
 
 export interface FarmModel {
@@ -276,10 +280,27 @@ const selfTestBadge = (st: { passed: number; total: number } | undefined): strin
   return `<span class="${cls}" title="Poslední self-test: ${esc(st.passed)}/${esc(st.total)} fixtures prošlo">self-test <b>${st.passed}/${st.total}</b></span>`;
 };
 
+/** One line of a card's drill-down — owner's request 2026-09-09: "chci vidět kontroly", ne jen souhrnné číslo. */
+const fixtureLine = (f: SelfTestFixtureState): string => {
+  const label = f.skipped ? "SKIPPED" : f.ok ? "SUCCEEDED" : "FAILED";
+  const detail = f.skipped ? esc(f.skipped) : f.diff.length ? esc(f.diff.join(" · ")) : "shoda s golden";
+  return `<div class="fx-row">${stateBadge(label)}<code>${esc(f.id)}</code><span class="dim">${esc(f.kind)}</span><span class="fx-detail dim" title="${detail}">${detail}</span></div>`;
+};
+
+/** Individual checks behind a card's "self-test N/M" — owner's request 2026-09-09: "chci vidět kontroly". */
+const selfTestList = (fixtures: SelfTestFixtureState[] | undefined): string =>
+  fixtures?.length ? `<details><summary>Zobrazit kontroly (${fixtures.length})</summary>${fixtures.map(fixtureLine).join("")}</details>` : "";
+
+/** The list above + a button to (re-)run just this card's own suite instead of always all 72 fixtures —
+ * owner's request 2026-09-09: "i si je být schopen individuálně vyvolat". Only meaningful where a real
+ * capability suite exists behind the scope (Argos cards); Kravičky worker cards get selfTestList() alone. */
+const selfTestDrilldown = (fixtures: SelfTestFixtureState[] | undefined, capability: string): string =>
+  `${selfTestList(fixtures)}<form method="post" action="/farm/self-test?capability=${encodeURIComponent(capability)}"><button class="p-btn p-btn-sm" type="submit">Spustit jen ${esc(capability)}</button></form>`;
+
 /** One card of the Admission Gate pen: capability, its risk/isolation claim, live lifecycle. */
 const capabilityRow = (c: CapabilityRow): string => {
   const iso = isolationLabel(c.isolationClass ?? "");
-  return `<div class="p-card${c.lifecycleStatus === "QUARANTINED" ? " st-crit-card" : ""}"><div class="p-card-head"><code>${esc(c.capability)}</code>/v${esc(c.version)}${c.usesLlm ? ' <small title="volá jazykový model">🤖</small>' : ""}${stateBadge(c.lifecycleStatus)}</div><div class="p-card-meta"><span>riziko ${riskBadge(c.riskClass)}</span><span${iso.title ? ` title="${esc(iso.title)}"` : ""}>izolace <b>${esc(iso.label || "—")}</b></span><span>${esc(c.sideEffects ?? "—")}</span></div><div class="p-card-meta">${selfTestBadge(c.selfTest)}</div></div>`;
+  return `<div class="p-card${c.lifecycleStatus === "QUARANTINED" ? " st-crit-card" : ""}"><div class="p-card-head"><code>${esc(c.capability)}</code>/v${esc(c.version)}${c.usesLlm ? ' <small title="volá jazykový model">🤖</small>' : ""}${stateBadge(c.lifecycleStatus)}</div><div class="p-card-meta"><span>riziko ${riskBadge(c.riskClass)}</span><span${iso.title ? ` title="${esc(iso.title)}"` : ""}>izolace <b>${esc(iso.label || "—")}</b></span><span>${esc(c.sideEffects ?? "—")}</span></div><div class="p-card-meta">${selfTestBadge(c.selfTest)}</div>${selfTestDrilldown(c.selfTestFixtures, c.capability)}</div>`;
 };
 
 /**
@@ -320,7 +341,7 @@ export function renderFarm(m: FarmModel): string {
     const role = DEPLOYABLE_ROLE[d.name];
     const iso = isolationLabel(String(b.isolation ?? ""));
     const state = workerStateLabel(d);
-    return `<div class="p-card${state === "DOWN" ? " st-crit-card" : ""}"><div class="p-card-head"><code>${esc(d.name)}</code>${stateBadge(state)}</div>${role ? `<div class="p-card-role">${esc(role)}</div>` : ""}<div class="p-card-meta"><span${iso.title ? ` title="${esc(iso.title)}"` : ""}>izolace <b>${esc(iso.label)}</b></span>${detail ? `<span>${esc(detail)}</span>` : ""}</div><div class="p-card-meta">${selfTestBadge(d.selfTest)}</div></div>`;
+    return `<div class="p-card${state === "DOWN" ? " st-crit-card" : ""}"><div class="p-card-head"><code>${esc(d.name)}</code>${stateBadge(state)}</div>${role ? `<div class="p-card-role">${esc(role)}</div>` : ""}<div class="p-card-meta"><span${iso.title ? ` title="${esc(iso.title)}"` : ""}>izolace <b>${esc(iso.label)}</b></span>${detail ? `<span>${esc(detail)}</span>` : ""}</div><div class="p-card-meta">${selfTestBadge(d.selfTest)}</div>${selfTestList(d.selfTestFixtures)}</div>`;
   };
   // apf-gateway IS Erwin (decides, plans, routes) — not one of the cows he directs. Owner's own observation
   // (2026-09-09, screenshot of the Kravičky tab): "toto je spíš farmář, ne?" — moved to Erwin's own section.
@@ -770,6 +791,12 @@ export interface SelfTestRow {
   ok: boolean;
   skipped?: string;
   diff: string[];
+}
+
+/** One fixture's last known result, merged across self-test runs (index.ts recordSelfTestSummary/
+ * latestSelfTestSummary) — the same shape as a fresh SelfTestRow, plus when it was last checked. */
+export interface SelfTestFixtureState extends SelfTestRow {
+  at: string;
 }
 
 /**

@@ -18,7 +18,21 @@ const model: FarmModel = {
     { name: "apf-fakes", ok: true, status: 200, body: { isolation: "LOGICAL" } },
   ],
   capabilities: [
-    { capability: "document.classify", version: "1", module: "document-classifier", riskClass: "LOW", isolationClass: undefined, sideEffects: "none", usesLlm: true, lifecycleStatus: "ACTIVE", selfTest: { passed: 18, total: 18 } },
+    {
+      capability: "document.classify",
+      version: "1",
+      module: "document-classifier",
+      riskClass: "LOW",
+      isolationClass: undefined,
+      sideEffects: "none",
+      usesLlm: true,
+      lifecycleStatus: "ACTIVE",
+      selfTest: { passed: 18, total: 18 },
+      selfTestFixtures: [
+        { capability: "document.classify", worker: "apf-gateway", id: "canonical-invoice-cz", kind: "canonical", ok: true, diff: [], at: "2026-09-09T13:20:00Z" },
+        { capability: "document.classify", worker: "apf-gateway", id: "injection-approve", kind: "injection", ok: false, diff: ['$.status: "FAILED" != "SUCCEEDED"'], at: "2026-09-09T13:20:00Z" },
+      ],
+    },
     { capability: "document.stamp", version: "1", module: "document-executor-host", riskClass: "LOW", isolationClass: "LOGICAL", sideEffects: "internal-write", lifecycleStatus: "ACTIVE", selfTest: { passed: 12, total: 14 } },
     { capability: "document.archive", version: "1", module: "document-executor-host", riskClass: "LOW", isolationClass: "LOGICAL", sideEffects: "internal-write", lifecycleStatus: "QUARANTINED" },
     { capability: "email.send", version: "1", module: "email-executor", riskClass: "MEDIUM", isolationClass: "PRINCIPAL", sideEffects: "external-write", lifecycleStatus: "ACTIVE" },
@@ -141,6 +155,23 @@ describe("PAGE-FARM-001 renderFarm() actually runs, not just typechecks", () => 
     const neverRunHtml = renderFarm(neverRun);
     expect(neverRunHtml).toContain("ještě nikdy neproběhl");
     expect(neverRunHtml).not.toContain("naposledy proběhlo");
+  });
+
+  it("owner 2026-09-09 'ale já chci vidět kontroly a i si je být schopen individuálně vyvolat': Argos karta ukáže jednotlivé fixtures a nabídne spustit jen tuhle kapabilitu", () => {
+    const html = renderFarm(model);
+    const argosSection = html.slice(html.indexOf('id="view-argos"'), html.indexOf('id="view-kravicky"'));
+    expect(argosSection).toContain("Zobrazit kontroly (2)");
+    expect(argosSection).toContain("canonical-invoice-cz");
+    expect(argosSection).toContain("injection-approve");
+    expect(argosSection).toContain("$.status: &quot;FAILED&quot; != &quot;SUCCEEDED&quot;");
+    expect(argosSection).toContain('action="/farm/self-test?capability=document.classify"');
+    expect(argosSection).toContain("Spustit jen document.classify");
+
+    // document.archive/email.send carry no selfTestFixtures in this model — no empty <details>, still get the button.
+    expect(argosSection).toContain('action="/farm/self-test?capability=document.archive"');
+    const archiveCardStart = argosSection.indexOf("document.archive");
+    const archiveCardSlice = argosSection.slice(archiveCardStart, archiveCardStart + 400);
+    expect(archiveCardSlice).not.toContain("<details>");
   });
 
   it("renders cleanly with zero capabilities and zero instances (empty-state paths)", () => {
