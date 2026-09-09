@@ -2,6 +2,7 @@
 // Portable (no filesystem): a Worker bundles the JSON, Node reads it through installation-node.ts.
 import profileSchema from "../config/profile.schema.json" with { type: "json" };
 import type { Identity } from "./platform/gateway.js";
+import { LifecycleRegistry, type LifecycleStatus } from "./platform/lifecycle.js";
 import type { Policy, PolicySet } from "./platform/policy.js";
 import { compileSchema } from "./platform/schemas.js";
 
@@ -41,6 +42,10 @@ export interface InstallationProfile {
 export interface Installation {
   profile: InstallationProfile;
   policies: PolicySet;
+  /** module -> ACTIVE/QUARANTINED (config/<installation>/lifecycle.json, optional). Absent modules default
+   * to ACTIVE — this is a block-list added on top of an already-running installation, not a mandatory
+   * allow-list every module must first appear in. */
+  lifecycle: LifecycleRegistry;
 }
 
 /** Where secret values come from: env, wrangler secrets, a test map. Undefined = missing = fail-closed at wiring time. */
@@ -52,7 +57,7 @@ const validateProfile = compileSchema(profileSchema);
  * Assemble and cross-check an installation: profile against its schema, every policyRef present, every grant pointing
  * to a known identity that holds the granted scope, every granted tenant known. Anything else throws (fail-closed).
  */
-export function assembleInstallation(profileJson: unknown, policies: Policy[]): Installation {
+export function assembleInstallation(profileJson: unknown, policies: Policy[], lifecycleStatuses: Record<string, LifecycleStatus> = {}): Installation {
   const v = validateProfile(profileJson);
   if (!v.ok) throw new Error(`installation profile invalid (fail-closed): ${v.errors}`);
   const profile = profileJson as InstallationProfile;
@@ -87,7 +92,7 @@ export function assembleInstallation(profileJson: unknown, policies: Policy[]): 
   for (const [capability, cfg] of Object.entries(profile.models ?? {})) {
     if (!cfg.options[cfg.default]) throw new Error(`installation ${profile.installation}: default model ${cfg.default} of ${capability} is not among its options`);
   }
-  return { profile, policies: set };
+  return { profile, policies: set, lifecycle: new LifecycleRegistry(lifecycleStatuses) };
 }
 
 /**

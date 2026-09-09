@@ -2,6 +2,45 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-09 (70) — Admission Gate, první krok: `lifecycleStatus` (ACTIVE/QUARANTINED), Router ho vynucuje
+
+**Kontext (rozhovor s vlastníkem, "kdy už půjde kupovat nové krávy"):** externí posudek navrhl COW
+Admission Gate (`NEW → TESTING → ... → ACTIVE`, auto-quarantine). Než jsem cokoli napsal, ověřil jsem
+posudek proti `contracts/module-descriptor.v1.schema.json` (frozen foundation kontrakt) — a posudek
+podcenil, co tam už je: `buildCommit`, `riskClass`→`isolationClass` odvozovací pravidla,
+`verificationProfiles` s komentářem *"a component cannot lower its own test obligations"* — to je
+prakticky celá statická smlouva Admission Gate, jen bez runtime vynucení. Chybí jen `lifecycleStatus`
+(vůbec žádné pole) a cokoli, co by `verificationProfiles` skutečně spustilo a vyhodnotilo.
+
+**Rozsah dneška — nejmenší krok, co dokáže mechanismus, ne celý runner** ([[verify-core-before-building]]):
+`ACTIVE`/`QUARANTINED` jako ruční block-list, žádný automatický test runner, žádné `NEW`/`TESTING`/
+`DEGRADED` stavy zatím. **Vědomě mimo `contracts/module-descriptor.v1.schema.json`** (zmrazený, změna
+mimo proces) — `lifecycleStatus` žije jako samostatná autorita vedle Policy, ne v descriptoru:
+
+- `src/platform/lifecycle.ts` (nový): `LifecycleRegistry`, `statusOf(module)` vrací `QUARANTINED` jen
+  pro explicitně uvedený modul, jinak `ACTIVE` — block-list, ne mandatorní allow-list, takže dnešní
+  běžící komponenty se nezmění, dokud je někdo výslovně nekarantenuje.
+- `src/platform/router.ts`: `route()` kontroluje `lifecycle.statusOf(target.component.descriptor.module)`
+  hned po rozřešení verze, před `checkGrant()` — `QUARANTINED` vrátí nový `MODULE_QUARANTINED`
+  (`errors.ts`, class `POLICY`, `reissuable: true` — vyléčený modul je nová, samostatně přijatá
+  verze/build, ne stejný záznam přepnutý zpátky).
+- `src/installation.ts`: `assembleInstallation()` dostal 3. volitelný parametr `lifecycleStatuses`,
+  `Installation.lifecycle: LifecycleRegistry`. `src/installation-node.ts` a `scripts/farm-config.mjs`
+  čtou volitelný `config/<installation>/lifecycle.json` (chybí soubor = `{}` = nic nekarantenováno).
+- **Wire-nuto live jen na `apf-document-host`** (ne na všechny hosty najednou — stejný postupný vzorec
+  jako `IdempotencyLedger` (69): dřív jeden host jako referenční implementace, ostatní později).
+  `src/slice.ts` (test harness) dostal `SliceOptions.lifecycle` override, takže `createSlice()`
+  pokrývá mechanismus pro všechny testy.
+
+**Testy:** `tests/sec.test.ts`, nový blok `SEC-LCY-001..003` — karanténovaný modul odmítne dispatch
+dřív, než handler vůbec doběhne (nulový side effect, audit `deny` s `MODULE_QUARANTINED`);
+karanténa nesouvisejícího modulu nic jinak neovlivní (není to globální vypínač); beze změny chování,
+když `lifecycle.json` vůbec neexistuje (dnešní realita obou instalací). **249/249 testů** (246 → 249),
+typecheck (root i `deploy/cloudflare`), `arch`, `farm:check` zelené.
+
+**`docs/SEVERKA.md`:** nová položka "Admission Gate (module lifecycle)" — co je hotové, co zbývá
+(automatický verification runner nad `verificationProfiles`, auto-quarantine, rozšíření na zbylé hosty).
+
 ## 2026-09-09 (69) — email executor dostal durable idempotency (dokončení posudku 7, MAJOR 4)
 
 **Dokončeno ověření zbylých bodů Posudku 7** (`docs/POSUDKY.md`) proti kódu — MAJOR 2

@@ -6,6 +6,7 @@ import { FakeDmsAdapter } from "../src/adapters/dms.js";
 import { FakeRegistryAdapter } from "../src/adapters/registry.js";
 import { iso, MINUTE } from "../src/platform/clock.js";
 import { IdentityProvider } from "../src/platform/gateway.js";
+import { LifecycleRegistry } from "../src/platform/lifecycle.js";
 import type { Router } from "../src/platform/router.js";
 import { projectRoot } from "./harness/paths.js";
 import { generateKeyPair, Signer } from "../src/platform/signing.js";
@@ -251,6 +252,33 @@ describe("SEC-REV human review authorization", () => {
 
   it("SEC-REV-004 a known identity is denied a role it was never granted, even claiming its own tenant", () => {
     expect(identities.authorizeRole("access:reviewer@example.com", "tenant-42", "document.supervisor")).toBe(false);
+  });
+});
+
+describe("SEC-LCY module lifecycle (Admission Gate first step, docs/SEVERKA.md \"Capability Marketplace\")", () => {
+  it("SEC-LCY-001 a quarantined module refuses dispatch before the handler ever runs, no side effect", async () => {
+    const slice = createSlice({ lifecycle: new LifecycleRegistry({ "document-executor-host": "QUARANTINED" }) });
+    const art = putArtifact(slice, INVOICE_CZ);
+    const r = await dispatch(slice, command(slice, { capability: "document.stamp", payload: validatedStampPayload(slice, art) }));
+    expect(r.status).toBe("FAILED");
+    expect(r.error?.code).toBe("MODULE_QUARANTINED");
+    expect(slice.dms.stampCalls).toBe(0);
+    expect(slice.audit.byKind("deny").some((a) => a.details?.code === "MODULE_QUARANTINED")).toBe(true);
+  });
+
+  it("SEC-LCY-002 quarantining an unrelated module changes nothing for the rest — not a global kill switch", async () => {
+    const slice = createSlice({ lifecycle: new LifecycleRegistry({ "some-other-module": "QUARANTINED" }) });
+    const art = putArtifact(slice, INVOICE_CZ);
+    const r = await dispatch(slice, command(slice, { capability: "document.stamp", payload: validatedStampPayload(slice, art) }));
+    expect(r.status).toBe("SUCCEEDED");
+    expect(slice.dms.stampCalls).toBe(1);
+  });
+
+  it("SEC-LCY-003 no lifecycle entry at all (today's real installations) behaves exactly as before — a module never quarantined is never denied for it", async () => {
+    const slice = createSlice();
+    const art = putArtifact(slice, INVOICE_CZ);
+    const r = await dispatch(slice, command(slice, { capability: "document.stamp", payload: validatedStampPayload(slice, art) }));
+    expect(r.status).toBe("SUCCEEDED");
   });
 });
 

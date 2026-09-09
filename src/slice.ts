@@ -22,6 +22,7 @@ import { ExecutorHost, type HostHandlerSpec, type HostMutants } from "./platform
 import { Gateway, IdentityProvider } from "./platform/gateway.js";
 import { newId } from "./platform/ids.js";
 import { Journal } from "./platform/journal.js";
+import { LifecycleRegistry } from "./platform/lifecycle.js";
 import { Orchestrator, type WorkflowDef } from "./platform/orchestrator.js";
 import { policyFor } from "./platform/policy.js";
 import type { IdempotencyStore } from "./platform/idempotency.js";
@@ -66,6 +67,8 @@ export interface SliceOptions {
   archiveHandler?: (deps: ArchiveDeps) => HostHandlerSpec;
   /** Primary workflow of `slice.orchestrator` (default document-intake). */
   workflow?: WorkflowDef;
+  /** Overrides `installation.lifecycle` (test harness: quarantine a module without editing config/local-fakes). */
+  lifecycle?: LifecycleRegistry;
 }
 
 export function createSlice(installation: Installation, secrets: SecretsSource, o: SliceOptions = {}) {
@@ -116,7 +119,7 @@ export function createSlice(installation: Installation, secrets: SecretsSource, 
   ingestHost.register(ingest.createIngestHandler({ artifacts, clock }));
 
   // Router: descriptors validated against the frozen schema, policies looked up fail-closed.
-  const router = new Router({ registry: keyRegistry, clock, audit });
+  const router = new Router({ registry: keyRegistry, clock, audit, lifecycle: o.lifecycle ?? installation.lifecycle });
   router.register({
     descriptor: classifier.descriptor as never,
     policies: { "document.classify": policy("document.classify") },

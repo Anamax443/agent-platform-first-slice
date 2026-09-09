@@ -3,6 +3,7 @@ import type { Clock } from "./clock.js";
 import { iso } from "./clock.js";
 import { newId } from "./ids.js";
 import { platformError } from "./errors.js";
+import { LifecycleRegistry } from "./lifecycle.js";
 import { checkGrant, type Policy } from "./policy.js";
 import { catalogEntry, type CapabilityRecord, type ModuleDescriptorLike } from "./registry.js";
 import { compileSchema, validateContract, type Validation } from "./schemas.js";
@@ -40,8 +41,11 @@ export class Router {
   /** Binding mechanisms this receiver accepts. "in-process" only when message and context provably never left the process (SEC-CTX-005). */
   private readonly acceptedMechanisms: string[];
 
-  constructor(private readonly opts: { registry: KeyRegistry; clock: Clock; audit: AuditTrail; acceptedMechanisms?: string[] }) {
+  private readonly lifecycle: LifecycleRegistry;
+
+  constructor(private readonly opts: { registry: KeyRegistry; clock: Clock; audit: AuditTrail; acceptedMechanisms?: string[]; lifecycle?: LifecycleRegistry }) {
     this.acceptedMechanisms = opts.acceptedMechanisms ?? ["signed-envelope"];
+    this.lifecycle = opts.lifecycle ?? new LifecycleRegistry();
   }
 
   register(component: RegisteredComponent): void {
@@ -89,6 +93,10 @@ export class Router {
       return this.deny(env, platformError("INCOMPATIBLE_VERSION", `no provider for ${message.capability}/v${message.capabilityVersion}`, {
         available: byName.map((r) => r.capability.version),
       }));
+    }
+
+    if (this.lifecycle.statusOf(target.component.descriptor.module) === "QUARANTINED") {
+      return this.deny(env, platformError("MODULE_QUARANTINED", `module ${target.component.descriptor.module} is quarantined, dispatch refused`));
     }
 
     const policy = target.component.policies[message.capability] as Policy;

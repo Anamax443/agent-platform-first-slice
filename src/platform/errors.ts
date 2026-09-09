@@ -29,6 +29,11 @@ export const PLATFORM_CODES = {
   // handler's lookup failed) — fail closed, same as an actual cross-tenant mismatch, rather than
   // silently skipping the tenant check.
   RESOURCE_TENANT_UNRESOLVED: { class: "SECURITY", retryable: false, reissuable: false },
+  // A module was explicitly quarantined (config/<installation>/lifecycle.json, LifecycleRegistry) — the
+  // descriptor's claim may still be valid, but the platform currently refuses to dispatch to it. Reissuable:
+  // once the module is healed (a new, separately-admitted build/version reaches ACTIVE), the same logical
+  // request can be retried.
+  MODULE_QUARANTINED: { class: "POLICY", retryable: false, reissuable: true },
 } as const satisfies Record<string, { class: ErrorClass; retryable: boolean; reissuable: boolean }>;
 
 export type PlatformCode = keyof typeof PLATFORM_CODES;

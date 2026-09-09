@@ -234,7 +234,7 @@ export default {
 
         const policy = (capability: string) => policyFor(installation.policies, capability, "1");
         const { registry } = keyRegistryFrom(env.SIGNING_PUBLIC_KEYS);
-        const router = new Router({ registry, clock, audit });
+        const router = new Router({ registry, clock, audit, lifecycle: installation.lifecycle });
         router.register({
           descriptor: host.descriptor as never,
           policies: { "document.stamp": policy("document.stamp"), "document.archive": policy("document.archive") },
