@@ -132,6 +132,46 @@ const capabilitiesOf = async (fetcher: Fetcher, origin: string): Promise<Capabil
   }
 };
 
+/** How many self-test fixtures passed/skipped-excluded, per worker and per capability — owner's request
+ * 2026-09-09 ("nevím, jestli jsou zdravé, jen je zelené OK" / "kde jsou slibované testy kraviček?"): a bare
+ * "OK" badge on the Kravičky/Argos cards proves nothing on its own; this is what makes the last real
+ * self-test's result visible there instead of only on the throwaway /farm/self-test report page. */
+export interface SelfTestSummary {
+  at: string;
+  byWorker: Record<string, { passed: number; total: number }>;
+  byCapability: Record<string, { passed: number; total: number }>;
+}
+
+/** Stored as a normal audit record (kind: "self-test") — no new binding, same D1 table every other read
+ * already trusts. Skipped fixtures (chaos-mode-only) never count toward passed/total: matches the header
+ * line self-test's own report already shows ("58/72 fixtures prošlo — 10 přeskočeno"). */
+async function recordSelfTestSummary(env: Env, rows: SelfTestRow[]): Promise<void> {
+  await ensureD1Audit(env.AUDIT);
+  const byWorker: Record<string, { passed: number; total: number }> = {};
+  const byCapability: Record<string, { passed: number; total: number }> = {};
+  for (const r of rows) {
+    if (r.skipped) continue;
+    const w = (byWorker[r.worker] ??= { passed: 0, total: 0 });
+    w.total += 1;
+    if (r.ok) w.passed += 1;
+    const c = (byCapability[r.capability] ??= { passed: 0, total: 0 });
+    c.total += 1;
+    if (r.ok) c.passed += 1;
+  }
+  const at = iso(new Date());
+  const record: SelfTestSummary = { at, byWorker, byCapability };
+  await env.AUDIT.prepare("INSERT OR IGNORE INTO audit (audit_id, at, kind, correlation_id, workflow_id, tenant_id, actor_id, capability, json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .bind(newId("aud"), at, "self-test", null, null, null, "self-test", null, JSON.stringify(record))
+    .run();
+}
+
+/** The most recent stored summary, or undefined if self-test was never run on this farm yet. */
+async function latestSelfTestSummary(env: Env): Promise<SelfTestSummary | undefined> {
+  await ensureD1Audit(env.AUDIT);
+  const row = await env.AUDIT.prepare("SELECT json FROM audit WHERE kind = 'self-test' ORDER BY at DESC LIMIT 1").first<{ json: string }>();
+  return row ? (JSON.parse(row.json) as SelfTestSummary) : undefined;
+}
+
 const MAX_TEXT_CHARS = 1_000_000;
 const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 const MAX_MAIL_CHARS = 1_000_000;
@@ -944,7 +984,7 @@ export default {
       const name = obj.customMetadata?.name ?? key.slice(INBOX_FAILED_PREFIX.length);
       await env.ARTIFACTS.put(`${INBOX_PREFIX}${newId("up")}-${sanitizeInboxName(name)}`, buf, { httpMetadata: obj.httpMetadata, customMetadata: { name, receivedFrom: "farm-retry", receivedAt: new Date().toISOString() } });
       await env.ARTIFACTS.delete(key);
-      return Response.redirect(new URL("/farm#view-prehled", url).toString(), 303);
+      return Response.redirect(new URL("/farm#zadani", url).toString(), 303);
     }
 
     // "Farmář" (owner's own word for it): one page, health of all five deployables + the most recent workflow instances.
@@ -952,7 +992,7 @@ export default {
       const rawLimit = Number(url.searchParams.get("limit"));
       const instanceLimit = [15, 30, 50, 100, 200].includes(rawLimit) ? rawLimit : 15;
       const instanceWindow = url.searchParams.get("window") ?? "";
-      const [documentHost, emailExecutor, mailIngest, fakes, instances, log, inbox, stats, documentHostCaps, emailExecutorCaps] = await Promise.all([
+      const [documentHost, emailExecutor, mailIngest, fakes, instances, log, inbox, stats, documentHostCaps, emailExecutorCaps, selfTestSummary] = await Promise.all([
         deployableInfo(env.DOCUMENT_HOST, "https://apf-document-host.internal"),
         deployableInfo(env.EMAIL_EXECUTOR, "https://apf-email-executor.internal"),
         deployableInfo(env.MAIL_INGEST, "https://apf-mail-ingest.internal"),
@@ -963,6 +1003,7 @@ export default {
         farmStats(env),
         capabilitiesOf(env.DOCUMENT_HOST, "https://apf-document-host.internal"),
         capabilitiesOf(env.EMAIL_EXECUTOR, "https://apf-email-executor.internal"),
+        latestSelfTestSummary(env),
       ]);
       // Admission Gate visibility (HANDOFF 70/71): the same LifecycleRegistry the Router enforces, read here only —
       // this page never writes it. Quarantining a module still means editing config/<installation>/lifecycle.json
@@ -970,18 +1011,20 @@ export default {
       const capabilities: CapabilityRow[] = [...gatewayCatalog(), ...documentHostCaps, ...emailExecutorCaps].map((c) => ({
         ...c,
         lifecycleStatus: installation.lifecycle.statusOf(c.module),
+        selfTest: selfTestSummary?.byCapability[c.capability],
       }));
+      const deployableName = (name: string): { name: string; selfTest: { passed: number; total: number } | undefined } => ({ name, selfTest: selfTestSummary?.byWorker[name] });
       return html(
         renderFarm({
           installation: INSTALLATION,
           gitSha: env.GIT_SHA,
           gatewaySigning: signingMode(env),
           deployables: [
-            { name: "apf-gateway", ok: true, status: 200, body: { isolation: "self", wired: wiredOf(env) } },
-            { name: "apf-document-host", ...documentHost },
-            { name: "apf-email-executor", ...emailExecutor },
-            { name: "apf-mail-ingest", ...mailIngest },
-            { name: "apf-fakes", ...fakes },
+            { ...deployableName("apf-gateway"), ok: true, status: 200, body: { isolation: "self", wired: wiredOf(env) } },
+            { ...deployableName("apf-document-host"), ...documentHost },
+            { ...deployableName("apf-email-executor"), ...emailExecutor },
+            { ...deployableName("apf-mail-ingest"), ...mailIngest },
+            { ...deployableName("apf-fakes"), ...fakes },
           ],
           capabilities,
           instances,
@@ -992,6 +1035,7 @@ export default {
           workflows: [...WORKFLOW_NAMES],
           models: modelsOf(env),
           stats,
+          selfTestAt: selfTestSummary?.at,
         }),
       );
     }
@@ -1003,6 +1047,7 @@ export default {
     if (url.pathname === "/farm/self-test" && request.method === "POST") {
       const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(SELF_TEST_WORKFLOW_ID));
       const rows = (await stub.selfTest()) as SelfTestRow[];
+      await recordSelfTestSummary(env, rows);
       return html(renderSelfTest(rows));
     }
 
@@ -1019,7 +1064,7 @@ export default {
         const key = `${INBOX_PREFIX}${newId("up")}-${sanitizeInboxName(file.name)}`;
         await env.ARTIFACTS.put(key, buf, { httpMetadata: { contentType }, customMetadata: { name: file.name, receivedFrom: "farm-upload", receivedAt: new Date().toISOString() } });
       }
-      return Response.redirect(new URL("/farm#view-prehled", url).toString(), 303);
+      return Response.redirect(new URL("/farm#zadani", url).toString(), 303);
     }
 
     // The two diagram pages from the repo root, bundled fresh at config-generation time (scripts/farm-config.mjs) —

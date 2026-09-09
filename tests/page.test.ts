@@ -11,15 +11,15 @@ const model: FarmModel = {
   gitSha: "abc1234",
   gatewaySigning: "secret",
   deployables: [
-    { name: "apf-gateway", ok: true, status: 200, body: { isolation: "self", wired: true } },
-    { name: "apf-document-host", ok: true, status: 200, body: { isolation: "LOGICAL", capabilities: ["document.stamp", "document.archive"] } },
+    { name: "apf-gateway", ok: true, status: 200, body: { isolation: "self", wired: true }, selfTest: { passed: 41, total: 41 } },
+    { name: "apf-document-host", ok: true, status: 200, body: { isolation: "LOGICAL", capabilities: ["document.stamp", "document.archive"] }, selfTest: { passed: 14, total: 18 } },
     { name: "apf-email-executor", ok: true, status: 200, body: { isolation: "PRINCIPAL", capabilities: ["email.send"] } },
     { name: "apf-mail-ingest", ok: true, status: 200, body: { wired: false } },
     { name: "apf-fakes", ok: true, status: 200, body: { isolation: "LOGICAL" } },
   ],
   capabilities: [
-    { capability: "document.classify", version: "1", module: "document-classifier", riskClass: "LOW", isolationClass: undefined, sideEffects: "none", usesLlm: true, lifecycleStatus: "ACTIVE" },
-    { capability: "document.stamp", version: "1", module: "document-executor-host", riskClass: "LOW", isolationClass: "LOGICAL", sideEffects: "internal-write", lifecycleStatus: "ACTIVE" },
+    { capability: "document.classify", version: "1", module: "document-classifier", riskClass: "LOW", isolationClass: undefined, sideEffects: "none", usesLlm: true, lifecycleStatus: "ACTIVE", selfTest: { passed: 18, total: 18 } },
+    { capability: "document.stamp", version: "1", module: "document-executor-host", riskClass: "LOW", isolationClass: "LOGICAL", sideEffects: "internal-write", lifecycleStatus: "ACTIVE", selfTest: { passed: 12, total: 14 } },
     { capability: "document.archive", version: "1", module: "document-executor-host", riskClass: "LOW", isolationClass: "LOGICAL", sideEffects: "internal-write", lifecycleStatus: "QUARANTINED" },
     { capability: "email.send", version: "1", module: "email-executor", riskClass: "MEDIUM", isolationClass: "PRINCIPAL", sideEffects: "external-write", lifecycleStatus: "ACTIVE" },
   ] satisfies CapabilityRow[],
@@ -55,6 +55,7 @@ const model: FarmModel = {
   workflows: ["document-intake", "mail-intake"],
   models: { default: "llama-8b", choices: [{ key: "llama-8b", label: "Llama 8B", provider: "workers-ai", model: "@cf/meta/llama-3.1-8b", isDefault: true }] },
   stats: { totalProcessed: 12, processedToday: 3, avgProcessingMs: 4200, byType: [{ type: "INVOICE", count: 8 }] },
+  selfTestAt: "2026-09-09T13:20:00Z",
 };
 
 describe("PAGE-FARM-001 renderFarm() actually runs, not just typechecks", () => {
@@ -117,6 +118,29 @@ describe("PAGE-FARM-001 renderFarm() actually runs, not just typechecks", () => 
     expect(vysledekSection).toContain("wf-waiting1");
     expect(vysledekSection).toContain("wf-ok1");
     expect(vysledekSection).toContain("12"); // totalProcessed
+  });
+
+  it("self-test výsledky (owner 2026-09-09: 'nevím jestli jsou zdravé, jen je zelené OK') se ukazují na kartách, ne jen jako holé OK/ACTIVE", () => {
+    const html = renderFarm(model);
+    // apf-gateway (41/41) is Erwin's own card (77), not one of the cows — checked in the Erwin section instead.
+    const erwinSection = html.slice(html.indexOf('id="view-erwin"'), html.indexOf('id="view-argos"'));
+    expect(erwinSection).toContain("self-test <b>41/41</b>");
+
+    const kravickySection = html.slice(html.indexOf('id="view-kravicky"'), html.indexOf('id="view-ohrada"'));
+    expect(kravickySection).toContain("self-test <b>14/18</b>");
+    expect(kravickySection).toContain("naposledy proběhlo 2026-09-09 13:20:00");
+    // apf-mail-ingest and apf-fakes never had a self-test recorded — must say so plainly, not silently omit it.
+    expect(kravickySection).toContain("self-test: nikdy");
+
+    const argosSection = html.slice(html.indexOf('id="view-argos"'), html.indexOf('id="view-kravicky"'));
+    expect(argosSection).toContain("self-test <b>18/18</b>");
+    expect(argosSection).toContain("self-test <b>12/14</b>");
+
+    // Never-run summary: no selfTestAt at all, no capability/deployable carries a selfTest field.
+    const neverRun: FarmModel = { ...model, selfTestAt: undefined, deployables: model.deployables.map((d) => ({ ...d, selfTest: undefined })), capabilities: model.capabilities.map((c) => ({ ...c, selfTest: undefined })) };
+    const neverRunHtml = renderFarm(neverRun);
+    expect(neverRunHtml).toContain("ještě nikdy neproběhl");
+    expect(neverRunHtml).not.toContain("naposledy proběhlo");
   });
 
   it("renders cleanly with zero capabilities and zero instances (empty-state paths)", () => {

@@ -54,6 +54,9 @@ export interface DeployableStatus {
   ok: boolean;
   status: number;
   body: unknown;
+  /** Last stored self-test result for this worker (docs: owner 2026-09-09, "nevím, jestli jsou zdravé, jen je
+   * zelené OK") — undefined when self-test was never run on this farm. */
+  selfTest?: { passed: number; total: number };
 }
 
 /** Purged instances still show up (D1 audit remembers them) but the Durable Object has nothing left to fetch. */
@@ -98,6 +101,8 @@ export interface CapabilityRow {
   trustClass?: string;
   usesLlm?: boolean;
   lifecycleStatus: "ACTIVE" | "QUARANTINED";
+  /** Last stored self-test result for this exact capability — undefined when self-test was never run. */
+  selfTest?: { passed: number; total: number };
 }
 
 export interface FarmModel {
@@ -114,6 +119,9 @@ export interface FarmModel {
   workflows: string[];
   models: ModelsInfo;
   stats: FarmStats;
+  /** When the self-test summary carried on deployables[].selfTest/capabilities[].selfTest was recorded —
+   * undefined when self-test was never run on this farm yet. */
+  selfTestAt?: string;
 }
 
 export interface InstanceView {
@@ -256,10 +264,22 @@ const riskBadge = (raw: string | undefined): string => {
   return `<span class="${cls}">${esc(RISK_LABEL[raw] ?? raw)}</span>`;
 };
 
+/** ISO timestamp, trimmed to "YYYY-MM-DD HH:MM:SS" — same trim used by the Deník terminal. */
+const shortAt = (at: string): string => esc(at).replace("T", " ").replace(/\.\d+Z$|Z$/, "");
+
+/** "OK"/"ACTIVE" alone proves only that the process answered, not that anything was actually verified (owner
+ * 2026-09-09: "nevím, jestli jsou zdravé, jen je zelené OK" / "kde jsou slibované testy kraviček?"). Shows the
+ * last stored self-test result — undefined means "never run", stated plainly rather than left implicit. */
+const selfTestBadge = (st: { passed: number; total: number } | undefined): string => {
+  if (!st) return `<span class="dim" title="Self-test nikdy neproběhl na téhle farmě">self-test: nikdy</span>`;
+  const cls = st.total === 0 ? "dim" : st.passed === st.total ? "st-ok" : "st-crit";
+  return `<span class="${cls}" title="Poslední self-test: ${esc(st.passed)}/${esc(st.total)} fixtures prošlo">self-test <b>${st.passed}/${st.total}</b></span>`;
+};
+
 /** One card of the Admission Gate pen: capability, its risk/isolation claim, live lifecycle. */
 const capabilityRow = (c: CapabilityRow): string => {
   const iso = isolationLabel(c.isolationClass ?? "");
-  return `<div class="p-card${c.lifecycleStatus === "QUARANTINED" ? " st-crit-card" : ""}"><div class="p-card-head"><code>${esc(c.capability)}</code>/v${esc(c.version)}${c.usesLlm ? ' <small title="volá jazykový model">🤖</small>' : ""}${stateBadge(c.lifecycleStatus)}</div><div class="p-card-meta"><span>riziko ${riskBadge(c.riskClass)}</span><span${iso.title ? ` title="${esc(iso.title)}"` : ""}>izolace <b>${esc(iso.label || "—")}</b></span><span>${esc(c.sideEffects ?? "—")}</span></div></div>`;
+  return `<div class="p-card${c.lifecycleStatus === "QUARANTINED" ? " st-crit-card" : ""}"><div class="p-card-head"><code>${esc(c.capability)}</code>/v${esc(c.version)}${c.usesLlm ? ' <small title="volá jazykový model">🤖</small>' : ""}${stateBadge(c.lifecycleStatus)}</div><div class="p-card-meta"><span>riziko ${riskBadge(c.riskClass)}</span><span${iso.title ? ` title="${esc(iso.title)}"` : ""}>izolace <b>${esc(iso.label || "—")}</b></span><span>${esc(c.sideEffects ?? "—")}</span></div><div class="p-card-meta">${selfTestBadge(c.selfTest)}</div></div>`;
 };
 
 /**
@@ -300,7 +320,7 @@ export function renderFarm(m: FarmModel): string {
     const role = DEPLOYABLE_ROLE[d.name];
     const iso = isolationLabel(String(b.isolation ?? ""));
     const state = workerStateLabel(d);
-    return `<div class="p-card${state === "DOWN" ? " st-crit-card" : ""}"><div class="p-card-head"><code>${esc(d.name)}</code>${stateBadge(state)}</div>${role ? `<div class="p-card-role">${esc(role)}</div>` : ""}<div class="p-card-meta"><span${iso.title ? ` title="${esc(iso.title)}"` : ""}>izolace <b>${esc(iso.label)}</b></span>${detail ? `<span>${esc(detail)}</span>` : ""}</div></div>`;
+    return `<div class="p-card${state === "DOWN" ? " st-crit-card" : ""}"><div class="p-card-head"><code>${esc(d.name)}</code>${stateBadge(state)}</div>${role ? `<div class="p-card-role">${esc(role)}</div>` : ""}<div class="p-card-meta"><span${iso.title ? ` title="${esc(iso.title)}"` : ""}>izolace <b>${esc(iso.label)}</b></span>${detail ? `<span>${esc(detail)}</span>` : ""}</div><div class="p-card-meta">${selfTestBadge(d.selfTest)}</div></div>`;
   };
   // apf-gateway IS Erwin (decides, plans, routes) — not one of the cows he directs. Owner's own observation
   // (2026-09-09, screenshot of the Kravičky tab): "toto je spíš farmář, ne?" — moved to Erwin's own section.
@@ -493,6 +513,7 @@ export function renderFarm(m: FarmModel): string {
     <div id="view-argos" hidden>
       <div class="p-panehead">${ICONS.argos}<span>Argos hlídá — Kapability (Admission Gate)</span><span class="n">3 · kontrola · ${m.capabilities.length}, ${m.capabilities.filter((c) => c.lifecycleStatus === "QUARANTINED").length} v karanténě</span></div>
       <div class="p-toolbar"><span class="meta">Co každá kravička skutečně smí vykonat, seskupeno po modulu jako ohrada — riziko a izolace jsou vlastní tvrzení komponenty (descriptor), stav na kartě je to, co <b>Router doopravdy vynucuje</b> před každým dispatchem. Karanténa (config/&lt;instalace&gt;/lifecycle.json) se mění deploym, ne odsud — tahle stránka jen čte, nikdy nezapisuje</span></div>
+      <div class="p-toolbar"><span class="meta">„self-test X/Y" na kartě = kolik vzorových případů té kapability naposledy skutečně prošlo proti reálnému běhu (ne jen že Worker odpověděl) — spusť ho na záložce Kravičky${m.selfTestAt ? `, naposledy ${shortAt(m.selfTestAt)}` : ""}</span></div>
       ${m.capabilities.length ? penGrid : '<div class="pen-empty">zatím žádné (vzdálení Workeři neodpověděli)</div>'}
     </div>
 
@@ -500,7 +521,7 @@ export function renderFarm(m: FarmModel): string {
       <div class="p-panehead"><span>Kravičky</span><span class="n">4 · práce · ${m.deployables.length - 1} Workerů</span></div>
       <div class="p-toolbar"><span class="meta">Zdraví a role jednotlivých Workerů, co Erwin volá — kdo co dělá a jestli běží</span></div>
       <form class="p-toolbar" method="post" action="/farm/self-test">
-        <span class="meta">„OK" výš dokazuje jen, že proces odpovídá — self-test skutečně spustí <code>document.classify</code>/<code>document.validate</code> (na <code>apf-gateway</code>) i <code>document.stamp</code>/<code>document.archive</code> (na <code>apf-document-host</code>, přes síť) proti reálnému modelu a porovná s golden výsledkem</span>
+        <span class="meta">„OK" výš dokazuje jen, že proces odpovídá — self-test skutečně spustí <code>document.classify</code>/<code>document.validate</code> (na <code>apf-gateway</code>) i <code>document.stamp</code>/<code>document.archive</code> (na <code>apf-document-host</code>, přes síť) proti reálnému modelu a porovná s golden výsledkem${m.selfTestAt ? ` — naposledy proběhlo ${shortAt(m.selfTestAt)}` : " — ještě nikdy neproběhl"}</span>
         <span class="grow"></span>
         <button class="p-btn" type="submit">Spustit self-test</button>
       </form>

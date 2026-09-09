@@ -2,6 +2,39 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-09 (78) — self-test výsledek se ukládá a zobrazuje na kartách (ne jen holé OK)
+
+**Pokyn vlastníka** (čtyři zprávy za sebou): "vůbec není jasné co dělá!!!" / "ani kolik toho
+zkontroloval" / "nevím jestli jsou zdravé, jen je zelené OK" / "kde jsou slibované testy
+kraviček?" — plus odkaz na `usb-guardian`'s zpracování testů ("krásně jsou zpracovány... i s
+těma fajflama") jako vzor. Potvrzeno (`AskUserQuestion`): nejdřív uložit poslední výsledek
+self-testu a ukázat ho na kartách.
+
+**Vzor z USB Guardian** (`server/USBGuardian.Admin/Components/Pages/Health.razor`,
+`HealthService.cs`): každý check má vždy viditelné "Why" (proč test existuje), stav jako pill
+badge, žádná persistence — pouští se on-demand. Tenhle projekt se liší v jedné věci: self-test
+tady volá skutečné AI modely a síťově dispatchuje přes tři Workery (72 fixtures), takže spouštět
+ho při každém načtení `/farm` by bylo drahé/pomalé — proto **persistence poslední výsledku**,
+ne "vždy čerstvě".
+
+**Žádná nová infrastruktura** — `recordSelfTestSummary()`/`latestSelfTestSummary()`
+(`apf-gateway/src/index.ts`) ukládají/čtou souhrn jako běžný audit záznam (`kind: "self-test"`)
+v už existující D1 tabulce, stejné jak zbytek Deníku. Po dokončení `selfTest()` se spočítá
+per-worker a per-capability `{passed, total}` (skipped fixtures se nepočítají, stejně jako
+hlavičkový řádek self-testové stránky) a zapíše. `/farm` GET handler čte poslední záznam a
+slučuje `selfTest` pole do `capabilities`/`deployables`.
+
+**`page.ts`:** nová `selfTestBadge()` — `"self-test: nikdy"` (šedě, nikdy nezamlčeno) nebo
+`"self-test N/M"` (zeleně při N=M, červeně jinak), na kartách Kravičky (per Worker) i Argos (per
+kapabilita). Kravičky/Argos toolbar navíc říká, kdy self-test naposledy proběhl (nebo že nikdy).
+
+**Mimochodem opraveny 2 staré mrtvé odkazy** (`/farm#view-prehled` v obou `/farm/inbox`
+handlerech — `view-prehled` už neexistuje od (76), teď `/farm#zadani`).
+
+**Test nejdřív chytil vlastní chybu:** assertion na `apf-gateway`'s 41/41 v Kravičkách section
+spadla — gateway je od (77) na Erwinovi, ne na Kravičkách. Opraveno na správnou sekci.
+**257/257 testů** (256→257), typecheck, `arch`, `farm:check` zelené — spuštěno před nasazením.
+
 ## 2026-09-09 (77) — `apf-gateway` je Erwin, ne kravička — karta přesunuta
 
 **Pokyn vlastníka** (screenshot Kraviček tabu se zakroužkovanou kartou `apf-gateway`): "toto je
