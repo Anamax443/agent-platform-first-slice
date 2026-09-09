@@ -2,6 +2,18 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-09 (67) — WF-REV-003 nasazeno a alarm mechanismus živě ověřen dočasnou izolovanou diagnostikou
+
+**Nasazení (66):** `165fe38` nasazen na `farm-bass443` (`node scripts/farm-deploy.mjs farm-bass443`), `/version` potvrdil `gitSha: "165fe38"`. Commit byl do té doby jen lokální — pushnut na `origin/main` (`f351483..165fe38`).
+
+**Nový CF Access service token `apf-harness-2`:** vytvořen (asistent neměl na tomhle stroji `.env` s platným `apf-harness` secretem, jen `.env.example`), přidán jako druhý `Include → Service Token` do politiky `harness` u aplikace `apf-gateway` (vedle původního `apf-harness`, ne místo něj). `.env` doplněn přes PowerShell (`Read-Host -AsSecureString`, hodnoty nešly přes chat). `GET /version` přes něj vrátil 200.
+
+**Proč ne přímo živá review-expirace:** reálná cesta k review úkolu má `expiresInMs` dané workflow definicí (`workflows/document-intake.v2.json` atd.) — ta je záměrně immutable (FOUNDATION-core §5.7), 3 dny / 4 h u UNKNOWN_OUTCOME, nic v `/intake` requestu to nepřebíjí. Živě ověřit celou byznys transakci by znamenalo buď čekat řádově hodiny, nebo zasahovat do jádra orchestrátoru — moc velký zásah na jedno ověření.
+
+**Co bylo místo toho živě ověřeno:** jediná fakticky neověřená věc byla, jestli Cloudflare Durable Object `alarm()` hook na `farm-bass443` vůbec vystřelí (`applyReviewExpiries()` logika samotná už měla 242 testů od (50)/M1 — "nic na farmě ho nikdy nevolalo" byl proto zápis o chybějící *infrastrukturní* cestě, ne o neotestované logice). Dočasně přidáno (mimo real journal/reviewStore, nulové riziko pro skutečný stav instancí): `WorkflowInstance.diagArmAlarm(ms)` (`ctx.storage.put("diagAlarmAt", ...)` + `ctx.storage.setAlarm(...)`), `alarm()` na začátku zkontroluje `diagAlarmAt` a pokud je nastavený, zapíše audit `DIAG_ALARM_FIRED` místo běžné `applyReviewExpiries()` větve, a dočasná route `GET /diag/arm-alarm?ms=`. Nasazeno, zavoláno s `ms=20000`, `GET /audit.json?after=` po ~20 s ukázal `{"status":"DIAG_ALARM_FIRED","armedFor":"2026-09-09T06:47:43.609Z","firedAt":"2026-09-09T06:47:43.610Z"}` — alarm vystřelil přesně na deadline (1 ms rozdíl). **Kód vrácen** (`git checkout --`), `git diff` prázdný, redeploy, `/version` znovu potvrdil čistý `gitSha: "165fe38"`.
+
+**Zbývá:** živě potvrdit celou byznys transakci (skutečný `WAITING(REVIEW)` přes reálný `WorkflowDef`, co přirozeně expiruje a projde `EXPIRE_TO_FAILED`/`ESCALATE`) — dosud ověřená je jen infrastrukturní vrstva (alarm → hook), ne plný běh. `docs/SEVERKA.md` Human Review řádek aktualizován na tenhle přesný stav.
+
 ## 2026-09-09 (66) — WF-REV-003 časové expirace dostaly funkční cestu na farmě: Durable Object Alarm
 
 **Nález (asistent, čtením `docs/SEVERKA.md` proti kódu, ne od vlastníka):** řádek „Human Review" v `SEVERKA.md` byl zastaralý stejným způsobem jako dřív Execution Engine (62) — popisoval stav před (50)/(52) jako aktuální, ačkoli decision cesta (`/review/decide` → `decideReview()`) je hotová a živě ověřená od (52). Skutečná zbývající mezera: `orchestrator.applyReviewExpiries()` (WF-REV-003 — `EXPIRE_TO_FAILED`/`EXPIRE_TO_CANCELLED`/`ESCALATE`/`CREATE_NEW_REVIEW`) existuje a je otestovaný (`tests/wf.test.ts`) od (50)/M1, ale nic na farmě ho nikdy nevolalo — ruční rozhodnutí fungovalo, časové politiky ne.
