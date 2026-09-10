@@ -8,26 +8,31 @@
   {
     "id": "canonical-contract-mail",
     "kind": "canonical",
+    "description": "Raw mail whose body is a contract, not an invoice — same ingest path, different downstream classification.",
     "payload": { "rawMail": "From: pravni@partner.example\nSubject: Smlouva o dílo k podpisu\n\nSMLOUVA O DÍLO\nSmluvní strany: Objednatel Faxxar s.r.o. a Zhotovitel Maxferit s.r.o.", "receivedFrom": "smtp:relay.example" }
   },
   {
     "id": "canonical-plain-mail",
     "kind": "canonical",
+    "description": "Plain conversational mail with no document markers at all.",
     "payload": { "rawMail": "From: jan.novak@example.org\nSubject: Zápis ze schůzky\n\nAhoj, posílám zápis ze schůzky. Díky, Jan", "receivedFrom": "smtp:relay.example" }
   },
   {
     "id": "canonical-bare-address",
     "kind": "canonical",
+    "description": "No Subject header, sender address only — ingest must not require a subject to exist.",
     "payload": { "rawMail": "From: jan.novak@example.org\n\nBez předmětu.", "receivedFrom": "imap:mailbox-ops" }
   },
   {
     "id": "canonical-unicode-subject",
     "kind": "canonical",
+    "description": "Unicode/emoji in the Subject header.",
     "payload": { "rawMail": "From: Účtárna <uctarna@firma.cz>\nSubject: Smlouva – dodatek č. 3 🧾\n\nDobrý den, v příloze dodatek.", "receivedFrom": "smtp:relay.example" }
   },
   {
     "id": "damaged-no-from",
     "kind": "damaged",
+    "description": "Missing From header — malformed mail must still ingest without crashing.",
     "payload": { "rawMail": "Subject: Faktura\n\nFAKTURA č. 1", "receivedFrom": "smtp:relay.example" }
   },
   {
@@ -45,22 +50,26 @@
   {
     "id": "boundary-empty-body",
     "kind": "boundary",
+    "description": "Mail with a Subject but an empty body.",
     "payload": { "rawMail": "From: a@b.cz\nSubject: prázdný\n", "receivedFrom": "smtp:relay.example" }
   },
   {
     "id": "error-free-text",
     "kind": "error",
+    "description": "Natural-language command instead of a rawMail payload.",
     "payload": { "text": "here is a mail, please ingest it" }
   },
   {
     "id": "error-ai-actor",
     "kind": "error",
+    "description": "The AI identity calls mail.ingest, a capability it holds no scope for.",
     "actor": "ai-doc-classifier",
     "payload": { "rawMail": "From: a@b.cz\n\nx", "receivedFrom": "smtp:relay.example" }
   },
   {
     "id": "error-expired",
     "kind": "error",
+    "description": "notValidAfter already passed by more than the tolerance.",
     "deadlineMs": -60000,
     "payload": { "rawMail": "From: a@b.cz\n\nx", "receivedFrom": "smtp:relay.example" }
   },

@@ -2,6 +2,46 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-10 (82) — Self-test kontroly dostaly "proč" a "co dělat" — první krok k Argosovi jako skutečnému watchdogovi
+
+**Kontext:** externí oponentura nad `/farm` (Farmář 8/10, Argos jako skutečný autonomní watchdog jen 3,5/10 —
+žádný incident engine, žádné alerting, `unknown modul → ACTIVE` default). Ověřeno proti kódu: většina nálezů už
+je zapsaná v `docs/SEVERKA.md` (Admission Gate řádek, MAJOR 5 audit provenance, Ohrada's `instanceLimit` omezení
+z HANDOFF #73) — nový je hlavně požadavek na prioritu (přestat stavět COW/marketing web, stavět Argose). Vlastník
+zvolil (`AskUserQuestion`): **začít stavět Argose.** Hned poté navázal vlastní návrh: self-test kontrola nesmí
+být jen PASS/FAIL — každá potřebuje "co se kontroluje / proč na tom záleží / co dělat, když selže" (`ControlCheckResult`
+inspirace, Security/Reliability/Connectivity kategorie s expected/actual/evidence/recommendation).
+
+**Zjištění, co z toho jde postavit hned:** `description` pole (co se kontroluje) už existuje na fixture i
+`SelfTestRow` (HANDOFF #79) a self-test.ts na Farmáři skutečně běží živě proti reálné farmě — na tohle šlo
+navázat rovnou. Ale vlastníkovy příkladové kontroly (Tenant isolation, Credential isolation) žijí dnes jen jako
+izolované `tests/sec.test.ts` (SEC-LCY/SEC-REV) vitest testy s mockovanou infrastrukturou — nejsou to live
+self-test fixtures, které by Argos/Farmář uměl spustit na farmě. Postavit je do stejné live self-test cesty jako
+`document.*`/`email.send`/`mail.ingest` je samostatný, větší úkol (nová "security probe" suita), ne dnešní
+rozsah.
+
+**Postaveno:** `Fixture`/`SelfTestRow` (`self-test.ts`, `page.ts`) dostaly `why?`/`onFailure?`. `why` se ukazuje
+vždy, když je vyplněné (PASS i FAIL) — proč kontrola existuje. `onFailure` se ukazuje **jen** při FAILED — co
+s tím Farmář má dělat. Obě pole volitelná (`description` taky bylo, dobrý precedens — ne každá fixture potřebuje
+vlastní text). Vyplněno jako první ukázka pro 3 `injection`-kind fixtures `document.classify` (SEC-INJ-001 rodina
+— F2 princip "dokument je DATA, nikdy příkaz") — nejbližší dnešní live-běžící ekvivalent bezpečnostní kontroly z
+vlastníkova příkladu. **Vědomě nedodělané:** zbylých ~69 fixtures napříč 6 capabilities nemá `why`/`onFailure`
+vyplněné — mechanismus funguje (fallback na `description`/diff jako dřív), obsahové vyplnění je samostatný krok.
+
+**Vedlejší nález a dokončení:** repo mělo rozdělanou, necommitnutou práci z dřívějška — `description` pole
+chybělo na většině fixtures mimo `document.classify` (jen pár mělo). Dokončeno stejným tahem (backfill popisů
+na `document.archive`/`document.stamp`/`document.validate`/`email.send`/`mail.ingest`), protože je to stejná
+funkce (self-test explainability) a bez toho by `description` fallback fungoval jen na zlomku fixtures.
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare`), **260/260 testů** (2 nové v `tests/page.test.ts`: why
+na PASS i FAIL, onFailure jen na FAIL), `arch`, `farm:check`.
+
+**Zbývá (příští kroky k Argosovi jako watchdogovi, z oponentury):** lifecycle default `unknown → ACTIVE` (P0,
+shoda oponentury i `SEVERKA.md`), watchdog snapshot + Incident Store, scheduled bezpečné self-testy, DEGRADED
+stav, Telegram/email alerting. `docs/SEVERKA.md` zatím needitován — čeká, až vlastník potvrdí, že se má tahle
+oponentura skutečně zapsat jako nová položka do „Pořadí", místo dnešního (Durable Review → idempotency ledger →
+mail.ingest/email.send → Registry → invoice/verify COWs → Planner).
+
 ## 2026-09-10 (81) — ai-farma-web přestylován podle vlastníkova referenčního screenshotu
 
 **Pokyn vlastníka:** screenshot bohatšího designu (nav s Ceník/Reference/O nás/přihlášení, 6 feature ikon + callout,

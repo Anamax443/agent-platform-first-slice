@@ -283,8 +283,15 @@ const selfTestBadge = (st: { passed: number; total: number } | undefined): strin
 /** One line of a card's drill-down — owner's request 2026-09-09: "chci vidět kontroly", ne jen souhrnné číslo. */
 const fixtureLine = (f: SelfTestFixtureState): string => {
   const label = f.skipped ? "SKIPPED" : f.ok ? "SUCCEEDED" : "FAILED";
-  const detail = f.skipped ? esc(f.skipped) : f.diff.length ? esc(f.diff.join(" · ")) : "shoda s golden";
-  return `<div class="fx-row">${stateBadge(label)}<code>${esc(f.id)}</code><span class="dim">${esc(f.kind)}</span><span class="fx-detail dim" title="${detail}">${detail}</span></div>`;
+  // A passing check with no description said only "shoda s golden" — useless to someone who wants to know
+  // what it actually verified (owner 2026-09-09, this same request). A failing check still shows the diff:
+  // that's the actionable part, more useful than the fixture's own description of the happy path.
+  const detail = f.skipped ? esc(f.skipped) : f.diff.length ? esc(f.diff.join(" · ")) : f.description ? esc(f.description) : "shoda s golden";
+  // Owner 2026-09-10: PASS/FAIL alone doesn't say what's protected or what to do about red — "why" survives
+  // even a green result, "recommendation" only ever matters once something actually failed.
+  const why = f.why ? `<div class="fx-why dim">Proč: ${esc(f.why)}</div>` : "";
+  const reco = !f.ok && !f.skipped && f.onFailure ? `<div class="fx-reco" style="color:var(--crit)">Doporučení: ${esc(f.onFailure)}</div>` : "";
+  return `<div class="fx-row">${stateBadge(label)}<code>${esc(f.id)}</code><span class="dim">${esc(f.kind)}</span><span class="fx-detail dim" title="${detail}">${detail}</span></div>${why}${reco}`;
 };
 
 /** Individual checks behind a card's "self-test N/M" — owner's request 2026-09-09: "chci vidět kontroly". */
@@ -788,6 +795,12 @@ export interface SelfTestRow {
   worker: string;
   id: string;
   kind: string;
+  description?: string;
+  /** Why this check exists — shown regardless of PASS/FAIL (owner 2026-09-10: a red/green alone doesn't say
+   * what's actually being protected). Optional: most conformance fixtures are routine, not every one earns it. */
+  why?: string;
+  /** What to do when this fixture is FAILED — shown only on failure. */
+  onFailure?: string;
   ok: boolean;
   skipped?: string;
   diff: string[];
@@ -809,8 +822,12 @@ export function renderSelfTest(rows: SelfTestRow[]): string {
   const ran = rows.filter((r) => !r.skipped);
   const byWorker = new Map<string, SelfTestRow[]>();
   for (const r of rows) byWorker.set(r.worker, [...(byWorker.get(r.worker) ?? []), r]);
-  const rowHtml = (r: SelfTestRow): string =>
-    `<tr><td><code>${esc(r.id)}</code></td><td>${esc(r.kind)}</td>${stateTd(r.skipped ? "SKIPPED" : r.ok ? "SUCCEEDED" : "FAILED")}<td class="wrap">${r.skipped ? esc(r.skipped) : r.diff.length ? `<pre class="wrap">${esc(r.diff.join("\n"))}</pre>` : "shoda s golden"}</td></tr>`;
+  const rowHtml = (r: SelfTestRow): string => {
+    const detail = r.skipped ? esc(r.skipped) : r.diff.length ? `<pre class="wrap">${esc(r.diff.join("\n"))}</pre>` : r.description ? esc(r.description) : "shoda s golden";
+    const why = r.why ? `<div class="dim">Proč: ${esc(r.why)}</div>` : "";
+    const reco = !r.ok && !r.skipped && r.onFailure ? `<div style="color:var(--crit)">Doporučení: ${esc(r.onFailure)}</div>` : "";
+    return `<tr><td><code>${esc(r.id)}</code></td><td>${esc(r.kind)}</td>${stateTd(r.skipped ? "SKIPPED" : r.ok ? "SUCCEEDED" : "FAILED")}<td class="wrap">${detail}${why}${reco}</td></tr>`;
+  };
   const capabilitySection = (cap: string, rs: SelfTestRow[]): string =>
     `<h3>${esc(cap)} <small class="muted">${rs.filter((r) => r.ok && !r.skipped).length}/${rs.filter((r) => !r.skipped).length}</small></h3>
 <table><thead><tr><th>Fixture</th><th>Druh</th><th>Stav</th><th>Detail</th></tr></thead><tbody>${rs.map(rowHtml).join("")}</tbody></table>`;

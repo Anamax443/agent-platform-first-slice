@@ -2,6 +2,7 @@
   {
     "id": "canonical-invoice-stamp",
     "kind": "canonical",
+    "description": "Straightforward INVOICE, already validated, explicit stampText.",
     "artifact": { "tenantId": "tenant-42", "bytes": "FAKTURA č. 2026-0142\nIBAN: CZ65 0800 0000 1920 0014 5399" },
     "payload": {
       "artifactId": "$artifactId",
@@ -13,6 +14,7 @@
   {
     "id": "canonical-contract-stamp",
     "kind": "canonical",
+    "description": "Straightforward CONTRACT, already validated, explicit stampText.",
     "artifact": { "tenantId": "tenant-42", "bytes": "SMLOUVA O DÍLO" },
     "payload": {
       "artifactId": "$artifactId",
@@ -35,6 +37,7 @@
   {
     "id": "canonical-human-corrected-type",
     "kind": "canonical",
+    "description": "documentType came from a human reviewer (trustLevel human-corrected), not the model — stamp accepts it the same as a validated model value.",
     "artifact": { "tenantId": "tenant-42", "bytes": "Newsletter that a reviewer decided is an invoice" },
     "payload": {
       "artifactId": "$artifactId",
@@ -46,6 +49,7 @@
   {
     "id": "canonical-unicode-bytes",
     "kind": "canonical",
+    "description": "Emoji and Czech diacritics/currency in the artifact bytes — stamp must not choke on the encoding.",
     "artifact": { "tenantId": "tenant-42", "bytes": "Faktura 🧾 — částka 1 000 Kč, DPH 21 %" },
     "payload": {
       "artifactId": "$artifactId",
@@ -57,6 +61,7 @@
   {
     "id": "damaged-hash-mismatch",
     "kind": "damaged",
+    "description": "sha256 the caller claims doesn't match the stored artifact — stamp must refuse rather than stamp the wrong bytes.",
     "artifact": { "tenantId": "tenant-42", "bytes": "INVOICE No. 13" },
     "payload": {
       "artifactId": "$artifactId",
@@ -79,6 +84,7 @@
   {
     "id": "boundary-validation-failed",
     "kind": "boundary",
+    "description": "documentType.validation.status is 'failed' — stamp must never write over a validation that didn't pass.",
     "artifact": { "tenantId": "tenant-42", "bytes": "INVOICE No. 15" },
     "payload": {
       "artifactId": "$artifactId",
@@ -100,6 +106,7 @@
   {
     "id": "error-artifact-missing",
     "kind": "error",
+    "description": "artifactId points at nothing that was ever stored.",
     "payload": {
       "artifactId": "art-missing",
       "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -152,6 +159,7 @@
   {
     "id": "error-dms-auth",
     "kind": "error",
+    "description": "DMS adapter forced into its auth-failure mode — the write executor's own credential is rejected downstream.",
     "adapters": { "dms": "auth-fail" },
     "artifact": { "tenantId": "tenant-42", "bytes": "INVOICE No. 21" },
     "payload": {

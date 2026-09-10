@@ -2,23 +2,27 @@
   {
     "id": "canonical-archive",
     "kind": "canonical",
+    "description": "A document already stamped, now archived — the last step of the happy path.",
     "artifact": { "tenantId": "tenant-42", "bytes": "FAKTURA č. 2026-0142 (stamped)" },
     "payload": { "artifactId": "$artifactId", "sha256": "$sha256" }
   },
   {
     "id": "damaged-hash-mismatch",
     "kind": "damaged",
+    "description": "Same tamper check as document.stamp/damaged-hash-mismatch, on the archive step.",
     "artifact": { "tenantId": "tenant-42", "bytes": "INVOICE No. 30" },
     "payload": { "artifactId": "$artifactId", "sha256": "$sha256:tampered" }
   },
   {
     "id": "error-artifact-missing",
     "kind": "error",
+    "description": "artifactId points at nothing that was ever stored.",
     "payload": { "artifactId": "art-missing", "sha256": "0000000000000000000000000000000000000000000000000000000000000000" }
   },
   {
     "id": "error-ai-actor",
     "kind": "error",
+    "description": "The AI identity calls a write capability it holds no scope for (see document.stamp/error-ai-actor).",
     "actor": "ai-doc-classifier",
     "artifact": { "tenantId": "tenant-42", "bytes": "INVOICE No. 31" },
     "payload": { "artifactId": "$artifactId", "sha256": "$sha256" }

@@ -2,12 +2,14 @@
   {
     "id": "canonical-invoice",
     "kind": "canonical",
+    "description": "documentType INVOICE from the model (untrusted-derived) checked against the registry's allowlist.",
     "artifact": { "tenantId": "tenant-42", "bytes": "FAKTURA č. 2026-0142\nIBAN: CZ65 0800 0000 1920 0014 5399" },
     "payload": { "artifactId": "$artifactId", "sha256": "$sha256", "documentType": { "value": "INVOICE", "source": "llm", "confidence": 0.9, "trustLevel": "untrusted-derived" } }
   },
   {
     "id": "canonical-contract",
     "kind": "canonical",
+    "description": "Same as canonical-invoice, for CONTRACT.",
     "artifact": { "tenantId": "tenant-42", "bytes": "SMLOUVA O DÍLO" },
     "payload": { "artifactId": "$artifactId", "sha256": "$sha256", "documentType": { "value": "CONTRACT", "source": "llm", "trustLevel": "untrusted-derived" } }
   },
@@ -21,12 +23,14 @@
   {
     "id": "canonical-rules-source",
     "kind": "canonical",
+    "description": "The value came from the keyword/rules strategy, not the model — validate treats every source the same.",
     "artifact": { "tenantId": "tenant-42", "bytes": "INVOICE No. 3" },
     "payload": { "artifactId": "$artifactId", "sha256": "$sha256", "documentType": { "value": "INVOICE", "source": "rules", "confidence": 0.6, "trustLevel": "untrusted-derived" } }
   },
   {
     "id": "canonical-minimal-fieldvalue",
     "kind": "canonical",
+    "description": "documentType carries only 'value' — no source, confidence or trustLevel — validate must not require fields classify didn't produce.",
     "artifact": { "tenantId": "tenant-42", "bytes": "AGREEMENT" },
     "payload": { "artifactId": "$artifactId", "sha256": "$sha256", "documentType": { "value": "CONTRACT" } }
   },
@@ -54,23 +58,27 @@
   {
     "id": "boundary-other-not-stampable",
     "kind": "boundary",
+    "description": "OTHER is a valid classification but not one document.stamp will ever accept — validate says so up front.",
     "artifact": { "tenantId": "tenant-42", "bytes": "Newsletter" },
     "payload": { "artifactId": "$artifactId", "sha256": "$sha256", "documentType": { "value": "OTHER", "source": "llm" } }
   },
   {
     "id": "error-artifact-missing",
     "kind": "error",
+    "description": "artifactId points at nothing that was ever stored.",
     "payload": { "artifactId": "art-missing", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "documentType": { "value": "INVOICE" } }
   },
   {
     "id": "error-tenant-mismatch",
     "kind": "error",
+    "description": "Artifact belongs to tenant-7, the trusted context is tenant-42.",
     "artifact": { "tenantId": "tenant-7", "bytes": "INVOICE No. 6" },
     "payload": { "artifactId": "$artifactId", "sha256": "$sha256", "documentType": { "value": "INVOICE" } }
   },
   {
     "id": "error-registry-business",
     "kind": "error",
+    "description": "Registry adapter forced into its 'business' failure mode — a genuine business-rule rejection, not a plumbing fault.",
     "adapters": { "registry": "business" },
     "artifact": { "tenantId": "tenant-42", "bytes": "INVOICE No. 7" },
     "payload": { "artifactId": "$artifactId", "sha256": "$sha256", "documentType": { "value": "INVOICE" } }
@@ -78,6 +86,7 @@
   {
     "id": "error-registry-unavailable",
     "kind": "error",
+    "description": "Registry adapter unreachable — DEPENDENCY_UNAVAILABLE, not a validation failure.",
     "adapters": { "registry": "unavailable" },
     "artifact": { "tenantId": "tenant-42", "bytes": "INVOICE No. 8" },
     "payload": { "artifactId": "$artifactId", "sha256": "$sha256", "documentType": { "value": "INVOICE" } }
@@ -85,6 +94,7 @@
   {
     "id": "error-registry-timeout",
     "kind": "error",
+    "description": "Registry adapter times out — same DEPENDENCY_UNAVAILABLE family as unavailable, different cause.",
     "adapters": { "registry": "timeout" },
     "artifact": { "tenantId": "tenant-42", "bytes": "INVOICE No. 9" },
     "payload": { "artifactId": "$artifactId", "sha256": "$sha256", "documentType": { "value": "INVOICE" } }

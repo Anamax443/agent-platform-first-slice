@@ -2,24 +2,28 @@
   {
     "id": "canonical-stamped",
     "kind": "canonical",
+    "description": "A validated, stamped invoice notifies the ops mailbox with the 'stamped' template.",
     "artifact": { "tenantId": "tenant-42", "bytes": "FAKTURA č. 2026-0142\n--- VALIDATED INVOICE ---" },
     "payload": { "recipientRef": "ops-mailbox", "templateId": "document-stamped", "params": { "documentType": "INVOICE", "artifactId": "$artifactId" } }
   },
   {
     "id": "canonical-rejected-template",
     "kind": "canonical",
+    "description": "OTHER document uses the 'rejected' template instead of 'stamped' — template choice follows the classification outcome.",
     "artifact": { "tenantId": "tenant-42", "bytes": "Newsletter" },
     "payload": { "recipientRef": "ops-mailbox", "templateId": "document-rejected", "params": { "documentType": "OTHER", "artifactId": "$artifactId" } }
   },
   {
     "id": "canonical-supervisor",
     "kind": "canonical",
+    "description": "Sent to the supervisor mailbox instead of ops — a second allowlisted recipient for the same tenant.",
     "artifact": { "tenantId": "tenant-42", "bytes": "SMLOUVA\n--- VALIDATED CONTRACT ---" },
     "payload": { "recipientRef": "supervisor-mailbox", "templateId": "document-stamped", "params": { "documentType": "CONTRACT", "artifactId": "$artifactId" } }
   },
   {
     "id": "canonical-contract",
     "kind": "canonical",
+    "description": "Same as canonical-stamped, for a CONTRACT.",
     "artifact": { "tenantId": "tenant-42", "bytes": "AGREEMENT\n--- VALIDATED CONTRACT ---" },
     "payload": { "recipientRef": "ops-mailbox", "templateId": "document-stamped", "params": { "documentType": "CONTRACT", "artifactId": "$artifactId" } }
   },
@@ -34,6 +38,7 @@
   {
     "id": "damaged-recipient-not-allowlisted",
     "kind": "damaged",
+    "description": "recipientRef not on the tenant's allowlist — email.send must refuse an arbitrary destination.",
     "artifact": { "tenantId": "tenant-42", "bytes": "x" },
     "payload": { "recipientRef": "audit-attacker", "templateId": "document-stamped", "params": { "documentType": "INVOICE", "artifactId": "$artifactId" } }
   },
@@ -55,17 +60,20 @@
   {
     "id": "error-artifact-missing",
     "kind": "error",
+    "description": "artifactId points at nothing that was ever stored.",
     "payload": { "recipientRef": "ops-mailbox", "templateId": "document-stamped", "params": { "documentType": "INVOICE", "artifactId": "art-missing" } }
   },
   {
     "id": "error-free-text",
     "kind": "error",
+    "description": "Natural-language command instead of a typed recipientRef/templateId payload.",
     "artifact": { "tenantId": "tenant-42", "bytes": "x" },
     "payload": { "text": "Send this to ops please" }
   },
   {
     "id": "error-expired",
     "kind": "error",
+    "description": "notValidAfter already passed by more than the tolerance.",
     "deadlineMs": -60000,
     "artifact": { "tenantId": "tenant-42", "bytes": "x" },
     "payload": { "recipientRef": "ops-mailbox", "templateId": "document-stamped", "params": { "documentType": "INVOICE", "artifactId": "$artifactId" } }
@@ -73,6 +81,7 @@
   {
     "id": "error-ai-actor",
     "kind": "error",
+    "description": "The AI identity calls email.send, a capability it holds no scope for.",
     "actor": "ai-doc-classifier",
     "artifact": { "tenantId": "tenant-42", "bytes": "x" },
     "payload": { "recipientRef": "ops-mailbox", "templateId": "document-stamped", "params": { "documentType": "INVOICE", "artifactId": "$artifactId" } }
@@ -88,6 +97,7 @@
   {
     "id": "error-smtp-reject",
     "kind": "error",
+    "description": "SMTP adapter forced to reject — a genuine send failure, not a plumbing timeout.",
     "adapters": { "smtp": "reject" },
     "artifact": { "tenantId": "tenant-42", "bytes": "x" },
     "payload": { "recipientRef": "ops-mailbox", "templateId": "document-stamped", "params": { "documentType": "INVOICE", "artifactId": "$artifactId" } }
@@ -95,6 +105,7 @@
   {
     "id": "error-unknown-outcome",
     "kind": "error",
+    "description": "SMTP adapter's outcome is permanently ambiguous — never SUCCEEDED, never FAILED.",
     "adapters": { "smtp": "unknown-always" },
     "artifact": { "tenantId": "tenant-42", "bytes": "x" },
     "payload": { "recipientRef": "ops-mailbox", "templateId": "document-stamped", "params": { "documentType": "INVOICE", "artifactId": "$artifactId" } }

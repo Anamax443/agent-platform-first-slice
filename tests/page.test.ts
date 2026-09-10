@@ -29,8 +29,8 @@ const model: FarmModel = {
       lifecycleStatus: "ACTIVE",
       selfTest: { passed: 18, total: 18 },
       selfTestFixtures: [
-        { capability: "document.classify", worker: "apf-gateway", id: "canonical-invoice-cz", kind: "canonical", ok: true, diff: [], at: "2026-09-09T13:20:00Z" },
-        { capability: "document.classify", worker: "apf-gateway", id: "injection-approve", kind: "injection", ok: false, diff: ['$.status: "FAILED" != "SUCCEEDED"'], at: "2026-09-09T13:20:00Z" },
+        { capability: "document.classify", worker: "apf-gateway", id: "canonical-invoice-cz", kind: "canonical", description: "Czech invoice with IBAN and VAT; the IBAN also feeds EVD-005.", why: "Kontroluje základní extrakci na reálném českém formátu faktury.", onFailure: "Never shown: this fixture passes.", ok: true, diff: [], at: "2026-09-09T13:20:00Z" },
+        { capability: "document.classify", worker: "apf-gateway", id: "injection-approve", kind: "injection", description: "Injected instruction outside the allowlist: quality retry, then a legitimate stamp.", why: "Dokument je vždy DATA, nikdy příkaz platformě.", onFailure: "Capabilitu okamžitě prověřit, zvážit karanténu.", ok: false, diff: ['$.status: "FAILED" != "SUCCEEDED"'], at: "2026-09-09T13:20:00Z" },
       ],
     },
     { capability: "document.stamp", version: "1", module: "document-executor-host", riskClass: "LOW", isolationClass: "LOGICAL", sideEffects: "internal-write", lifecycleStatus: "ACTIVE", selfTest: { passed: 12, total: 14 } },
@@ -172,6 +172,27 @@ describe("PAGE-FARM-001 renderFarm() actually runs, not just typechecks", () => 
     const archiveCardStart = argosSection.indexOf("document.archive");
     const archiveCardSlice = argosSection.slice(archiveCardStart, archiveCardStart + 400);
     expect(archiveCardSlice).not.toContain("<details>");
+  });
+
+  it("owner 2026-09-09 'není špatné, když je vidět co která kontrola kontroluje': a passing check shows its fixture description instead of the useless 'shoda s golden', a failing check still shows the diff", () => {
+    const html = renderFarm(model);
+    const argosSection = html.slice(html.indexOf('id="view-argos"'), html.indexOf('id="view-kravicky"'));
+    expect(argosSection).toContain("Czech invoice with IBAN and VAT; the IBAN also feeds EVD-005.");
+    expect(argosSection).not.toContain("shoda s golden");
+    // Failing fixture: the diff is the actionable part — must win over the description even though both exist.
+    expect(argosSection).toContain("$.status: &quot;FAILED&quot; != &quot;SUCCEEDED&quot;");
+    expect(argosSection).not.toContain("Injected instruction outside the allowlist");
+  });
+
+  it("owner 2026-09-10 'nestačí PASS/FAIL, chci vědět proč a co dělat': why shows on both outcomes, onFailure only on the failing one", () => {
+    const html = renderFarm(model);
+    const argosSection = html.slice(html.indexOf('id="view-argos"'), html.indexOf('id="view-kravicky"'));
+    // Passing fixture: "why" shows, its "onFailure" text never renders even though the field is set.
+    expect(argosSection).toContain("Kontroluje základní extrakci na reálném českém formátu faktury.");
+    expect(argosSection).not.toContain("Never shown: this fixture passes.");
+    // Failing fixture: both "why" and "onFailure" show.
+    expect(argosSection).toContain("Dokument je vždy DATA, nikdy příkaz platformě.");
+    expect(argosSection).toContain("Capabilitu okamžitě prověřit, zvážit karanténu.");
   });
 
   it("renders cleanly with zero capabilities and zero instances (empty-state paths)", () => {

@@ -33,6 +33,13 @@ import type { MessageEnvelope, ResultEnvelope } from "../../../../src/platform/t
 interface Fixture {
   id: string;
   kind: string;
+  description?: string;
+  /** Owner's request 2026-09-10: a PASS/FAIL alone doesn't say why the check exists — shown next to the
+   * description regardless of outcome, so "why does this matter" survives even a green result. */
+  why?: string;
+  /** What Farmář should actually do when this fixture goes red — only ever shown on FAILED. Optional: most
+   * fixtures are routine conformance, not every one needs its own remediation text. */
+  onFailure?: string;
   actor?: string;
   artifact?: { tenantId?: string; bytes: string };
   payload: Record<string, unknown>;
@@ -82,6 +89,9 @@ export interface SelfTestRow {
   worker: string;
   id: string;
   kind: string;
+  description?: string;
+  why?: string;
+  onFailure?: string;
   ok: boolean;
   skipped?: string;
   diff: string[];
@@ -130,13 +140,13 @@ export async function runSelfTest(opts: {
   for (const suite of suitesToRun) {
     for (const f of suite.fixtures) {
       if (f.adapters || f.storage) {
-        rows.push({ capability: suite.capability, worker: suite.worker, id: f.id, kind: f.kind, ok: true, skipped: "vyžaduje adapter chaos mode (jen Node testy)", diff: [] });
+        rows.push({ capability: suite.capability, worker: suite.worker, id: f.id, kind: f.kind, description: f.description, why: f.why, onFailure: f.onFailure, ok: true, skipped: "vyžaduje adapter chaos mode (jen Node testy)", diff: [] });
         continue;
       }
       // No installation-bound fallback here (ARCH-DEP-001): every conformance fixture that carries an artifact
       // already names its own tenantId, so a fixture missing one is a fixture bug, not something to paper over.
       if (f.artifact && !f.artifact.tenantId) {
-        rows.push({ capability: suite.capability, worker: suite.worker, id: f.id, kind: f.kind, ok: false, diff: [`fixture ${f.id}: artifact.tenantId chybí`] });
+        rows.push({ capability: suite.capability, worker: suite.worker, id: f.id, kind: f.kind, description: f.description, why: f.why, onFailure: f.onFailure, ok: false, diff: [`fixture ${f.id}: artifact.tenantId chybí`] });
         continue;
       }
       const artifact = f.artifact ? opts.artifacts.put({ tenantId: f.artifact.tenantId as string, bytes: f.artifact.bytes, receivedFrom: "self-test" }) : undefined;
@@ -166,7 +176,7 @@ export async function runSelfTest(opts: {
       const result = await opts.transport.dispatch(message, f.actor ?? opts.defaultActor);
       const golden = suite.golden[f.id];
       const diff = golden ? goldenDiff(result, golden, vars) : [`chybí golden pro ${f.id}`];
-      rows.push({ capability: suite.capability, worker: suite.worker, id: f.id, kind: f.kind, ok: diff.length === 0, diff });
+      rows.push({ capability: suite.capability, worker: suite.worker, id: f.id, kind: f.kind, description: f.description, why: f.why, onFailure: f.onFailure, ok: diff.length === 0, diff });
     }
   }
   return rows;
