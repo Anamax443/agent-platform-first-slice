@@ -6,8 +6,9 @@ import { assembleInstallation, type Installation } from "./installation.js";
 import type { LifecycleStatus } from "./platform/lifecycle.js";
 import type { Policy } from "./platform/policy.js";
 
-/** `dir/profile.json` + every `dir/policy/*.policy.json` + optional `dir/lifecycle.json`, assembled and
- * cross-checked fail-closed. `lifecycle.json` absent = no module quarantined (same as `{}`). */
+/** `dir/profile.json` + every `dir/policy/*.policy.json` + `dir/lifecycle.json`, assembled and cross-checked
+ * fail-closed. `lifecycle.json` absent behaves the same as `{}` — an empty allow-list, so EVERY module a
+ * Router dispatches to is refused (platform/lifecycle.ts) — a real installation must ship the file. */
 export function loadInstallationFromDir(dir: string): Installation {
   const profile: unknown = JSON.parse(readFileSync(join(dir, "profile.json"), "utf8"));
   const policyDir = join(dir, "policy");

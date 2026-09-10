@@ -14,6 +14,7 @@ import { CredentialResolver } from "../src/platform/credentials.js";
 import { ExecutorHost } from "../src/platform/executor-host.js";
 import { Gateway, IdentityProvider } from "../src/platform/gateway.js";
 import { newId } from "../src/platform/ids.js";
+import { LifecycleRegistry } from "../src/platform/lifecycle.js";
 import type { Policy } from "../src/platform/policy.js";
 import { Router } from "../src/platform/router.js";
 import { generateKeyPair, KeyRegistry, Signer } from "../src/platform/signing.js";
@@ -104,7 +105,10 @@ function remoteHost(publicKeyPem: ReturnType<typeof generateKeyPair>["publicKey"
     grants: [{ actorId: "svc-test", scopes: [capability], tenants: ["t1"] }],
     failClosed: true,
   });
-  const router = new Router({ registry, clock, audit });
+  // Allow-list (changed 2026-09-10): a Router built with no lifecycle option starts with an empty registry,
+  // which now refuses every module by default (platform/lifecycle.ts) — this simulated remote host must admit
+  // its own module explicitly, same as a real installation's lifecycle.json does.
+  const router = new Router({ registry, clock, audit, lifecycle: new LifecycleRegistry({ [host.descriptor.module]: "ACTIVE" }) });
   router.register({
     descriptor: host.descriptor as never,
     policies: { "document.stamp": grants("document.stamp"), "document.archive": grants("document.archive") },

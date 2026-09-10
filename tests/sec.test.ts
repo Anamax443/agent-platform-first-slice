@@ -266,15 +266,24 @@ describe("SEC-LCY module lifecycle (Admission Gate first step, docs/SEVERKA.md \
     expect(slice.audit.byKind("deny").some((a) => a.details?.code === "MODULE_QUARANTINED")).toBe(true);
   });
 
-  it("SEC-LCY-002 quarantining an unrelated module changes nothing for the rest — not a global kill switch", async () => {
-    const slice = createSlice({ lifecycle: new LifecycleRegistry({ "some-other-module": "QUARANTINED" }) });
+  it("SEC-LCY-002 quarantining an unrelated module changes nothing for a module explicitly admitted ACTIVE — not a global kill switch", async () => {
+    const slice = createSlice({ lifecycle: new LifecycleRegistry({ "document-executor-host": "ACTIVE", "some-other-module": "QUARANTINED" }) });
     const art = putArtifact(slice, INVOICE_CZ);
     const r = await dispatch(slice, command(slice, { capability: "document.stamp", payload: validatedStampPayload(slice, art) }));
     expect(r.status).toBe("SUCCEEDED");
     expect(slice.dms.stampCalls).toBe(1);
   });
 
-  it("SEC-LCY-003 no lifecycle entry at all (today's real installations) behaves exactly as before — a module never quarantined is never denied for it", async () => {
+  it("SEC-LCY-003 a module missing from the allow-list entirely is refused exactly like one explicitly QUARANTINED (changed 2026-09-10: unknown -> ACTIVE was the Admission Gate's biggest gap, docs/SEVERKA.md)", async () => {
+    const slice = createSlice({ lifecycle: new LifecycleRegistry({ "some-other-module": "ACTIVE" }) });
+    const art = putArtifact(slice, INVOICE_CZ);
+    const r = await dispatch(slice, command(slice, { capability: "document.stamp", payload: validatedStampPayload(slice, art) }));
+    expect(r.status).toBe("FAILED");
+    expect(r.error?.code).toBe("MODULE_QUARANTINED");
+    expect(slice.dms.stampCalls).toBe(0);
+  });
+
+  it("SEC-LCY-004 today's real installation (config/local-fakes/lifecycle.json, no override) explicitly admits every module it actually dispatches to", async () => {
     const slice = createSlice();
     const art = putArtifact(slice, INVOICE_CZ);
     const r = await dispatch(slice, command(slice, { capability: "document.stamp", payload: validatedStampPayload(slice, art) }));

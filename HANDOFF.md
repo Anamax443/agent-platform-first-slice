@@ -2,6 +2,42 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-10 (83) — Admission Gate: `unknown modul → ACTIVE` opraveno na mandatorní allow-list (P0 z oponentury)
+
+**Pokyn vlastníka:** "pokračuj" — druhý krok podle pořadí z (82)'s externí oponentury. Shoda oponentury i
+`docs/SEVERKA.md` (Admission Gate řádek): `LifecycleRegistry.statusOf()` vracelo `"ACTIVE"` pro jakýkoli
+neznámý modul — block-list, ne mandatorní allow-list. Nová/kompromitovaná/přejmenovaná COW by se tak dostala
+do provozu bez jediného explicitního rozhodnutí.
+
+**Oprava:** `src/platform/lifecycle.ts` — `statusOf()` teď vrací `"QUARANTINED"` pro cokoli chybějícího v
+mapě, ne `"ACTIVE"`. Beze změny typu (`LifecycleStatus` zůstává jen `ACTIVE`/`QUARANTINED` — `NEW`/`TESTING`/
+`DEGRADED` zůstávají budoucí práce, `docs/SEVERKA.md`).
+
+**Blast radius, ověřeno kód po kódu, ne jen typecheck:** `config/farm-bass443/lifecycle.json` a
+`config/local-fakes/lifecycle.json` **neexistovaly vůbec** — každá instalace běžela na prázdné mapě, tedy
+efektivně "všech 5 modulů ACTIVE" bez jediného řádku configu. Oba soubory nově vytvořené, explicitní `ACTIVE`
+pro všech 5 modulů, co dnes na nějakém Routeru skutečně visí (`document-classifier`, `document-validator`,
+`document-executor-host`, `email-executor`, `mail-ingest` — ověřeno `router.register()` v `platform-wiring.ts`
++ `apf-document-host`/`apf-email-executor` `index.ts`, `apf-mail-ingest` vlastní Router nemá). Bez tohohle
+kroku by oprava sama o sobě odstavila celou farmu (karanténa všeho, ne nic).
+
+Druhé místo se stejným rizikem: `Router`'s vlastní `opts.lifecycle ?? new LifecycleRegistry()` fallback (žádná
+instalace, přímá konstrukce) — `tests/dh.test.ts`'s `remoteHost()` helper stavěl `Router` bez `lifecycle`
+vůbec, což by po opravě odmítlo vlastní modul karanténou. Opraveno explicitním `ACTIVE` pro `host.descriptor.
+module`.
+
+**Testy:** `tests/sec.test.ts` SEC-LCY-002 doplněn o explicitní `ACTIVE` pro modul, co skutečně testuje (dřív
+spoléhal na starý ACTIVE-default). SEC-LCY-003 přepsán z "žádný záznam = ACTIVE (dnešní chování)" na opak —
+teď je to přímo regresní test nové P0 opravy (chybějící modul → `MODULE_QUARANTINED`). Nový SEC-LCY-004
+potvrzuje, že dnešní reálná instalace (`config/local-fakes/lifecycle.json`, bez přepsání v testu) pořád
+admituje moduly, co doopravdy používá.
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare`), **261/261 testů** (SEC-LCY přepsáno na 4 testy
+místo 3), `arch`, `farm:check`. `docs/SEVERKA.md` Admission Gate řádek aktualizován na nový stav.
+
+**Zbývá (z oponentury, nezměněno tímhle krokem):** watchdog snapshot + Incident Store, DEGRADED stav,
+scheduled bezpečné self-testy, Telegram/email alerting — tohle byl jen P0, ne celý Argos.
+
 ## 2026-09-10 (82) — Self-test kontroly dostaly "proč" a "co dělat" — první krok k Argosovi jako skutečnému watchdogovi
 
 **Kontext:** externí oponentura nad `/farm` (Farmář 8/10, Argos jako skutečný autonomní watchdog jen 3,5/10 —

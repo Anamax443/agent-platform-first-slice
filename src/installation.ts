@@ -42,9 +42,9 @@ export interface InstallationProfile {
 export interface Installation {
   profile: InstallationProfile;
   policies: PolicySet;
-  /** module -> ACTIVE/QUARANTINED (config/<installation>/lifecycle.json, optional). Absent modules default
-   * to ACTIVE — this is a block-list added on top of an already-running installation, not a mandatory
-   * allow-list every module must first appear in. */
+  /** module -> ACTIVE/QUARANTINED (config/<installation>/lifecycle.json). A mandatory allow-list: a module
+   * missing from it is refused exactly like one explicitly QUARANTINED (changed 2026-09-10, see
+   * platform/lifecycle.ts) — every module a Router actually dispatches to must have an explicit entry. */
   lifecycle: LifecycleRegistry;
 }
 
