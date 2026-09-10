@@ -4,7 +4,7 @@
 // page.ts has no Cloudflare-runtime imports (only src/platform types + bank.js/farm-theme.js, both plain strings),
 // so it is directly callable here — same reasoning as relay-audit.ts being split out of index.ts for testability.
 import { describe, expect, it } from "vitest";
-import { renderFarm, type CapabilityRow, type FarmModel } from "../deploy/cloudflare/apf-gateway/src/page.js";
+import { computeWatchdog, renderFarm, type CapabilityRow, type FarmModel } from "../deploy/cloudflare/apf-gateway/src/page.js";
 
 const model: FarmModel = {
   installation: "local-fakes",
@@ -195,9 +195,53 @@ describe("PAGE-FARM-001 renderFarm() actually runs, not just typechecks", () => 
     expect(argosSection).toContain("Capabilitu okamžitě prověřit, zvážit karanténu.");
   });
 
+  it("Argos tab shows a watchdog verdict banner, not just the Kapability cards", () => {
+    const html = renderFarm(model);
+    const argosSection = html.slice(html.indexOf('id="view-argos"'), html.indexOf('id="view-kravicky"'));
+    expect(argosSection).toContain(">INCIDENT<");
+    expect(argosSection).toContain("apf-mail-ingest neodpovídá nebo není zapojen");
+    expect(argosSection).toContain("document.archive je v karanténě");
+  });
+
   it("renders cleanly with zero capabilities and zero instances (empty-state paths)", () => {
     const empty: FarmModel = { ...model, capabilities: [], instances: [] };
     expect(() => renderFarm(empty)).not.toThrow();
     expect(renderFarm(empty)).toContain("zatím žádné");
+  });
+});
+
+describe("computeWatchdog() — Argos's own deterministic verdict (HANDOFF 83, oponentura 'Argos dnes sám nic systematicky nehlídá')", () => {
+  it("a farm with a dead worker, a quarantined module and an Ohrada backlog is INCIDENT, not just individually red cards", () => {
+    const snapshot = computeWatchdog(model);
+    expect(snapshot.level).toBe("INCIDENT");
+    expect(snapshot.findings.some((f) => f.level === "INCIDENT" && f.text.includes("apf-mail-ingest"))).toBe(true);
+    expect(snapshot.findings.some((f) => f.level === "INCIDENT" && f.text.includes("document.archive"))).toBe(true);
+    expect(snapshot.findings.some((f) => f.level === "WARN" && f.text.includes("Ohrad"))).toBe(true);
+  });
+
+  it("a clean farm (every worker wired, nothing quarantined, no self-test failures, empty Ohrada, self-test not stale) is HEALTHY with zero findings", () => {
+    const clean: FarmModel = {
+      ...model,
+      deployables: model.deployables.map((d) => ({ ...d, body: { ...(d.body as Record<string, unknown>), wired: true } })),
+      capabilities: model.capabilities.map((c) => ({ ...c, lifecycleStatus: "ACTIVE" as const, selfTest: c.selfTest ? { passed: c.selfTest.total, total: c.selfTest.total } : undefined })),
+      instances: [],
+    };
+    const snapshot = computeWatchdog(clean);
+    expect(snapshot).toEqual({ level: "HEALTHY", findings: [] });
+  });
+
+  it("a capability whose self-test is 0/N (not just partially failing) escalates to INCIDENT, not WARN", () => {
+    const classify = model.capabilities.find((c) => c.capability === "document.classify") as CapabilityRow;
+    const brokenCapability: FarmModel = { ...model, capabilities: [{ ...classify, selfTest: { passed: 0, total: 18 } }] };
+    const snapshot = computeWatchdog(brokenCapability);
+    expect(snapshot.level).toBe("INCIDENT");
+    expect(snapshot.findings.some((f) => f.level === "INCIDENT" && f.text.includes("0/18"))).toBe(true);
+  });
+
+  it("self-test that never ran at all (selfTestAt undefined) is a WARN, not silently HEALTHY", () => {
+    const neverRan: FarmModel = { ...model, selfTestAt: undefined, capabilities: [], deployables: model.deployables.map((d) => ({ ...d, body: { ...(d.body as Record<string, unknown>), wired: true } })), instances: [] };
+    const snapshot = computeWatchdog(neverRan);
+    expect(snapshot.level).toBe("DEGRADED");
+    expect(snapshot.findings).toEqual([{ level: "WARN", text: expect.stringContaining("self-test nikdy neproběhl") }]);
   });
 });

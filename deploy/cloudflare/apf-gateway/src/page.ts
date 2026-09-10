@@ -211,12 +211,15 @@ const STATE_CLASS: Record<string, string> = {
   "OK (dvojník)": "st-ok",
   SUCCEEDED: "st-ok",
   ACTIVE: "st-ok",
+  HEALTHY: "st-ok",
   QUARANTINED: "st-crit",
   DOWN: "st-crit",
   FAILED: "st-crit",
+  INCIDENT: "st-crit",
   WAITING: "st-warn",
   NEZAPOJENO: "st-warn",
   UNKNOWN_OUTCOME: "st-warn",
+  DEGRADED: "st-warn",
   CANCELLED: "st-warn",
   RUNNING: "st-man",
   PENDING: "st-man",
@@ -309,6 +312,58 @@ const capabilityRow = (c: CapabilityRow): string => {
   const iso = isolationLabel(c.isolationClass ?? "");
   return `<div class="p-card${c.lifecycleStatus === "QUARANTINED" ? " st-crit-card" : ""}"><div class="p-card-head"><code>${esc(c.capability)}</code>/v${esc(c.version)}${c.usesLlm ? ' <small title="volá jazykový model">🤖</small>' : ""}${stateBadge(c.lifecycleStatus)}</div><div class="p-card-meta"><span>riziko ${riskBadge(c.riskClass)}</span><span${iso.title ? ` title="${esc(iso.title)}"` : ""}>izolace <b>${esc(iso.label || "—")}</b></span><span>${esc(c.sideEffects ?? "—")}</span></div><div class="p-card-meta">${selfTestBadge(c.selfTest)}</div>${selfTestDrilldown(c.selfTestFixtures, c.capability)}</div>`;
 };
+
+export type WatchdogLevel = "HEALTHY" | "DEGRADED" | "INCIDENT";
+export interface WatchdogFinding {
+  level: "WARN" | "INCIDENT";
+  text: string;
+}
+export interface WatchdogSnapshot {
+  level: WatchdogLevel;
+  findings: WatchdogFinding[];
+}
+
+/**
+ * Argos's own verdict over what /farm already knows — first slice of "Argos jako skutečný watchdog"
+ * (external review + owner 2026-09-10, HANDOFF 82/83): today a human has to read every card to notice
+ * something's wrong; this computes one rollup instead. Deterministic rules only, no AI, no new data source —
+ * same facts the cards already show (deployable health, Admission Gate lifecycle, self-test results, the
+ * Ohrada backlog). No persistence and no alerting yet: this only computes a verdict, it doesn't act on one
+ * (docs/SEVERKA.md zero-trust section: detection must stay a rule, never an LLM guess).
+ */
+export function computeWatchdog(m: FarmModel): WatchdogSnapshot {
+  const findings: WatchdogFinding[] = [];
+
+  for (const d of m.deployables) {
+    if (!workerReady(d)) findings.push({ level: "INCIDENT", text: `${d.name} neodpovídá nebo není zapojen (${workerStateLabel(d)})` });
+  }
+
+  for (const c of m.capabilities) {
+    if (c.lifecycleStatus === "QUARANTINED") findings.push({ level: "INCIDENT", text: `${c.capability} je v karanténě (Admission Gate)` });
+    if (c.selfTest && c.selfTest.total > 0) {
+      if (c.selfTest.passed === 0) findings.push({ level: "INCIDENT", text: `${c.capability}: self-test 0/${c.selfTest.total} — capabilita vypadá úplně nefunkční` });
+      else if (c.selfTest.passed < c.selfTest.total) findings.push({ level: "WARN", text: `${c.capability}: self-test ${c.selfTest.passed}/${c.selfTest.total}, ${c.selfTest.total - c.selfTest.passed} kontrol selhává` });
+    }
+  }
+
+  if (!m.selfTestAt) findings.push({ level: "WARN", text: "self-test nikdy neproběhl na téhle farmě — Argos nemá žádný živý důkaz, že kapability doopravdy fungují" });
+
+  // Same filter and the same honest instanceLimit/instanceWindow window as the Ohrada tab (page.ts ohradaInstances)
+  // — not a separate query, so this can miss an old open problem that fell out of the window (known limit, P1).
+  const openProblems = m.instances.filter((i) => !i.purged && (i.status === "WAITING" || i.status === "FAILED" || i.status === "UNKNOWN_OUTCOME"));
+  if (openProblems.length > 0) findings.push({ level: "WARN", text: `${openProblems.length} ${openProblems.length === 1 ? "instance čeká" : "instancí čeká"} v Ohradě na člověka nebo skončila chybou` });
+
+  const level: WatchdogLevel = findings.some((f) => f.level === "INCIDENT") ? "INCIDENT" : findings.length > 0 ? "DEGRADED" : "HEALTHY";
+  return { level, findings };
+}
+
+const watchdogFindingLine = (f: WatchdogFinding): string => `<li style="color:var(--${f.level === "INCIDENT" ? "crit" : "warn"})">${esc(f.text)}</li>`;
+
+/** The banner at the top of Argos's own tab — one verdict instead of reading every card. */
+const watchdogBanner = (snapshot: WatchdogSnapshot): string =>
+  `<div class="p-toolbar">${stateBadge(snapshot.level)}<span class="meta">${snapshot.findings.length === 0 ? "žádné otevřené nálezy" : `${snapshot.findings.length} ${snapshot.findings.length === 1 ? "otevřený nález" : "otevřené nálezy"}`}</span></div>${
+    snapshot.findings.length ? `<ul style="margin:.25rem 0 1rem 1.25rem;padding:0">${snapshot.findings.map(watchdogFindingLine).join("")}</ul>` : ""
+  }`;
 
 /**
  * Farmář na banku Interface-Par (Anamax443/Interface-Par, styl saas-modern, rozvržení side-nav — viz
@@ -540,6 +595,7 @@ export function renderFarm(m: FarmModel): string {
 
     <div id="view-argos" hidden>
       <div class="p-panehead">${ICONS.argos}<span>Argos hlídá — Kapability (Admission Gate)</span><span class="n">3 · kontrola · ${m.capabilities.length}, ${m.capabilities.filter((c) => c.lifecycleStatus === "QUARANTINED").length} v karanténě</span></div>
+      ${watchdogBanner(computeWatchdog(m))}
       <div class="p-toolbar"><span class="meta">Co každá kravička skutečně smí vykonat, seskupeno po modulu jako ohrada — riziko a izolace jsou vlastní tvrzení komponenty (descriptor), stav na kartě je to, co <b>Router doopravdy vynucuje</b> před každým dispatchem. Karanténa (config/&lt;instalace&gt;/lifecycle.json) se mění deploym, ne odsud — tahle stránka jen čte, nikdy nezapisuje</span></div>
       <div class="p-toolbar"><span class="meta">„self-test X/Y" na kartě = kolik vzorových případů té kapability naposledy skutečně prošlo proti reálnému běhu (ne jen že Worker odpověděl) — spusť ho na záložce Kravičky${m.selfTestAt ? `, naposledy ${shortAt(m.selfTestAt)}` : ""}</span></div>
       ${m.capabilities.length ? penGrid : '<div class="pen-empty">zatím žádné (vzdálení Workeři neodpověděli)</div>'}

@@ -2,6 +2,29 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-10 (84) — Argos dostal první skutečný watchdog verdikt (HEALTHY/DEGRADED/INCIDENT)
+
+**Pokyn vlastníka:** "pokračuj" — třetí krok podle pořadí z (82)'s oponentury. Bod 1 nálezu: "Argos dnes sám
+nic systematicky nehlídá" — `/farm` skládala fakta (Workery, Kapability, self-test, Ohrada), ale nikde nebyl
+jeden verdikt. Milan musel přečíst každou kartu sám, aby zjistil, jestli je něco v pořádku.
+
+**Postaveno:** `computeWatchdog(m: FarmModel): WatchdogSnapshot` (`page.ts`) — čistá, deterministická funkce
+(žádné AI, žádný nový zdroj dat) nad tím, co `/farm` už zná: worker neodpovídá/není zapojen → INCIDENT;
+kapabilita v karanténě → INCIDENT; self-test 0/N → INCIDENT ("vypadá úplně nefunkční"); self-test částečně
+FAILED → WARN; self-test nikdy neproběhl → WARN; Ohrada backlog (WAITING/FAILED/UNKNOWN_OUTCOME) → WARN.
+Celkový stav = INCIDENT, pokud je aspoň jeden INCIDENT nález, jinak DEGRADED, pokud je aspoň jeden WARN, jinak
+HEALTHY. Zobrazeno jako banner nahoře na záložce Argos — barevný `stateBadge` (`st-ok`/`st-warn`/`st-crit`) +
+seznam nálezů, ne jen "Kapability" tabulka jako dřív.
+
+**Vědomě mimo rozsah (příští kroky):** žádná persistence (Incident Store), žádné alertování (Telegram/email),
+žádná automatická karanténa na základě verdiktu — tohle jen POČÍTÁ stav, nejedná na něm
+(`docs/SEVERKA.md` zero-trust: detekce musí zůstat pravidlo, nikdy odhad LLM). Stejné honest omezení jako
+Ohrada (`instanceLimit`/`instanceWindow` okno, HANDOFF 73) — watchdog nevidí starý otevřený problém, co z okna
+vypadl.
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare`), **266/266 testů** (4 nové pro `computeWatchdog()` +
+1 pro banner v renderu), `arch`, `farm:check`.
+
 ## 2026-09-10 (83) — Admission Gate: `unknown modul → ACTIVE` opraveno na mandatorní allow-list (P0 z oponentury)
 
 **Pokyn vlastníka:** "pokračuj" — druhý krok podle pořadí z (82)'s externí oponentury. Shoda oponentury i
