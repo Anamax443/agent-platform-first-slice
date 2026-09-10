@@ -2,6 +2,7 @@
   {
     "id": "document",
     "emoji": "🐄",
+    "icon": "📄",
     "tag": "Dokumenty",
     "title": "Document COW",
     "description": "Klasifikace, validace, razítkování a archivace dokumentů podle nastaveného toku.",
@@ -12,6 +13,7 @@
   {
     "id": "email",
     "emoji": "🐮",
+    "icon": "✉️",
     "tag": "E-mail",
     "title": "Email COW",
     "description": "Příjem a odesílání e-mailů přes oddělený executor s omezenou odpovědností.",
@@ -22,6 +24,7 @@
   {
     "id": "vat-ares",
     "emoji": "🐂",
+    "icon": "🏛️",
     "tag": "CZ Registry",
     "title": "VAT / ARES COW",
     "description": "Deterministické ověření IČO, DIČ, plátcovství a účtů proti externím registrům.",
@@ -31,6 +34,7 @@
   {
     "id": "invoice-extraction",
     "emoji": "🐃",
+    "icon": "🧾",
     "tag": "Invoice",
     "title": "Invoice Extraction COW",
     "description": "Strukturované vytěžení údajů z faktury včetně provenance a confidence.",
@@ -39,6 +43,7 @@
   {
     "id": "erp",
     "emoji": "🐄",
+    "icon": "🗄️",
     "tag": "ERP",
     "title": "ERP COW",
     "description": "Úzké deterministické zápisy a čtení v ERP podle tenant policy.",
@@ -47,9 +52,19 @@
   {
     "id": "calendar",
     "emoji": "🐮",
+    "icon": "📅",
     "tag": "Calendar",
     "title": "Calendar COW",
     "description": "Čtení, návrh a případně řízené změny v kalendáři.",
+    "status": "future"
+  },
+  {
+    "id": "weather",
+    "emoji": "🐄",
+    "icon": "☁️",
+    "tag": "Weather",
+    "title": "Weather COW",
+    "description": "Předpovědi a upozornění na počasí relevantní pro naplánované úkoly a logistiku.",
     "status": "future"
   }
 ]

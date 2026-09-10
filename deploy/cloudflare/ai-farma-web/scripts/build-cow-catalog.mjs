@@ -19,11 +19,11 @@ const PILL = {
   future: '<span class="pill plan">budoucí</span>',
 };
 
+// Card shows a status pill on every card, always — a future/plan COW is fine to show (it's honestly labeled),
+// inventing one nowhere in the catalog or hiding the label would not be (owner 2026-09-10: no fabricated
+// numbers/claims anywhere on this site, the same rule that killed the fake -70%/99%/200+ stats section).
 const catalogCard = (cow) =>
-  `<article class="card cow-card"><div class="cow-head"><div class="cow-emoji">${cow.emoji}</div><span class="tag">${cow.tag}</span></div><div class="cow-body"><h3>${cow.title}</h3><p>${cow.description}</p><div class="cow-meta">${PILL[cow.status]}</div></div></article>`;
-
-const homeCard = (cow) =>
-  `<article class="card cow-card"><div class="cow-head"><div class="cow-emoji">${cow.emoji}</div><span class="tag">${cow.tag}</span></div><div class="cow-body"><h3>${cow.title}</h3><p>${cow.description}</p><div class="cow-meta">${PILL[cow.status]}${cow.status === "live" ? '<span class="pill">audit</span>' : ""}</div></div></article>`;
+  `<article class="card cow-card"><div class="cow-head"><div class="cow-emoji">${cow.emoji}</div><span class="tag">${cow.tag}</span><span class="cow-icon-badge">${cow.icon}</span></div><div class="cow-body"><h3>${cow.title}</h3><p>${cow.description}</p><div class="cow-meta">${PILL[cow.status]}</div></div></article>`;
 
 function replaceBetweenMarkers(html, marker, replacement) {
   const start = `<!-- COW-CATALOG:START ${marker} -->`;
@@ -34,17 +34,17 @@ function replaceBetweenMarkers(html, marker, replacement) {
   return html.slice(0, startIdx + start.length) + replacement + html.slice(endIdx);
 }
 
-// kravy.html: the full catalog, in catalog order.
-const kravyPath = path.join(root, "kravy.html");
-const kravyHtml = readFileSync(kravyPath, "utf8");
-writeFileSync(kravyPath, replaceBetweenMarkers(kravyHtml, "full", catalog.map(catalogCard).join("\n")), "utf8");
+const cardsHtml = catalog.map(catalogCard).join("\n");
 
-// index.html: homepage teaser — only cows with a real status claim (live/plan), never the purely aspirational ones.
+// kravy.html: the full catalog. index.html: same cards, same order — the homepage teaser used to filter out
+// "future" cows, but the status pill already says what's live/planned/future honestly, so hiding rows added
+// nothing; showing the whole catalog (owner's later reference design also does this) is simpler and matches.
+const kravyPath = path.join(root, "kravy.html");
+writeFileSync(kravyPath, replaceBetweenMarkers(readFileSync(kravyPath, "utf8"), "full", cardsHtml), "utf8");
+
 const indexPath = path.join(root, "index.html");
-const indexHtml = readFileSync(indexPath, "utf8");
-const teaser = catalog.filter((c) => c.status !== "future");
-writeFileSync(indexPath, replaceBetweenMarkers(indexHtml, "home", teaser.map(homeCard).join("\n")), "utf8");
+writeFileSync(indexPath, replaceBetweenMarkers(readFileSync(indexPath, "utf8"), "home", cardsHtml), "utf8");
 
 console.log(`cow-catalog: ${catalog.length} entries from ${catalogPath}`);
 console.log(`  kravy.html: ${catalog.length} cards`);
-console.log(`  index.html: ${teaser.length} cards (live/plan only)`);
+console.log(`  index.html: ${catalog.length} cards`);
