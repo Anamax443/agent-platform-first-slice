@@ -2,6 +2,32 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-10 (81) — ai-farma-web přestylován podle vlastníkova referenčního screenshotu
+
+**Pokyn vlastníka:** screenshot bohatšího designu (nav s Ceník/Reference/O nás/přihlášení, 6 feature ikon + callout,
+karty COW s fotkou+ikonou, 7 agentů včetně "Weather COW"). Screenshot obsahoval i vymyšlené statistiky
+(-70 %/99 %/200+ uživatelů) a smyšlenou citaci zákazníka — přímo v rozporu s vlastní zásadou webu ("žádná
+vymyšlená čísla"). Přes `AskUserQuestion` potvrzeno: převzít vizuál/strukturu, **ne** fake čísla; stavět jen podle
+screenshotu (žádný zdrojový soubor).
+
+**Nové:** `cenik.html` (cena podle rozsahu, žádné pevné tarify), `reference.html` (žádné veřejné reference zatím,
+řečeno na rovinu), `o-nas.html` ("Jeden vývojář, jasný princip" — bez předstírání týmu). `docs/cow-catalog.json`
+dostal pole `icon` (malý odznak přes fotku krávy) a novou položku `weather` (status `future`) — sedmá karta ze
+screenshotu, ale poctivě označená jako nápad, ne live capabilita.
+
+**CSS:** nový `.feature-strip`/`.feature-grid` (5 barevných ikon + zelený callout), `.cow-icon-badge` (odznak
+překrývající roh fotky). Nav s 7 položkami + lang badge + 2 tlačítky se nejdřív rozbil (text se lámal uprostřed
+slova) — opraveno zúžením mezer/fontu a `white-space:nowrap`, ne zvětšením `.container` (to by posunulo šířku
+všech sekcí na webu, ne jen navigace).
+
+**Vedlejší efekt při ověřování:** `taskkill /F /IM msedge.exe` na čištění zaseklých headless screenshot procesů
+smazal *všechny* Edge procesy na stroji, ne jen ty vlastní — riziko zabití vlastníkových otevřených oken. Po
+tomhle selhal i samotný screenshot nástroj (i na `example.com`), takže nové stránky (cenik/reference/o-nas) jsou
+ověřené jen přes HTTP 200 + shodou tříd s už vizuálně ověřenými stránkami, ne čerstvým screenshotem. Homepage a
+katalog (nejrizikovější části) byly screenshotnuté úspěšně před touhle příhodou.
+
+**Nasazeno:** `wrangler deploy` → https://ai-farma-web.bass443.workers.dev, všech 9 stránek 200.
+
 ## 2026-09-09 (80) — nový deployable ai-farma-web: veřejný zákaznický web, katalog COW ze společného zdroje
 
 **Pokyn vlastníka:** dostal statický mockup zákaznického webu (6 stránek, žádné knihovny) s poznámkou "mazlivý
