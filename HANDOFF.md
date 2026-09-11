@@ -2,6 +2,28 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-11 (91) — Scheduled self-test živě potvrzen prvním skutečným tikem + druhá externí oponentura
+
+**(88)'s poslední otevřená otázka zodpovězená:** `wrangler tail` zachytil `"*/30 * * * *" @ 10:00:49 - Ok` a
+`[apf-gateway] scheduled self-test capability=mail.ingest rows=13 (3133ms) cron=*/30 * * * *` — `controller.cron`
+větvení funguje, rotace zvolila `mail.ingest`, self-test doopravdy proběhl. Poslední díra v HANDOFF (88) uzavřena.
+
+**Druhá externí oponentura (po `fd3f048`)** ověřila kód, ne jen tvrdila — potvrzeno jako přesné:
+- **MAJOR 2 (dead-man switch):** `scheduled()`'s catch dělá jen `console.error`/`noRetry()`, žádný heartbeat —
+  pokud cron přestane chodit nebo `scheduled()` vždy spadne dřív, Argos o tom sám neví.
+- **MAJOR 3 (alert channel):** `sendArgosAlerts()`'s catch taky jen loguje, chybu nepersistuje jako incident —
+  přesně ten vzorec, co jsme dnes ráno živě chytili u `argos@maxferit.cz` (HANDOFF 87).
+- **MAJOR 5 (falešné resolved):** `capabilitiesOf()` (index.ts) při chybě vrací `[]`, ne chybový stav —
+  pokud `/capabilities` selže nezávisle na `/version`, kapability z toho Workeru zmizí z modelu úplně a
+  `reconcileIncidents()` by jejich otevřený incident tiše "vyřešil", i když šlo jen o ztrátu telemetrie.
+- **MEDIUM:** `page.ts:340` ("No persistence and no alerting yet") a `index.ts:274-275` ("no cron reconciliation
+  yet") jsou teď prokazatelně zastaralé komentáře.
+- MAJOR 1 (why/onFailure jen na injection fixtures) a MAJOR 4 (Ohrada window) potvrzené jako už dřív zapsaný,
+  vědomý dluh (HANDOFF 82/84), ne nový nález.
+
+**Vlastník zvolil pořadí (`AskUserQuestion`):** MAJOR 2+3 první — heartbeat a zdraví alert kanálu, protože bez
+nich může celý dnešní watchdog systém tiše přestat fungovat.
+
 ## 2026-09-11 (90) — Stav mezi kroky: čeká se na živé potvrzení prvního scheduled self-test tiku
 
 Všech 15 bodů oponentury (82) hotovo a nasazeno (HANDOFF 83–89), gitSha `3bd91d7` živě na `farm-bass443`.
