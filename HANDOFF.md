@@ -2,6 +2,40 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-11 (95) — Trusted telemetry, první krok: /audit odmítne cizí tenantId (MAJOR 7)
+
+**Pokyn vlastníka:** "pokračuj" — MAJOR 7 z druhé oponentury, vybráno přes `AskUserQuestion` jako nejdůležitější
+zbývající bod: Argos dnes automaticky rozhoduje (incident → alert) nad daty z `/audit`, co kompromitovaná nebo
+vadná COW mohla dřív libovolně zfalšovat (Posudek 7 MAJOR 5, `docs/SEVERKA.md` "Audit provenance", dosud
+vědomě odložené — "nízké dnes, vysoké před první třetí-stranovou COW"). Nejvyšší riziko dnešního dne — zásah
+do sdílené cesty, kterou používá **každý** write capability (`document.stamp`, `document.archive`,
+`email.send`), takže obzvlášť pečlivě otestováno, ne jen typecheck.
+
+**Rozhodnutí o návrhu:** ne nový podpisový systém (document-host/email-executor záměrně nemají vlastní signing
+klíč — "the ONLY private signing key of the farm" patří jen gateway). Místo toho: `workflowId` v `/audit`
+požadavku vždycky pochází z dispatch, co gateway sama vydala — takže gateway's vlastní `WorkflowInstance`
+journal (`env.WORKFLOW.get(...).view()`) je pravdivý zdroj `tenantId`, ne nová infrastruktura.
+
+**`auditClaimContradicts()`** (page.ts, čistá funkce) — `claimedTenantId !== actualTenantId`, `undefined`
+tvrzení není samo o sobě rozpor (dnešní přijímaný tvar, ne nové odmítnutí). `/audit` POST handler
+(index.ts): má-li požadavek `workflowId`, dotáže se na skutečnou instanci; při rozporu **403** + zápis
+`kind: "security", details.code: "AUDIT_TENANT_MISMATCH"` (stejná konvence jako `TENANT_SCOPE_MISMATCH`/
+`CREDENTIAL_DENIED` jinde v kódu) se **serverem odvozeným** správným tenantId, ne tvrzeným. `workflowId` bez
+živé instance (smazaná, nebo nikdy nedispatchovaná) **prochází beze změny** — vědomá mezera (jiný útok, ne ten,
+co tahle kontrola řeší), ne přísnější než dnešní chování.
+
+**`recentAuditTenantMismatchCount()`** — kolik takových odmítnutí za posledních 24 h, čte `computeWatchdog()`
+→ nový `audit-tenant-mismatch` INCIDENT nález (SEV1 podle oponenturní tabulky — cross-tenant pokus). Zavřený
+okruh: pokus o zfalšování → odmítnuto a zalogováno → Argos to najde → e-mail.
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare`), **298/298 testů** (8 nových), `arch`, `farm:check`.
+**Živé ověření (nejvyšší riziko dneška — zásah do sdílené cesty pro každý write capability) je záměrně
+samostatný krok po nasazení, ne tenhle záznam** — musí projít nejdřív reálný self-test relay (legitimní cesta
+nesmí přestat fungovat), teprve pak skutečný pokus o zfalšování.
+
+**Oponentura (91–95) dokončená z MAJOR bodů 2/3/4/5/7. Zbývá:** MAJOR 1 (povinné why/onFailure, velký
+content-authoring rozsah) a MAJOR 6 (risk-based cadence, design pro budoucí COW).
+
 ## 2026-09-11 (94) — Authoritative Ohrada dotaz: starý problém nesmí vypadnout z okna (MAJOR 4)
 
 **Pokyn vlastníka:** "pokračuj" — MAJOR 4 z druhé oponentury, vybráno přes `AskUserQuestion`. Oponentura: "Monitoring

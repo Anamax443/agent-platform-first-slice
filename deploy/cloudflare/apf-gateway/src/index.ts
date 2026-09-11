@@ -27,6 +27,7 @@ import { ReviewService, type Decision } from "../../../../src/platform/review.js
 import type { MessageEnvelope, ResultEnvelope } from "../../../../src/platform/types.js";
 import { WORKFLOW_NAMES, workflowDef } from "../../../../src/platform/workflow.js";
 import {
+  auditClaimContradicts,
   composeIncidentAlert,
   computeWatchdog,
   reconcileIncidents,
@@ -853,6 +854,17 @@ async function authoritativeOpenProblems(env: Env): Promise<OpenWorkflowProblem[
   return problems;
 }
 
+/** How many /audit relays in the given window were rejected as tenantId spoofing attempts (HANDOFF 95, MAJOR
+ * 7 of the second external review) — the same "security" kind + "AUDIT_TENANT_MISMATCH" code the /audit
+ * handler itself writes on rejection, read back here so computeWatchdog() can turn it into a finding. */
+async function recentAuditTenantMismatchCount(env: Env, sinceIso: string): Promise<number> {
+  await ensureD1Audit(env.AUDIT);
+  const row = await env.AUDIT.prepare("SELECT COUNT(*) AS n FROM audit WHERE kind = 'security' AND json_extract(json, '$.details.code') = 'AUDIT_TENANT_MISMATCH' AND at >= ?")
+    .bind(sinceIso)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
 /** The "deník": the shared audit trail as-is, same source as /audit.json, newest first. */
 const auditLog = async (env: Env, limit = 50): Promise<AuditLogRow[]> => {
   await ensureD1Audit(env.AUDIT);
@@ -1164,7 +1176,7 @@ async function inboxDetail(env: Env): Promise<{ pending: InboxItem[]; failed: In
  */
 async function buildFarmModel(env: Env, instanceLimit: number, instanceWindow: string): Promise<FarmModel> {
   const now = iso(new SystemClock().now());
-  const [documentHost, emailExecutor, mailIngest, fakes, instances, log, inbox, stats, documentHostCaps, emailExecutorCaps, selfTestSummary, alertHealth, openWorkflowProblems] = await Promise.all([
+  const [documentHost, emailExecutor, mailIngest, fakes, instances, log, inbox, stats, documentHostCaps, emailExecutorCaps, selfTestSummary, alertHealth, openWorkflowProblems, recentAuditTenantMismatches] = await Promise.all([
     deployableInfo(env.DOCUMENT_HOST, "https://apf-document-host.internal"),
     deployableInfo(env.EMAIL_EXECUTOR, "https://apf-email-executor.internal"),
     deployableInfo(env.MAIL_INGEST, "https://apf-mail-ingest.internal"),
@@ -1178,6 +1190,7 @@ async function buildFarmModel(env: Env, instanceLimit: number, instanceWindow: s
     latestSelfTestSummary(env),
     latestAlertHealth(env),
     authoritativeOpenProblems(env),
+    recentAuditTenantMismatchCount(env, windowSince("24h", new SystemClock()) as string),
   ]);
   // Admission Gate visibility (HANDOFF 70/71): the same LifecycleRegistry the Router enforces, read here only —
   // this page never writes it. Quarantining a module still means editing config/<installation>/lifecycle.json
@@ -1227,6 +1240,7 @@ async function buildFarmModel(env: Env, instanceLimit: number, instanceWindow: s
     alertHealth,
     capabilitiesUnavailableFrom,
     openWorkflowProblems,
+    recentAuditTenantMismatches,
   };
 }
 
@@ -1502,6 +1516,35 @@ export default {
       const body = (await request.json().catch(() => undefined)) as Partial<AuditRecord> | undefined;
       if (!body?.kind) return Response.json({ error: "BAD_REQUEST", message: "kind required" }, { status: 400 });
       await ensureD1Audit(env.AUDIT);
+      // Trusted telemetry, first slice (HANDOFF 95, MAJOR 7 of the second external review, docs/SEVERKA.md
+      // "Audit provenance"): a compromised or buggy COW relaying this record could claim any tenantId it
+      // likes — Argos now acts on this data (incidents/alerts), so that claim is worth checking against
+      // ground truth the gateway already has, not accepted verbatim. workflowId always originates from a
+      // dispatch THIS gateway itself issued, so its own Durable Object's journal is the authoritative
+      // tenantId — deliberately not a new signing scheme (document-host/email-executor hold no signing key
+      // of their own by design: "the ONLY private signing key of the farm" lives only here). A workflowId
+      // with no live instance (purged, or an id nobody ever dispatched) fails OPEN here — that's a known,
+      // separate gap (an unlinked/forged workflowId), not the cross-tenant spoof this check targets.
+      if (body.workflowId) {
+        const view = (await env.WORKFLOW.get(env.WORKFLOW.idFromName(body.workflowId))
+          .view()
+          .catch(() => null)) as InstanceView | null;
+        if (view && auditClaimContradicts(body.tenantId, view.instance.tenantId)) {
+          const denyRecord: AuditRecord = {
+            auditId: newId("aud"),
+            at: iso(new Date()),
+            kind: "security",
+            workflowId: body.workflowId,
+            tenantId: view.instance.tenantId,
+            details: { code: "AUDIT_TENANT_MISMATCH", claimedTenantId: body.tenantId ?? null, claimedKind: body.kind, claimedActorId: body.actorId ?? null },
+          };
+          await env.AUDIT.prepare("INSERT OR IGNORE INTO audit (audit_id, at, kind, correlation_id, workflow_id, tenant_id, actor_id, capability, json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+            .bind(denyRecord.auditId, denyRecord.at, denyRecord.kind, null, denyRecord.workflowId, denyRecord.tenantId, null, null, JSON.stringify(denyRecord))
+            .run();
+          console.error(`[apf-gateway] /audit rejected: claimed tenantId ${String(body.tenantId)} contradicts workflow ${body.workflowId}'s real tenant ${view.instance.tenantId}`);
+          return Response.json({ error: "TENANT_MISMATCH", message: "claimed tenantId does not match the workflow's real tenant" }, { status: 403 });
+        }
+      }
       const record: AuditRecord = { ...body, auditId: newId("aud"), at: iso(new Date()), kind: body.kind };
       await env.AUDIT.prepare("INSERT OR IGNORE INTO audit (audit_id, at, kind, correlation_id, workflow_id, tenant_id, actor_id, capability, json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
         .bind(record.auditId, record.at, record.kind, record.correlationId ?? null, record.workflowId ?? null, record.tenantId ?? null, record.actorId ?? null, record.capability ?? null, JSON.stringify(record))

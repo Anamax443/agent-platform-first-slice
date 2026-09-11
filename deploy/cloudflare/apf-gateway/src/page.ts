@@ -148,6 +148,11 @@ export interface FarmModel {
    * Ohrada tab renders (MAJOR 4 of the second external review: "monitoring data source nesmí být UI
    * pagination" — an old open problem must stay visible to Argos even once it falls out of that window). */
   openWorkflowProblems: OpenWorkflowProblem[];
+  /** How many POST /audit relays in the last 24h claimed a tenantId that contradicted the gateway's own
+   * journal for that workflowId (HANDOFF 95, MAJOR 7 of the second external review, "Audit provenance" —
+   * docs/SEVERKA.md) — index.ts rejects those (403) and logs them, this is what lets computeWatchdog() turn a
+   * detected spoofing attempt into a finding instead of it only ever reaching Workers Logs. */
+  recentAuditTenantMismatches: number;
 }
 
 export interface InstanceView {
@@ -367,6 +372,15 @@ export interface WatchdogSnapshot {
 const WATCHDOG_HEARTBEAT_STALE_MS = 90 * 60 * 1000;
 
 /**
+ * True when a POST /audit relay claims a tenantId that contradicts the gateway's own WorkflowInstance journal
+ * for that workflowId (HANDOFF 95, MAJOR 7 of the second external review, docs/SEVERKA.md "Audit provenance").
+ * `undefined` claimedTenantId is not itself a contradiction — a record simply missing one is today's existing
+ * (accepted) shape, not a new thing to start rejecting. Pure — index.ts does the actual journal lookup and
+ * only calls this with what it found; no Workers/Durable Object runtime needed to test the comparison itself.
+ */
+export const auditClaimContradicts = (claimedTenantId: string | undefined, actualTenantId: string): boolean => claimedTenantId !== undefined && claimedTenantId !== actualTenantId;
+
+/**
  * Argos's own verdict over what /farm already knows — first slice of "Argos jako skutečný watchdog"
  * (external review + owner 2026-09-10, HANDOFF 82/83): today a human has to read every card to notice
  * something's wrong; this computes one rollup instead. Deterministic rules only, no AI, no new data source —
@@ -420,6 +434,17 @@ export function computeWatchdog(m: FarmModel): WatchdogSnapshot {
   if (alertHealth?.lastFailureAt && (!alertHealth.lastSuccessAt || Date.parse(alertHealth.lastFailureAt) > Date.parse(alertHealth.lastSuccessAt))) {
     findings.push({ key: "alert-channel", level: "INCIDENT", text: `Argosovo vlastní odesílání e-mailu selhává: ${alertHealth.lastFailureReason ?? "neznámý důvod"} (naposledy ${shortAt(alertHealth.lastFailureAt)})` });
   }
+
+  // Trusted telemetry (HANDOFF 95, MAJOR 7): index.ts's /audit handler rejects (403) and logs any relay that
+  // claims a tenantId contradicting the gateway's own journal for that workflowId — SEV1 territory
+  // (docs/SEVERKA.md zero-trust: cross-tenant access attempt), so a rejected attempt becomes its own INCIDENT
+  // instead of only reaching Workers Logs.
+  if (m.recentAuditTenantMismatches > 0)
+    findings.push({
+      key: "audit-tenant-mismatch",
+      level: "INCIDENT",
+      text: `${m.recentAuditTenantMismatches} ${m.recentAuditTenantMismatches === 1 ? "pokus" : "pokusy"} o /audit záznam s cizím tenantId za posledních 24 h — možná kompromitovaná nebo vadná COW`,
+    });
 
   const level: WatchdogLevel = findings.some((f) => f.level === "INCIDENT") ? "INCIDENT" : findings.length > 0 ? "DEGRADED" : "HEALTHY";
   return { level, findings };

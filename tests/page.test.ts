@@ -4,7 +4,7 @@
 // page.ts has no Cloudflare-runtime imports (only src/platform types + bank.js/farm-theme.js, both plain strings),
 // so it is directly callable here — same reasoning as relay-audit.ts being split out of index.ts for testability.
 import { describe, expect, it } from "vitest";
-import { composeIncidentAlert, computeWatchdog, reconcileIncidents, renderFarm, type CapabilityRow, type FarmModel, type IncidentRecord, type WatchdogFinding } from "../deploy/cloudflare/apf-gateway/src/page.js";
+import { auditClaimContradicts, composeIncidentAlert, computeWatchdog, reconcileIncidents, renderFarm, type CapabilityRow, type FarmModel, type IncidentRecord, type WatchdogFinding } from "../deploy/cloudflare/apf-gateway/src/page.js";
 
 const model: FarmModel = {
   installation: "local-fakes",
@@ -72,6 +72,7 @@ const model: FarmModel = {
   selfTestAt: "2026-09-09T13:20:00Z",
   now: "2026-09-09T13:25:00Z",
   openWorkflowProblems: [{ workflowId: "wf-waiting1", status: "WAITING", at: "2026-09-09T08:01:00Z" }],
+  recentAuditTenantMismatches: 0,
 };
 
 describe("PAGE-FARM-001 renderFarm() actually runs, not just typechecks", () => {
@@ -301,6 +302,31 @@ describe("computeWatchdog() — Argos's own deterministic verdict (HANDOFF 83, o
   it("the converse: instances still lists a WAITING row but openWorkflowProblems (the authoritative source) says it's no longer open — no finding, instances alone is never consulted", () => {
     const staleInstancesView: FarmModel = { ...cleanBase, instances: model.instances, openWorkflowProblems: [] };
     expect(computeWatchdog(staleInstancesView)).toEqual({ level: "HEALTHY", findings: [] });
+  });
+
+  it("MAJOR 7 (HANDOFF 95): a rejected /audit tenant-spoofing attempt in the last 24h is its own INCIDENT, not just a Workers Logs line", () => {
+    const spoofed: FarmModel = { ...cleanBase, recentAuditTenantMismatches: 2 };
+    const snapshot = computeWatchdog(spoofed);
+    expect(snapshot.level).toBe("INCIDENT");
+    expect(snapshot.findings).toEqual([{ key: "audit-tenant-mismatch", level: "INCIDENT", text: expect.stringContaining("2 pokusy") }]);
+  });
+
+  it("zero recent tenant mismatches (the common case) produces no finding", () => {
+    expect(computeWatchdog(cleanBase)).toEqual({ level: "HEALTHY", findings: [] });
+  });
+});
+
+describe("auditClaimContradicts() — trusted telemetry, first slice (HANDOFF 95, MAJOR 7 of the second external review)", () => {
+  it("a claimed tenantId that differs from the real one contradicts", () => {
+    expect(auditClaimContradicts("tenant-evil", "tenant-42")).toBe(true);
+  });
+
+  it("a claimed tenantId matching the real one does not contradict", () => {
+    expect(auditClaimContradicts("tenant-42", "tenant-42")).toBe(false);
+  });
+
+  it("no claim at all (undefined) is not itself a contradiction — today's existing accepted shape, not a new rejection", () => {
+    expect(auditClaimContradicts(undefined, "tenant-42")).toBe(false);
   });
 });
 
