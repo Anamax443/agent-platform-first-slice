@@ -2,6 +2,27 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-11 (103) — Posudek 8 zapsán a ověřen v kódu: oba P0 nálezy jsou Posudek 7's MAJOR 2/3, ne nové
+
+**Kontext:** vlastník poslal externí oponenturu nad aktuálním `main` (reakce na dnešní SEVERKA 102).
+Než zapsáno, oba P0 body ověřeny přímo v kódu (soubor:řádek), stejnou disciplínou jako Posudek 7
+MAJOR 1: `accessJwtVerified: false` (`apf-gateway/src/index.ts:121`) a `checkGrant()` (`policy.ts:
+46-51`) čtoucí jen actorId/scopes/tenants, ne `approval`/`effectFieldValidators`/`isolation`/
+`rateLimit`. **Výsledek ověření: oba jsou přesně Posudek 7's MAJOR 2 a MAJOR 3 (9. 9. 2026)** — nic
+nové, jen znovu potvrzené nad aktuálním kódem. Doplněno upřesnění, co posudek sám neměl: všechna
+`config/farm-bass443/policy/*.json` mají dnes `approval.required: false` (žádný live exploit),
+`recipientAllowlist` se enforce jinou cestou (`src/slice.ts:113`), takže mezera je jen u
+`approval`/`effectFieldValidators`/`isolation`/`grant.rateLimit`.
+
+**Zapsáno jako `docs/POSUDKY.md` Posudek 8** — dispozice tabulka pro oba P0 (Z, potvrzeno, totožné s
+Posudek 7) i pro nové body (dojička jako platformní typ — PÚ, zpřesňuje SEVERKA 102; provenance graph
+— P, zpřesňuje 102; lifecycle `NEW→TESTING→CERTIFIED→ACTIVE→DEGRADED→QUARANTINED` — Z, potvrzuje už
+zapsanou mezeru; doporučené pořadí `invoice.extract` teď + BC jako `DRY_RUN` — otevřené, vlastník
+rozhodne). `docs/SEVERKA.md`'s dnešní (102) sekce doplněna krátkou poznámkou (provenance graph framing
++ dojička/kráva jako budoucí platformní typ).
+
+Čistě dokumentační krok — žádný kód, žádné brány, nenasazeno.
+
 ## 2026-09-11 (102) — SEVERKA.md: Farmář jako honák, ne autorita (kompromitovaný orchestrátor invariant)
 
 **Pokyn vlastníka:** vize z diskuze o BC importu faktur (farmář/krávy/dojičky, "pro info") — dlouhodobá

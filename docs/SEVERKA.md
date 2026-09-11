@@ -200,6 +200,14 @@ fingerprinty); před zápisem do BC se aktuální fingerprint porovná s ověře
 dispatch, jen na service-binding důvěru. Value-level fingerprint je stejná myšlenka aplikovaná na
 verifikační evidenci, ne jen na audit záznam samotný.
 
+**Zpřesnění (Posudek 8, `docs/POSUDKY.md`, 11. 9. 2026):** stejná myšlenka jde vidět i jako
+**provenance graph** — hash řetěz od originálu přes MD/extrakci až po jednotlivé pole
+(`original.hash → MD.hash → extraction.hash → field.hash → verification.inputHash`), ne jen plochý
+`field: PASS`. Dojička smí použít `PASS` jen když `verification.inputHash == currentField.hash` —
+ekvivalent `valueHash` výš, jen explicitně jako graf, ne jen jako pár hodnot. **Dojička/Kráva jako
+skutečný platformní typ** (ne jen role popsaná textem tady) je taky z Posudku 8 — kandidát pro
+budoucí rozšíření `module-descriptor.v1.schema.json`, ne dnešní stav.
+
 ### BC Executor musí být „hloupý" — žádné AI, žádná interpretace
 
 ```

@@ -226,3 +226,39 @@ farm:check zelené; nasazeno na `farm-bass443`.
 Pořadí `SEVERKA.md` (Registry hotové → Policy/Risk → Admission Gate → ...) beze změny. MAJOR 2–5 a
 MEDIUM čekají na stejnou disciplínu ověření jako MAJOR 1 (přečíst kód, ne převzít tvrzení), než
 dostanou vlastní opravu — vlastník rozhodne, kdy na ně dojde.
+
+## Posudek 8 — externí oponentura nad `main` po SEVERKA (102), farmář/kráva/dojička (11. 9. 2026)
+
+**Zdroj:** externí čtenář, poslaný vlastníkem jako zpráva v chatu, tentokrát výslovně nad **aktuálním
+`main`** (repo, README, `HANDOFF.md`), ne jen dřívějším shrnutím — reakce na dnešní SEVERKA.md (102)
+farmář/kráva/dojička diskuzi. Skóre podle čtenáře: celková kvalita **8,8/10** (architektura 9,3,
+separation of concerns 9,5, Router/Executor boundary 9,5, tenant isolation 9,2, idempotency 9,3,
+Human Review 8,8, Registry 9,1, lifecycle 8,5, audit/observability 8,8, **Policy enforcement 6,5**,
+**identity/authentication 6,5**, COW admission/certifikace 7,5, připravenost na BC financial write
+~7). Verdikt: „velmi dobrý základ, ale nechci z 8.8 udělat 9.5 jen proto, že se mi líbí koncept."
+
+**Metodologická poznámka:** oba body, co čtenář označuje jako P0, jsem dnes nezávisle ověřil přímo v
+kódu (soubor:řádek), stejnou disciplínou jako Posudek 7 MAJOR 1. **Žádný z nich není nový nález** —
+jsou to doslova **Posudek 7's MAJOR 2 a MAJOR 3** (9. 9. 2026), tehdy taky ověřené v kódu a vědomě
+odložené na rozhodnutí vlastníka. Dnešní oponentura je má znovu nezávisle potvrdila nad aktuálním
+kódem (dobré znamení — pořád platí, nezmizely omylem) a přidává konkrétní důvod, proč na ně teď
+skutečně dojde: chystaný farmář/kráva/dojička řetěz pro BC import na nich přímo staví.
+
+### Dispozice
+
+| # | Bod posudku | Dispozice | Poznámka |
+|---|---|---|---|
+| P0-1 | Access identita není kryptograficky ověřená (`accessJwtVerified: false`) | **Z, znovu potvrzeno v kódu — totožné s Posudek 7 MAJOR 2** | `deploy/cloudflare/apf-gateway/src/index.ts:121` (řádek se posunul, hodnota stejná); `page.ts:198` to pořád sama přiznává v UI. Nic se od 9. 9. nezměnilo — vlastník dosud nerozhodl, kdy na to dojde |
+| P0-2 | Policy Engine vynucuje jen actorId/scope/tenant, ne `approval`/`effectFieldValidators`/`isolation`/`rateLimit` | **Z, znovu potvrzeno v kódu — totožné s Posudek 7 MAJOR 3** | `src/platform/policy.ts` `checkGrant()` (46–51) beze změny od 9. 9. — čte jen `actorId`/`scopes`/`tenants`. **Upřesnění nad rámec posudku:** `recipientAllowlist` (jedno z polí `Policy`) se enforce ale **jinou cestou** — `src/slice.ts:113` ho čte přímo do `email.RecipientDirectory`, mimo `checkGrant()`. Zbylá pole (`approval`/`effectFieldValidators`/`isolation`/`grant.rateLimit`) nejsou čtená nikde v `src/`. Dnešní blast radius nízký — **všechny `config/farm-bass443/policy/*.json` mají `approval.required: false`**, takže nic dnes netvrdí ochranu, co by fakticky nedostalo. Farmář/dojička plán ze SEVERKA (102) na `effectFieldValidators`-styl vynucení ale přímo staví (value-bound verifikace) — proto teď P0, ne jen Z |
+| — | Dojička jako platformní typ, ne jen přezdívka (formální rozlišení od COW, např. v `module-descriptor`) | **PÚ, zpřesňuje SEVERKA (102)** | (102) zapsala roli konceptuálně (Farmář/Kráva/Dojička v `docs/`); formalizace jako skutečný platformní typ (schema pole, ne jen textový popis) je budoucí implementační krok, ne dnešní stav — SEVERKA aktualizována poznámkou níže |
+| — | Provenance graph — hash řetěz original→MD→extrakce→pole→verifikace, ne jen `field: PASS` | **P, zpřesňuje SEVERKA (102)** | (102) už zapsala `valueHash`/`invoiceFingerprint`; dnešní „provenance graph" framing (`inputHash` verifikace == `currentField.hash`) je stejná myšlenka, konkrétnější tvar — přidáno jako poznámka do (102) |
+| — | Lifecycle `NEW→TESTING→CERTIFIED→ACTIVE→DEGRADED→QUARANTINED` | **Z, potvrzuje už zapsanou mezeru** | `SEVERKA.md` vrstvy-tabulka, řádek „Admission Gate", už dnes říká „Zbývá: `NEW`/`TESTING`/`DEGRADED` stavy" — posudek dává konkrétní pořadí stavů, ne nové zjištění |
+| — | Doporučené pořadí: `invoice.extract`→ARES/VAT/ACCOUNT→dojička→`CertifiedInvoice` **teď**, BC zápis jako `DRY_RUN`, ostrý zápis až po uzavření P0-1/P0-2/evidence-fingerprint | **Otevřené, vlastník rozhodne** | shoduje se s `SEVERKA.md` `## Pořadí` body 5–7 (`invoice.extract`/`cz.company.verify`/`cz.vat.verify` — body 1–4 před nimi už hotové), jen navíc přidává explicitní `DRY_RUN` gate na BC krok a váže „ostrý BC write" na uzavření obou P0 + fingerprint binding. Nezapsáno do `## Pořadí` bez vlastníkova rozhodnutí |
+| — | Test počet „246" v posudku | **drobná nepřesnost** | aktuální `main` má **298/298** (HANDOFF 97+); 246 je starší číslo, čtenář pravděpodobně citoval starší HANDOFF záznam — nemění žádnou dispozici výš |
+
+### Co posudek nezměnil
+
+Pořadí `SEVERKA.md` `## Pořadí` beze změny (nezapsán `DRY_RUN` gate ani závaznost P0-1/P0-2 před BC
+write, dokud to vlastník nerozhodne). Skóre tabulka je čtenářova, ne nezávisle přepočítaná zdejším
+posudkem — na rozdíl od P0-1/P0-2 se jednotlivé číselné hodnoty (9.3/9.5/6.5/...) neověřovaly proti
+kódu bod po bodu.
