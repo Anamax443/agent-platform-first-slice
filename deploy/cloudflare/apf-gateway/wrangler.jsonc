@@ -11,9 +11,11 @@
   "workers_dev": false,
   "observability": { "enabled": true },
 
-  // R2 inbox batch import (owner's request, 2026-09-07): picks up whatever landed under inbox/ every 5 minutes.
-  // Free plan allows up to 3 cron triggers per Worker; this uses one. See scheduled() / processInbox() in src/index.ts.
-  "triggers": { "crons": ["*/5 * * * *"] },
+  // Two of the free plan's 3 allowed cron triggers per Worker. */5 * * * *: R2 inbox batch import (owner's
+  // request, 2026-09-07), picks up whatever landed under inbox/ every 5 minutes. */30 * * * *: scheduled
+  // self-test (HANDOFF 88) — one capability's fixtures per tick, whole farm cycles every 3 h. scheduled() in
+  // src/index.ts tells them apart by controller.cron; the self-test string must equal SELF_TEST_CRON there.
+  "triggers": { "crons": ["*/5 * * * *", "*/30 * * * *"] },
 
   "durable_objects": {
     "bindings": [{ "name": "WORKFLOW", "class_name": "WorkflowInstance" }]

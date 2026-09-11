@@ -49,7 +49,7 @@ import {
   type Wired,
 } from "./page.js";
 import { describeModels, gatewayCatalog, wirePlatform, type Wiring } from "./platform-wiring.js";
-import { runSelfTest, SELF_TEST_WORKFLOW_ID } from "./self-test.js";
+import { runSelfTest, selfTestCapabilityForTick, SELF_TEST_WORKFLOW_ID } from "./self-test.js";
 import { D1_AUDIT_DDL, DDL, SqliteArtifacts, SqliteAudit, SqliteJournal, SqliteReviewTaskStore } from "./store.js";
 import { visuallyStamp } from "./visual-stamp.js";
 
@@ -1019,6 +1019,10 @@ const INBOX_PREFIX = "inbox/";
 const INBOX_FAILED_PREFIX = "inbox/failed/";
 const INBOX_BATCH_LIMIT = 10;
 
+/** Must equal the second entry of wrangler.jsonc's triggers.crons (HANDOFF 88) — how scheduled() tells the
+ * self-test tick apart from the 5-minute inbox tick sharing the same handler. */
+const SELF_TEST_CRON = "*/30 * * * *";
+
 /** File names become part of the R2 key (prefixed with a fresh id) — strip path separators so a crafted name can't escape inbox/. */
 const sanitizeInboxName = (name: string): string => name.replace(/[\\/]/g, "_") || "upload";
 
@@ -1084,6 +1088,66 @@ async function inboxDetail(env: Env): Promise<{ pending: InboxItem[]; failed: In
   return { pending, failed, batchLimit: INBOX_BATCH_LIMIT };
 }
 
+/**
+ * Everything GET /farm needs to render, assembled once — split out (HANDOFF 88) so the scheduled self-test tick
+ * can build the same FarmModel computeWatchdog()/reconcileAndPersistIncidents() need without a Request to read
+ * instanceLimit/instanceWindow from. Never writes anything; the caller decides what to do with the result
+ * (render it, reconcile incidents against it, or both).
+ */
+async function buildFarmModel(env: Env, instanceLimit: number, instanceWindow: string): Promise<FarmModel> {
+  const [documentHost, emailExecutor, mailIngest, fakes, instances, log, inbox, stats, documentHostCaps, emailExecutorCaps, selfTestSummary] = await Promise.all([
+    deployableInfo(env.DOCUMENT_HOST, "https://apf-document-host.internal"),
+    deployableInfo(env.EMAIL_EXECUTOR, "https://apf-email-executor.internal"),
+    deployableInfo(env.MAIL_INGEST, "https://apf-mail-ingest.internal"),
+    deployableInfo(env.FAKES, FAKES_ORIGIN),
+    recentInstances(env, instanceLimit, windowSince(instanceWindow, new SystemClock())),
+    auditLog(env, 50),
+    inboxDetail(env),
+    farmStats(env),
+    capabilitiesOf(env.DOCUMENT_HOST, "https://apf-document-host.internal"),
+    capabilitiesOf(env.EMAIL_EXECUTOR, "https://apf-email-executor.internal"),
+    latestSelfTestSummary(env),
+  ]);
+  // Admission Gate visibility (HANDOFF 70/71): the same LifecycleRegistry the Router enforces, read here only —
+  // this page never writes it. Quarantining a module still means editing config/<installation>/lifecycle.json
+  // and redeploying (a human decision with its own commit), not a button on this page.
+  const selfTestAgg = selfTestAggregates(selfTestSummary);
+  const fixturesOf = (predicate: (f: SelfTestFixtureState) => boolean): SelfTestFixtureState[] => (selfTestSummary?.fixtures ?? []).filter(predicate);
+  const capabilities: CapabilityRow[] = [...gatewayCatalog(), ...documentHostCaps, ...emailExecutorCaps].map((c) => ({
+    ...c,
+    lifecycleStatus: installation.lifecycle.statusOf(c.module),
+    selfTest: selfTestAgg.byCapability[c.capability],
+    selfTestFixtures: fixturesOf((f) => f.capability === c.capability),
+  }));
+  const deployableName = (name: string): { name: string; selfTest: { passed: number; total: number } | undefined; selfTestFixtures: SelfTestFixtureState[] } => ({
+    name,
+    selfTest: selfTestAgg.byWorker[name],
+    selfTestFixtures: fixturesOf((f) => f.worker === name),
+  });
+  return {
+    installation: INSTALLATION,
+    gitSha: env.GIT_SHA,
+    gatewaySigning: signingMode(env),
+    deployables: [
+      { ...deployableName("apf-gateway"), ok: true, status: 200, body: { isolation: "self", wired: wiredOf(env) } },
+      { ...deployableName("apf-document-host"), ...documentHost },
+      { ...deployableName("apf-email-executor"), ...emailExecutor },
+      { ...deployableName("apf-mail-ingest"), ...mailIngest },
+      { ...deployableName("apf-fakes"), ...fakes },
+    ],
+    capabilities,
+    instances,
+    instanceLimit,
+    instanceWindow,
+    auditLog: log,
+    inbox,
+    workflows: [...WORKFLOW_NAMES],
+    models: modelsOf(env),
+    stats,
+    selfTestAt: selfTestSummary?.updatedAt,
+  };
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -1137,57 +1201,7 @@ export default {
       const rawLimit = Number(url.searchParams.get("limit"));
       const instanceLimit = [15, 30, 50, 100, 200].includes(rawLimit) ? rawLimit : 15;
       const instanceWindow = url.searchParams.get("window") ?? "";
-      const [documentHost, emailExecutor, mailIngest, fakes, instances, log, inbox, stats, documentHostCaps, emailExecutorCaps, selfTestSummary] = await Promise.all([
-        deployableInfo(env.DOCUMENT_HOST, "https://apf-document-host.internal"),
-        deployableInfo(env.EMAIL_EXECUTOR, "https://apf-email-executor.internal"),
-        deployableInfo(env.MAIL_INGEST, "https://apf-mail-ingest.internal"),
-        deployableInfo(env.FAKES, FAKES_ORIGIN),
-        recentInstances(env, instanceLimit, windowSince(instanceWindow, new SystemClock())),
-        auditLog(env, 50),
-        inboxDetail(env),
-        farmStats(env),
-        capabilitiesOf(env.DOCUMENT_HOST, "https://apf-document-host.internal"),
-        capabilitiesOf(env.EMAIL_EXECUTOR, "https://apf-email-executor.internal"),
-        latestSelfTestSummary(env),
-      ]);
-      // Admission Gate visibility (HANDOFF 70/71): the same LifecycleRegistry the Router enforces, read here only —
-      // this page never writes it. Quarantining a module still means editing config/<installation>/lifecycle.json
-      // and redeploying (a human decision with its own commit), not a button on this page.
-      const selfTestAgg = selfTestAggregates(selfTestSummary);
-      const fixturesOf = (predicate: (f: SelfTestFixtureState) => boolean): SelfTestFixtureState[] => (selfTestSummary?.fixtures ?? []).filter(predicate);
-      const capabilities: CapabilityRow[] = [...gatewayCatalog(), ...documentHostCaps, ...emailExecutorCaps].map((c) => ({
-        ...c,
-        lifecycleStatus: installation.lifecycle.statusOf(c.module),
-        selfTest: selfTestAgg.byCapability[c.capability],
-        selfTestFixtures: fixturesOf((f) => f.capability === c.capability),
-      }));
-      const deployableName = (name: string): { name: string; selfTest: { passed: number; total: number } | undefined; selfTestFixtures: SelfTestFixtureState[] } => ({
-        name,
-        selfTest: selfTestAgg.byWorker[name],
-        selfTestFixtures: fixturesOf((f) => f.worker === name),
-      });
-      const model: FarmModel = {
-        installation: INSTALLATION,
-        gitSha: env.GIT_SHA,
-        gatewaySigning: signingMode(env),
-        deployables: [
-          { ...deployableName("apf-gateway"), ok: true, status: 200, body: { isolation: "self", wired: wiredOf(env) } },
-          { ...deployableName("apf-document-host"), ...documentHost },
-          { ...deployableName("apf-email-executor"), ...emailExecutor },
-          { ...deployableName("apf-mail-ingest"), ...mailIngest },
-          { ...deployableName("apf-fakes"), ...fakes },
-        ],
-        capabilities,
-        instances,
-        instanceLimit,
-        instanceWindow,
-        auditLog: log,
-        inbox,
-        workflows: [...WORKFLOW_NAMES],
-        models: modelsOf(env),
-        stats,
-        selfTestAt: selfTestSummary?.updatedAt,
-      };
+      const model = await buildFarmModel(env, instanceLimit, instanceWindow);
       // Incident Store (HANDOFF 84 continued): reconcile this render's watchdog findings against persisted
       // incident state before rendering, so the Argos banner can show "poprvé viděno / kolikrát" instead of
       // findings looking freshly discovered on every page load.
@@ -1419,14 +1433,36 @@ export default {
     return Response.json({ error: "NOT_FOUND" }, { status: 404 });
   },
 
-  // R2 inbox batch import (owner's request, 2026-09-07): every 5 min, pick up whatever landed under inbox/ and run it
-  // through the same startIntake() as the web form. See processInbox() for the full design note.
+  // Two cron triggers on one Worker (wrangler.jsonc triggers.crons — free plan allows up to 3), told apart by
+  // controller.cron. R2 inbox batch import (owner's request, 2026-09-07): every 5 min, pick up whatever landed
+  // under inbox/ and run it through the same startIntake() as the web form (processInbox()). Scheduled self-test
+  // (HANDOFF 88, oponentura item 1 "Argos dnes sám nic systematicky nehlídá" + item 6 "self-testy jsou zatím
+  // ruční"): every 30 min, one capability's fixtures — never the whole 72-fixture suite (the known subrequest-
+  // depth limit, self-test.ts) — then the same reconcile/alert path GET /farm uses, so an incident is found and
+  // Argos e-mails about it even if nobody opens the page.
   async scheduled(controller, env, ctx): Promise<void> {
     if (env.KILL_SWITCH === "true") {
       console.log(`[apf-gateway] scheduled skipped: KILL_SWITCH cron=${controller.cron}`);
       return;
     }
     const t0 = Date.now();
+    if (controller.cron === SELF_TEST_CRON) {
+      try {
+        // Deterministic rotation, no stored "which one is next" state: which 30-minute slot this tick landed in
+        // picks the capability, so the whole farm cycles through once every 6 ticks (today: 3 h).
+        const capability = selfTestCapabilityForTick(controller.scheduledTime);
+        const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(SELF_TEST_WORKFLOW_ID));
+        const rows = (await stub.selfTest({ capability })) as SelfTestRow[];
+        await recordSelfTestSummary(env, rows);
+        const model = await buildFarmModel(env, 15, "");
+        await reconcileAndPersistIncidents(env, model, iso(new SystemClock().now()));
+        console.log(`[apf-gateway] scheduled self-test capability=${capability} rows=${rows.length} (${Date.now() - t0}ms) cron=${controller.cron}`);
+      } catch (e) {
+        console.error(`[apf-gateway] scheduled self-test threw (${Date.now() - t0}ms): ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
+        controller.noRetry();
+      }
+      return;
+    }
     try {
       const r = await processInbox(env);
       console.log(`[apf-gateway] scheduled inbox picked=${r.picked} ok=${r.ok} failed=${r.failed} (${Date.now() - t0}ms) cron=${controller.cron}`);

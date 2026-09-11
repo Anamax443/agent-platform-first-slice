@@ -2,6 +2,37 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-11 (88) — Scheduled self-test: Argos hlídá i bez otevřeného /farm (oponentura bod 1 a 6)
+
+**Pokyn vlastníka:** "pokračuj" — poslední bod z (82)'s oponentury. Zvoleno přes `AskUserQuestion`: každých
+30 minut, jedna kapabilita na tik (ne celá sada — riziko subrequest-depth limitu, HANDOFF 60/self-test.ts).
+
+**Postaveno:**
+- `deploy/cloudflare/apf-gateway/wrangler.jsonc` — druhý cron trigger (`*/30 * * * *`), druhý ze tří
+  povolených na free planu (první je pětiminutový R2 inbox).
+- `SELF_TEST_CAPABILITIES` (self-test.ts) — odvozeno přímo z `SUITES.map(s => s.capability)`, ne samostatně
+  udržovaný seznam, co by mohl vypadnout ze synchronizace. `selfTestCapabilityForTick(scheduledTime)` — čistá
+  funkce, který kapabilitu vybrat podle toho, do kterého 30minutového okna tik spadl (žádný uložený "co je
+  příští" stav mezi běhy — celá farma projde jednou za 6 tiků, dnes 3 h).
+- `buildFarmModel()` (index.ts) — vytažen z `GET /farm` handleru beze změny chování (stejné volání, stejný
+  výstup), aby scheduled self-test tik mohl sestavit stejný `FarmModel` pro `reconcileAndPersistIncidents()`
+  bez HTTP requestu, ze kterého by se dřív četl `instanceLimit`/`instanceWindow`.
+- `scheduled()` teď rozlišuje `controller.cron` — self-test tik: `runSelfTest({capability})` na vybranou
+  kapabilitu → `recordSelfTestSummary()` → `buildFarmModel()` → `reconcileAndPersistIncidents()` (stejná cesta
+  jako `GET /farm`, tedy i stejný alerting z HANDOFF 85/86 — pokud scheduled běh najde nový incident, Argos
+  pošle e-mail, i když se nikdo na Farmáře nekouká).
+
+**Vědomě ne živě ověřeno kompletně:** Cloudflare neumožňuje vynutit produkční `scheduled()` přes HTTP (na
+rozdíl od `POST /farm/self-test`, co přes stejný `runSelfTest`/`recordSelfTestSummary` mechanismus už živě
+ověřený je) — reálné vystřelení cronu a `controller.cron` větvení se ověří samo na první skutečný 30minutový
+tik po nasazení (Workers Logs / D1 `self-test-check` historie), ne přes tenhle deploy krok. `buildFarmModel()`
+refaktor je nepřímo ověřený (GET /farm dál funguje beze změny).
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare`), **280/280 testů** (4 nové pro
+`selfTestCapabilityForTick()`, čistá funkce, testovatelná bez Workers runtime), `arch`, `farm:check`.
+
+**Zbývá z oponentury:** DEGRADED lifecycle stav (jediný nedokončený bod, čeká na vlastníkovo rozhodnutí).
+
 ## 2026-09-11 (87) — Argos alerting živě ověřený až do schránky, po jedné skutečné překážce
 
 **Návaznost na (86):** `ARGOS_ALERT_MODE=live` nasazeno, `POST /farm/test-alert` zavoláno — první pokus **selhal**

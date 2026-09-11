@@ -84,6 +84,20 @@ const SUITES: { capability: string; worker: string; fixtures: Fixture[]; golden:
   { capability: "email.send", worker: "apf-email-executor", fixtures: emailFixtures as Fixture[], golden: emailGolden as Record<string, Golden> },
 ];
 
+/** Every capability the live self-test knows how to exercise, in SUITES's own order — index.ts's scheduled
+ * self-test (HANDOFF 88) rotates one of these per tick instead of running the whole suite at once (the
+ * subrequest-depth limit noted above). Derived from SUITES, never a separately maintained list that could
+ * silently drift from what actually runs. */
+export const SELF_TEST_CAPABILITIES: readonly string[] = SUITES.map((s) => s.capability);
+
+/** Which capability a scheduled self-test tick should run — deterministic from the tick's own timestamp
+ * (`controller.scheduledTime`), no stored "which one is next" state between runs. Pure, so it's testable
+ * without a Workers runtime, unlike the scheduled() handler that calls it (index.ts, HANDOFF 88). */
+export function selfTestCapabilityForTick(scheduledTime: number, intervalMs = 30 * 60 * 1000): string {
+  // % against SELF_TEST_CAPABILITIES.length (non-zero, SUITES is never empty) always lands in bounds.
+  return SELF_TEST_CAPABILITIES[Math.floor(scheduledTime / intervalMs) % SELF_TEST_CAPABILITIES.length] as string;
+}
+
 export interface SelfTestRow {
   capability: string;
   worker: string;
