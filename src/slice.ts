@@ -106,21 +106,27 @@ export function createSlice(installation: Installation, secrets: SecretsSource, 
   const emailCredentials = new CredentialResolver(credentialTable(installation, secrets, { [email.SEND_HANDLER_ID]: [email.SMTP_CREDENTIAL] }), audit);
   const ingestCredentials = new CredentialResolver(credentialTable(installation, secrets, { [ingest.INGEST_HANDLER_ID]: [] }), audit);
 
+  // Policies are authority artefacts of the installation (ADR-016); a capability without one cannot be registered.
+  // Defined before the hosts below: ExecutorHost's own §3.3 steps 5-6 (effect-field validation, approval) need
+  // it too, not just Router.register().
+  const policy = (capability: string) => policyFor(installation.policies, capability, "1");
+  const emailPolicy = policy("email.send");
+  const recipients: email.RecipientDirectory = (tenantId, ref) => emailPolicy.recipientAllowlist?.[tenantId]?.[ref];
+  // Review Service: moved up from its previous position (was defined alongside `transport`/`journal` below) —
+  // ExecutorHost's approval check (§3.3 step 6) needs a review-task lookup at construction time now too.
+  const review = o.reviewStore ? new ReviewService(clock, audit, o.reviewStore) : new ReviewService(clock, audit);
+
   // Hosts: document-executor-host (LOGICAL, two handlers), email-executor (PRINCIPAL: own context, own credential domain), mail-ingest.
-  const documentHost = new ExecutorHost({ hostId: host.descriptor.module, clock, audit, credentials: documentCredentials, idempotency: o.documentIdempotencyStore });
+  const documentHost = new ExecutorHost({ hostId: host.descriptor.module, clock, audit, credentials: documentCredentials, idempotency: o.documentIdempotencyStore, policyFor: policy, reviewTasks: review });
   Object.assign(documentHost.mutants, o.hostMutants ?? {});
   documentHost.register(host.createStampHandler({ artifacts, dms, credentials: documentCredentials, clock }));
   documentHost.register((o.archiveHandler ?? createArchiveHandler)({ artifacts, archive, credentials: documentCredentials, clock }));
 
-  // Policies are authority artefacts of the installation (ADR-016); a capability without one cannot be registered.
-  const policy = (capability: string) => policyFor(installation.policies, capability, "1");
-  const emailPolicy = policy("email.send");
-  const recipients: email.RecipientDirectory = (tenantId, ref) => emailPolicy.recipientAllowlist?.[tenantId]?.[ref];
-  const emailHost = new ExecutorHost({ hostId: email.descriptor.module, clock, audit, credentials: emailCredentials, idempotency: o.emailIdempotencyStore });
+  const emailHost = new ExecutorHost({ hostId: email.descriptor.module, clock, audit, credentials: emailCredentials, idempotency: o.emailIdempotencyStore, policyFor: policy, reviewTasks: review });
   Object.assign(emailHost.mutants, o.emailHostMutants ?? {});
   emailHost.register(email.createEmailSendHandler({ artifacts, smtp, credentials: emailCredentials, recipients, clock }));
 
-  const ingestHost = new ExecutorHost({ hostId: ingest.descriptor.module, clock, audit, credentials: ingestCredentials, idempotency: o.ingestIdempotencyStore });
+  const ingestHost = new ExecutorHost({ hostId: ingest.descriptor.module, clock, audit, credentials: ingestCredentials, idempotency: o.ingestIdempotencyStore, policyFor: policy, reviewTasks: review });
   ingestHost.register(ingest.createIngestHandler({ artifacts, clock }));
 
   // Router: descriptors validated against the frozen schema, policies looked up fail-closed.
@@ -189,7 +195,6 @@ export function createSlice(installation: Installation, secrets: SecretsSource, 
   // Transport: in this runtime gateway and router share the process. Orchestrators only ever see the interface.
   const transport = new InProcessTransport(gateway, router);
   const journal = new Journal(o.journalFile);
-  const review = o.reviewStore ? new ReviewService(clock, audit, o.reviewStore) : new ReviewService(clock, audit);
   const workflow = o.workflow ?? workflowDef("document-intake");
   const mailWorkflow = workflowDef("mail-intake");
   const reconcilers = { "document.stamp": documentHost.reconcilerFor("document.stamp"), "email.send": emailHost.reconcilerFor("email.send") };

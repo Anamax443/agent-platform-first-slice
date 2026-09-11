@@ -179,9 +179,13 @@ export default {
         const artifacts = new ReadOnlyArtifactStore(fetched);
 
         const credentials = new CredentialResolver(credentialTable(installation, secretsOf(), { [email.SEND_HANDLER_ID]: [email.SMTP_CREDENTIAL] }), audit);
-        const executor = new ExecutorHost({ hostId: env.HOST_ID, clock, audit, credentials, idempotency: new DurableIdempotencyStore(env.IDEMPOTENCY) });
-
+        // Defined before ExecutorHost below: its own §3.3 steps 5-6 (effect-field validation, approval)
+        // need policy too, not just Router.register(). No review-task store is wired on this deployable
+        // today (email.send has approval.required:false) — checkApproval() still fails closed
+        // (APPROVAL_REQUIRED) if a future policy ever sets approval.required:true here.
         const policy = policyFor(installation.policies, "email.send", "1");
+        const executor = new ExecutorHost({ hostId: env.HOST_ID, clock, audit, credentials, idempotency: new DurableIdempotencyStore(env.IDEMPOTENCY), policyFor: () => policy });
+
         const recipients: RecipientDirectory = (tenantId, ref) => policy.recipientAllowlist?.[tenantId]?.[ref];
         const smtp = env.SEND_MODE === "live" ? new CloudflareSmtpAdapter(env.EMAIL, env.EMAIL_FROM, env.EMAIL_FROM_NAME) : new FakeSmtpAdapter();
         executor.register(email.createEmailSendHandler({ artifacts, smtp, credentials, recipients, clock }));

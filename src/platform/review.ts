@@ -24,7 +24,8 @@ export interface ReviewTask {
   escalationDepth: number;
   maxEscalationDepth: number;
   status: "OPEN" | "DECIDED" | "EXPIRED" | "ESCALATED";
-  decision?: { actorId: string; role: string; decision: Decision; correction?: Record<string, unknown>; at: string };
+  /** authStrength captured from the deciding actor's own TrustedContext (Policy.approval.minAuthStrength, policy.ts). */
+  decision?: { actorId: string; role: string; decision: Decision; correction?: Record<string, unknown>; at: string; authStrength?: string };
 }
 
 export interface CreateTask {
@@ -129,7 +130,7 @@ export class ReviewService {
     return this.store.all().filter((t) => t.status === "OPEN").map((t) => structuredClone(t));
   }
 
-  decide(id: string, by: { actorId: string; role: string; tenantId: string; decision: Decision; correction?: Record<string, unknown> }): DecisionResult {
+  decide(id: string, by: { actorId: string; role: string; tenantId: string; decision: Decision; correction?: Record<string, unknown>; authStrength?: string }): DecisionResult {
     const task = this.store.get(id);
     if (!task) return { ok: false, code: "APPROVAL_MISMATCH" };
     if (task.tenantId !== by.tenantId) {
@@ -144,6 +145,7 @@ export class ReviewService {
     task.status = "DECIDED";
     task.decision = { actorId: by.actorId, role: by.role, decision: by.decision, at: iso(this.clock.now()) };
     if (by.correction) task.decision.correction = { ...by.correction };
+    if (by.authStrength) task.decision.authStrength = by.authStrength;
     this.store.set(id, task);
     this.audit.append({
       kind: "review-decision",

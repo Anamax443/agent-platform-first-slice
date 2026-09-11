@@ -7,6 +7,8 @@ import type { CredentialResolver } from "./credentials.js";
 import { platformError, UnknownOutcomeError } from "./errors.js";
 import { InMemoryIdempotencyStore, type IdempotencyStore } from "./idempotency.js";
 import type { Instance, StepRecord } from "./journal.js";
+import { checkApproval, checkEffectFieldValidators, type Policy } from "./policy.js";
+import type { ReviewTask } from "./review.js";
 import type { Handler, HandlerInput, HandlerOutcome } from "./types.js";
 
 /**
@@ -27,6 +29,8 @@ export interface HostMutants {
   skipContextMatch?: boolean; // MUT-CTX-001
   skipDeadline?: boolean; // MUT-IDM-001
   skipIdempotencyStore?: boolean; // MUT-IDM-002
+  skipEffectFieldValidation?: boolean; // MUT-SEM-001
+  skipApproval?: boolean; // MUT-SEM-002
 }
 
 export type ReconcileResult =
@@ -57,8 +61,10 @@ const SKEW_LOG_MS = 5_000;
 
 /**
  * Executor Host, LOGICAL isolation (FOUNDATION-core §3.2, §3.3). Wraps write handlers with the decision chain:
- * allowlist -> context match -> deadline -> idempotency -> audit -> side effect -> audit -> reconciliation hook.
- * Schema, binding, scope and policy checks already happened in the router.
+ * allowlist -> context match -> effect-field validation -> approval -> deadline -> idempotency -> audit ->
+ * side effect -> audit -> reconciliation hook. Schema, binding, scope and grant checks already happened in the
+ * router (§3.3 steps 1-4); effect-field validation and approval are §3.3 steps 5-6, the executor's own job per
+ * the norm (F2: "Executor v kroku 5 řetězce odmítne command...") — never a router-level concern.
  */
 export class ExecutorHost {
   private readonly handlers = new Map<string, HostHandlerSpec>();
@@ -67,7 +73,19 @@ export class ExecutorHost {
   readonly skewLog: Array<{ messageId: string; skewMs: number }> = [];
 
   constructor(
-    private readonly opts: { hostId: string; clock: Clock; audit: AuditTrail; credentials: CredentialResolver; idempotency?: IdempotencyStore },
+    private readonly opts: {
+      hostId: string;
+      clock: Clock;
+      audit: AuditTrail;
+      credentials: CredentialResolver;
+      idempotency?: IdempotencyStore;
+      /** Authority for §3.3 steps 5–6 (policy.ts's checkEffectFieldValidators/checkApproval). Optional so
+       * existing callers keep compiling; a capability with no policy.effectFieldValidators/approval.required
+       * is unaffected either way (both checks are no-ops when the policy doesn't declare them). */
+      policyFor?: (capability: string) => Policy;
+      /** Read-only lookup for resolving an approvalId (§3.3 step 6). Real callers pass ReviewService itself. */
+      reviewTasks?: { get(id: string): ReviewTask | undefined };
+    },
   ) {
     this.idempotency = opts.idempotency ?? new InMemoryIdempotencyStore();
   }
@@ -163,6 +181,43 @@ export class ExecutorHost {
           details: { code: "RESOURCE_TENANT_UNRESOLVED", reason: result.kind, contextTenant: context.tenantId, artifactId: String((message.payload as { artifactId?: unknown } | undefined)?.artifactId ?? ""), messageId: message.messageId },
         });
         return { status: "FAILED", error: platformError("RESOURCE_TENANT_UNRESOLVED", `resource ownership could not be established (${result.kind})`) };
+      }
+    }
+
+    // §3.3 step 5: business policy — every field the policy names in effectFieldValidators must carry
+    // validation.status:"passed" from the validator the policy names, before the executor accepts the
+    // command (SEC-SEM-001 runtime layer, F2). No-op when the capability's policy declares none.
+    if (!this.mutants.skipEffectFieldValidation && this.opts.policyFor) {
+      const policy = this.opts.policyFor(capability);
+      const check = checkEffectFieldValidators(policy, message.payload);
+      if (!check.ok) {
+        this.opts.audit.append({
+          kind: "security",
+          correlationId: message.correlationId,
+          actorId: context.actorId,
+          capability,
+          details: { code: "EFFECT_FIELD_VALIDATION_FAILED", field: check.field, reason: check.reason },
+        });
+        return { status: "FAILED", error: platformError("EFFECT_FIELD_VALIDATION_FAILED", `effect field ${check.field}: ${check.reason}`, { field: check.field }) };
+      }
+    }
+
+    // §3.3 step 6: human approval — if the capability's policy requires it, the command must carry an
+    // approvalId resolving to a DECIDED, APPROVE review task bound to this tenant/workflow. No-op when
+    // the capability's policy has approval.required unset or false (every real policy today).
+    if (!this.mutants.skipApproval && this.opts.policyFor) {
+      const policy = this.opts.policyFor(capability);
+      const task = typeof message.payload.approvalId === "string" ? this.opts.reviewTasks?.get(message.payload.approvalId) : undefined;
+      const check = checkApproval(policy, message, task, context);
+      if (!check.ok) {
+        this.opts.audit.append({
+          kind: "security",
+          correlationId: message.correlationId,
+          actorId: context.actorId,
+          capability,
+          details: { code: check.code, reason: check.reason },
+        });
+        return { status: "FAILED", error: platformError(check.code, check.reason) };
       }
     }
 

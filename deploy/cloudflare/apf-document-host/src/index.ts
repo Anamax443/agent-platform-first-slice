@@ -228,11 +228,15 @@ export default {
           credentialTable(installation, secretsOf(env), { [host.STAMP_HANDLER_ID]: [host.STAMP_CREDENTIAL], [archiveHandler.ARCHIVE_HANDLER_ID]: [archiveHandler.ARCHIVE_CREDENTIAL] }),
           audit,
         );
-        const executor = new ExecutorHost({ hostId: env.HOST_ID, clock, audit, credentials, idempotency: new DurableIdempotencyStore(env.IDEMPOTENCY) });
+        // Defined before ExecutorHost below: its own §3.3 steps 5-6 (effect-field validation, approval)
+        // need policy too, not just Router.register(). No review-task store is wired on this deployable
+        // today (document.stamp/document.archive have approval.required:false) — checkApproval() still
+        // fails closed (APPROVAL_REQUIRED) if a future policy ever sets approval.required:true here.
+        const policy = (capability: string) => policyFor(installation.policies, capability, "1");
+        const executor = new ExecutorHost({ hostId: env.HOST_ID, clock, audit, credentials, idempotency: new DurableIdempotencyStore(env.IDEMPOTENCY), policyFor: policy });
         executor.register(host.createStampHandler({ artifacts, dms: new HttpDmsAdapter(env.FAKES), credentials, clock }));
         executor.register(archiveHandler.createArchiveHandler({ artifacts, archive: new HttpArchiveAdapter(env.FAKES), credentials, clock }));
 
-        const policy = (capability: string) => policyFor(installation.policies, capability, "1");
         const { registry } = keyRegistryFrom(env.SIGNING_PUBLIC_KEYS);
         const router = new Router({ registry, clock, audit, lifecycle: installation.lifecycle });
         router.register({

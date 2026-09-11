@@ -51,8 +51,20 @@ export class Router {
   register(component: RegisteredComponent): void {
     const v = validateContract("module-descriptor", component.descriptor);
     if (!v.ok) throw new Error(`descriptor of ${component.descriptor.module} invalid: ${v.errors}`);
+    const descriptorCapabilities = component.descriptor.capabilities as Array<{ name: string; isolationClass?: string }> | undefined;
     for (const cap of component.capabilities) {
-      if (!component.policies[cap.name]) throw new Error(`no policy registered for ${cap.name} (fail-closed)`);
+      const policy = component.policies[cap.name];
+      if (!policy) throw new Error(`no policy registered for ${cap.name} (fail-closed)`);
+      // SEC-SEM-001 layer b (VC §5 line 130): a policy's declared isolation and the descriptor's own
+      // claim must agree — today hand-kept-consistent with no cross-check, a silent drift risk (Posudek
+      // 11 point 4). Registration-time, not per-dispatch: one check per module load, not per request.
+      const acceptedIsolationClass = policy.isolation?.acceptedIsolationClass;
+      const descriptorIsolationClass = descriptorCapabilities?.find((c) => c.name === cap.name)?.isolationClass;
+      if (acceptedIsolationClass && descriptorIsolationClass && acceptedIsolationClass !== descriptorIsolationClass) {
+        throw new Error(
+          `policy ${policy.policyRef} declares isolation.acceptedIsolationClass ${acceptedIsolationClass}, but descriptor ${component.descriptor.module}'s capability ${cap.name} declares isolationClass ${descriptorIsolationClass} (fail-closed)`,
+        );
+      }
       this.resolved.push({ component, capability: cap, validateInput: compileSchema(cap.inputSchema) });
     }
   }

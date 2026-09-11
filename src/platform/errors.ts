@@ -34,6 +34,11 @@ export const PLATFORM_CODES = {
   // once the module is healed (a new, separately-admitted build/version reaches ACTIVE), the same logical
   // request can be retried.
   MODULE_QUARANTINED: { class: "POLICY", retryable: false, reissuable: true },
+  // FOUNDATION-core.md §1 F2 / §3.3 step 5, SEC-SEM-001 runtime layer: an effect field named in the
+  // capability's policy.effectFieldValidators lacks validation.status:"passed" from the named validator.
+  // The norm doesn't name an exact code for this branch (only the shape of the check) — this is a project
+  // choice, not a normative one.
+  EFFECT_FIELD_VALIDATION_FAILED: { class: "SECURITY", retryable: false, reissuable: false },
 } as const satisfies Record<string, { class: ErrorClass; retryable: boolean; reissuable: boolean }>;
 
 export type PlatformCode = keyof typeof PLATFORM_CODES;

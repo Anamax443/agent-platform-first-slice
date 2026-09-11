@@ -208,7 +208,9 @@ export function wirePlatform(o: WiringOptions): Wiring {
   // Still runs through ExecutorHost (not a bare Handler) for the same allowlist/context/idempotency chain every
   // write capability gets — matches src/slice.ts's ingestHost exactly, just in-process here instead of a fresh test slice.
   const ingestCredentials = new CredentialResolver(credentialTable(o.installation, o.secrets, { [ingest.INGEST_HANDLER_ID]: [] }), o.audit);
-  const ingestHost = new ExecutorHost({ hostId: ingest.descriptor.module, clock: o.clock, audit: o.audit, credentials: ingestCredentials });
+  // No review-task store wired here (mail.ingest has approval.required:false today) — checkApproval()
+  // still fails closed (APPROVAL_REQUIRED) if a future policy ever sets approval.required:true.
+  const ingestHost = new ExecutorHost({ hostId: ingest.descriptor.module, clock: o.clock, audit: o.audit, credentials: ingestCredentials, policyFor: policy });
   ingestHost.register(ingest.createIngestHandler({ artifacts: o.artifacts, clock: o.clock }));
   router.register({
     descriptor: ingest.descriptor as never,
