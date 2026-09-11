@@ -70,6 +70,7 @@ const model: FarmModel = {
   models: { default: "llama-8b", choices: [{ key: "llama-8b", label: "Llama 8B", provider: "workers-ai", model: "@cf/meta/llama-3.1-8b", isDefault: true }] },
   stats: { totalProcessed: 12, processedToday: 3, avgProcessingMs: 4200, byType: [{ type: "INVOICE", count: 8 }] },
   selfTestAt: "2026-09-09T13:20:00Z",
+  now: "2026-09-09T13:25:00Z",
 };
 
 describe("PAGE-FARM-001 renderFarm() actually runs, not just typechecks", () => {
@@ -243,6 +244,41 @@ describe("computeWatchdog() — Argos's own deterministic verdict (HANDOFF 83, o
     const snapshot = computeWatchdog(neverRan);
     expect(snapshot.level).toBe("DEGRADED");
     expect(snapshot.findings).toEqual([{ key: "selftest-stale", level: "WARN", text: expect.stringContaining("self-test nikdy neproběhl") }]);
+  });
+
+  const cleanBase: FarmModel = {
+    ...model,
+    deployables: model.deployables.map((d) => ({ ...d, body: { ...(d.body as Record<string, unknown>), wired: true } })),
+    capabilities: [],
+    instances: [],
+  };
+
+  it("dead-man switch (HANDOFF 92, MAJOR 2): selfTestAt older than the 90-minute heartbeat threshold escalates to its own INCIDENT — the scheduled cron itself looks dead, not just 'nobody ran it recently'", () => {
+    const stale: FarmModel = { ...cleanBase, selfTestAt: "2026-09-10T08:00:00Z", now: "2026-09-10T09:35:00Z" }; // 95 min gap
+    const snapshot = computeWatchdog(stale);
+    expect(snapshot.level).toBe("INCIDENT");
+    expect(snapshot.findings).toEqual([{ key: "selftest-stale", level: "INCIDENT", text: expect.stringContaining("scheduled self-test") }]);
+  });
+
+  it("selfTestAt within the heartbeat threshold (89 min) produces no finding at all — a normal gap between 30-minute ticks", () => {
+    const fresh: FarmModel = { ...cleanBase, selfTestAt: "2026-09-10T08:00:00Z", now: "2026-09-10T09:29:00Z" }; // 89 min gap
+    expect(computeWatchdog(fresh)).toEqual({ level: "HEALTHY", findings: [] });
+  });
+
+  it("alert channel health (HANDOFF 92, MAJOR 3): the most recent attempt failed and nothing later succeeded -> its own INCIDENT finding, so a broken alert channel is visible even though it couldn't announce itself", () => {
+    const brokenChannel: FarmModel = { ...cleanBase, alertHealth: { lastAttemptAt: "2026-09-10T09:00:00Z", lastFailureAt: "2026-09-10T09:00:00Z", lastFailureReason: "destination address is not a verified address" } };
+    const snapshot = computeWatchdog(brokenChannel);
+    expect(snapshot.level).toBe("INCIDENT");
+    expect(snapshot.findings).toEqual([{ key: "alert-channel", level: "INCIDENT", text: expect.stringContaining("destination address is not a verified address") }]);
+  });
+
+  it("alert channel that failed once but succeeded since is healthy again — no finding, and a fixed earlier failure never resurfaces", () => {
+    const recovered: FarmModel = { ...cleanBase, alertHealth: { lastAttemptAt: "2026-09-10T09:10:00Z", lastFailureAt: "2026-09-10T09:00:00Z", lastSuccessAt: "2026-09-10T09:10:00Z", lastFailureReason: "old, now fixed" } };
+    expect(computeWatchdog(recovered)).toEqual({ level: "HEALTHY", findings: [] });
+  });
+
+  it("alertHealth absent (no send ever attempted on this installation) is not itself a problem — no finding", () => {
+    expect(computeWatchdog(cleanBase)).toEqual({ level: "HEALTHY", findings: [] });
   });
 });
 

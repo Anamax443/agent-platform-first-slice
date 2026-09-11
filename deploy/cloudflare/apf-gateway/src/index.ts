@@ -35,6 +35,7 @@ import {
   renderHome,
   renderInstance,
   renderSelfTest,
+  type ArgosAlertHealth,
   type AuditLogRow,
   type CapabilityRow,
   type FarmInstanceRow,
@@ -248,10 +249,38 @@ class SandboxArgosAlertPort implements ArgosAlertPort {
   }
 }
 
+const ARGOS_ALERT_HEALTH_AUDIT_ID = "argos-alert-health";
+
+/** Current alerting channel health, or undefined if no send has ever been attempted on this installation. */
+async function latestAlertHealth(env: Env): Promise<ArgosAlertHealth | undefined> {
+  await ensureD1Audit(env.AUDIT);
+  const row = await env.AUDIT.prepare("SELECT json FROM audit WHERE audit_id = ?").bind(ARGOS_ALERT_HEALTH_AUDIT_ID).first<{ json: string }>();
+  return row ? (JSON.parse(row.json) as ArgosAlertHealth) : undefined;
+}
+
+/** Records one send attempt's outcome (HANDOFF 92, MAJOR 3 of the second external review) — same fixed-row
+ * INSERT OR REPLACE idiom as self-test-state, so this is what lets computeWatchdog() notice "Argos itself
+ * can't speak" instead of that only ever reaching a Workers Logs console.error nobody is tailing. */
+async function recordAlertHealth(env: Env, outcome: { ok: true } | { ok: false; reason: string }, now: string): Promise<void> {
+  const existing = await latestAlertHealth(env);
+  const health: ArgosAlertHealth = {
+    lastAttemptAt: now,
+    lastSuccessAt: outcome.ok ? now : existing?.lastSuccessAt,
+    lastFailureAt: outcome.ok ? existing?.lastFailureAt : now,
+    lastFailureReason: outcome.ok ? existing?.lastFailureReason : outcome.reason,
+  };
+  await env.AUDIT.prepare("INSERT OR REPLACE INTO audit (audit_id, at, kind, correlation_id, workflow_id, tenant_id, actor_id, capability, json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .bind(ARGOS_ALERT_HEALTH_AUDIT_ID, now, "argos-alert-health", null, null, null, "argos", null, JSON.stringify(health))
+    .run();
+}
+
 /** Sends the alert e-mail for whatever reconcileAndPersistIncidents() found new this run, if `channels.
- * operatorAlertTo` is configured. Best-effort — a send failure must never break the page rendering it triggered
- * from, same reasoning as the D1 write itself. */
-async function sendArgosAlerts(env: Env, newlyOpened: IncidentRecord[], newlyResolved: IncidentRecord[]): Promise<void> {
+ * operatorAlertTo` is configured. Best-effort for the page rendering it triggered from (a send failure must
+ * never break that), but NOT silent otherwise (HANDOFF 92): every actual attempt records its outcome via
+ * recordAlertHealth(), which computeWatchdog() reads back — so a broken alert channel becomes its own
+ * "alert-channel" finding (and, once the channel recovers, its own resolved-alert e-mail) instead of only ever
+ * reaching a console.error, the exact class of failure HANDOFF 87 found live by accident. */
+async function sendArgosAlerts(env: Env, newlyOpened: IncidentRecord[], newlyResolved: IncidentRecord[], now: string): Promise<void> {
   const to = installation.profile.channels.operatorAlertTo;
   const fromEmail = installation.profile.channels.notifyFrom;
   // No installation-bound fallback here (ARCH-DEP-001): an installation without both a destination and a real
@@ -263,18 +292,20 @@ async function sendArgosAlerts(env: Env, newlyOpened: IncidentRecord[], newlyRes
   const port: ArgosAlertPort = env.ARGOS_ALERT_MODE === "live" ? new LiveArgosAlertPort(env.ARGOS_MAIL) : new SandboxArgosAlertPort();
   try {
     await port.send(to, from, alert.subject, alert.body);
+    await recordAlertHealth(env, { ok: true }, now);
   } catch (e) {
-    console.error(`[apf-gateway] sendArgosAlerts failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`);
+    const reason = e instanceof Error ? e.message : String(e);
+    console.error(`[apf-gateway] sendArgosAlerts failed (non-fatal): ${reason}`);
+    await recordAlertHealth(env, { ok: false, reason }, now).catch((e2) => console.error(`[apf-gateway] recordAlertHealth itself failed: ${e2 instanceof Error ? e2.message : String(e2)}`));
   }
 }
 
 /**
- * Incident Store, first slice (oponentura item 2, HANDOFF 84 continued): turns this render's watchdog findings
- * into persisted incident state — page.ts's reconcileIncidents() decides what changed, this just reads/writes
- * it. Runs on every GET /farm (reuses the FarmModel already assembled for the page, no extra fetches); there is
- * no cron reconciliation yet, so an incident's freshness is bounded by how often a human opens the page or runs
- * self-test — same honesty as self-test itself being manual today (docs/SEVERKA.md, scheduled probes are a
- * later step). Best-effort: a D1 hiccup here must never break the page it's reporting on.
+ * Incident Store (oponentura item 2, HANDOFF 84 continued): turns this render's watchdog findings into
+ * persisted incident state — page.ts's reconcileIncidents() decides what changed, this just reads/writes it.
+ * Runs on every GET /farm AND on every scheduled self-test tick (HANDOFF 88), reusing the FarmModel already
+ * assembled for that caller — no extra fetches. Best-effort: a D1 hiccup here must never break the page or the
+ * scheduled tick it's reporting on.
  */
 async function reconcileAndPersistIncidents(env: Env, model: FarmModel, now: string): Promise<IncidentRecord[]> {
   try {
@@ -288,7 +319,7 @@ async function reconcileAndPersistIncidents(env: Env, model: FarmModel, now: str
       // same key already resolved — reconcileIncidents() always starts a reopened key at occurrences 1).
       const newlyOpened = changed.filter((i) => !i.resolvedAt && i.occurrences === 1);
       const newlyResolved = changed.filter((i) => i.resolvedAt);
-      await sendArgosAlerts(env, newlyOpened, newlyResolved);
+      await sendArgosAlerts(env, newlyOpened, newlyResolved, now);
     }
     const byKey = new Map(existing.map((i) => [i.key, i]));
     for (const i of changed) byKey.set(i.key, i);
@@ -1095,7 +1126,8 @@ async function inboxDetail(env: Env): Promise<{ pending: InboxItem[]; failed: In
  * (render it, reconcile incidents against it, or both).
  */
 async function buildFarmModel(env: Env, instanceLimit: number, instanceWindow: string): Promise<FarmModel> {
-  const [documentHost, emailExecutor, mailIngest, fakes, instances, log, inbox, stats, documentHostCaps, emailExecutorCaps, selfTestSummary] = await Promise.all([
+  const now = iso(new SystemClock().now());
+  const [documentHost, emailExecutor, mailIngest, fakes, instances, log, inbox, stats, documentHostCaps, emailExecutorCaps, selfTestSummary, alertHealth] = await Promise.all([
     deployableInfo(env.DOCUMENT_HOST, "https://apf-document-host.internal"),
     deployableInfo(env.EMAIL_EXECUTOR, "https://apf-email-executor.internal"),
     deployableInfo(env.MAIL_INGEST, "https://apf-mail-ingest.internal"),
@@ -1107,6 +1139,7 @@ async function buildFarmModel(env: Env, instanceLimit: number, instanceWindow: s
     capabilitiesOf(env.DOCUMENT_HOST, "https://apf-document-host.internal"),
     capabilitiesOf(env.EMAIL_EXECUTOR, "https://apf-email-executor.internal"),
     latestSelfTestSummary(env),
+    latestAlertHealth(env),
   ]);
   // Admission Gate visibility (HANDOFF 70/71): the same LifecycleRegistry the Router enforces, read here only —
   // this page never writes it. Quarantining a module still means editing config/<installation>/lifecycle.json
@@ -1145,6 +1178,8 @@ async function buildFarmModel(env: Env, instanceLimit: number, instanceWindow: s
     models: modelsOf(env),
     stats,
     selfTestAt: selfTestSummary?.updatedAt,
+    now,
+    alertHealth,
   };
 }
 
@@ -1205,7 +1240,7 @@ export default {
       // Incident Store (HANDOFF 84 continued): reconcile this render's watchdog findings against persisted
       // incident state before rendering, so the Argos banner can show "poprvé viděno / kolikrát" instead of
       // findings looking freshly discovered on every page load.
-      model.incidents = await reconcileAndPersistIncidents(env, model, iso(new SystemClock().now()));
+      model.incidents = await reconcileAndPersistIncidents(env, model, model.now);
       return html(renderFarm(model));
     }
 
@@ -1232,7 +1267,7 @@ export default {
       if (!installation.profile.channels.operatorAlertTo) return Response.json({ error: "NO_ALERT_TO", message: "channels.operatorAlertTo not configured for this installation" }, { status: 400 });
       const now = iso(new SystemClock().now());
       const testIncident: IncidentRecord = { key: "test-alert", level: "WARN", text: "Testovací zpráva z /farm/test-alert — pokud tohle vidíš, doručení funguje.", firstSeenAt: now, lastSeenAt: now, occurrences: 1 };
-      await sendArgosAlerts(env, [testIncident], []);
+      await sendArgosAlerts(env, [testIncident], [], now);
       return Response.json({ ok: true, mode: env.ARGOS_ALERT_MODE, to: installation.profile.channels.operatorAlertTo });
     }
 
@@ -1455,7 +1490,7 @@ export default {
         const rows = (await stub.selfTest({ capability })) as SelfTestRow[];
         await recordSelfTestSummary(env, rows);
         const model = await buildFarmModel(env, 15, "");
-        await reconcileAndPersistIncidents(env, model, iso(new SystemClock().now()));
+        await reconcileAndPersistIncidents(env, model, model.now);
         console.log(`[apf-gateway] scheduled self-test capability=${capability} rows=${rows.length} (${Date.now() - t0}ms) cron=${controller.cron}`);
       } catch (e) {
         console.error(`[apf-gateway] scheduled self-test threw (${Date.now() - t0}ms): ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);

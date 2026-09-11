@@ -2,6 +2,39 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-11 (92) — Argos hlídá sám sebe: heartbeat + zdraví alert kanálu (druhá oponentura MAJOR 2+3)
+
+**Pokyn vlastníka:** "pokračuj" — vybráno přes `AskUserQuestion` jako první ze 3 nabízených bodů (91). Motivace
+z oponentury: watchdog, co může tiše přestat fungovat nebo tiše přestat mluvit, není spolehlivý watchdog.
+
+**MAJOR 2, dead-man switch:** `m.selfTestAt` už dřív existoval (kdy naposledy self-test proběhl), ale
+`computeWatchdog()` kontrolovala jen "nikdy neproběhl", ne "je starý". Zdravý 30minutový cron ho drží čerstvý
+sám od sebe — stal se tak přirozeným heartbeatem, aniž bylo potřeba stavět nový mechanismus. Nová eskalace:
+`selfTestAt` starší než 90 minut (3 vynechané tiky, dost rezervy proti jednomu výpadku/pomalému deployi) →
+stejný `selftest-stale` klíč, ale `INCIDENT` místo `WARN`, s textem, co říká, že "scheduled self-test zřejmě
+přestal fungovat", ne jen "je starý".
+
+**MAJOR 3, alert channel health:** `sendArgosAlerts()`'s catch blok dřív jen logoval. Nový
+`recordAlertHealth()` (D1, stejné `INSERT OR REPLACE` idiom jako self-test-state, jeden fixní řádek
+`argos-alert-health`) zapíše výsledek KAŽDÉHO pokusu o odeslání — úspěch i selhání. `computeWatchdog()` čte
+tenhle stav a generuje `alert-channel` INCIDENT, pokud poslední pokus selhal a nic pozdějšího neuspělo. Efekt:
+až se kanál sám zotaví (další úspěšný pokus), nález zmizí a `reconcileIncidents()` pošle "vyřešeno" — přes
+tentýž kanál, co se zrovna opravil. Přesně tenhle vzorec chyby (`{ok:true}` navenek, chyba jen v `wrangler
+tail`) jsme živě chytili v HANDOFF 87 u `argos@maxferit.cz`.
+
+**Refaktor:** `FarmModel` dostal povinné `now` (jeden clock reference pro všechny staleness kontroly, dřív
+`reconcileAndPersistIncidents` počítalo `iso(new SystemClock().now())` samostatně na dvou místech — teď se
+počítá jednou v `buildFarmModel()` a sdílí). `humanDuration()` přesunuto před `computeWatchdog()` (dřív jen
+pro `composeIncidentAlert()`, teď i pro heartbeat text). Opraveny obě zastaralé komentáře, co druhá oponentura
+přesně nachytala (`page.ts` "No persistence and no alerting yet", `index.ts` "no cron reconciliation yet").
+
+**Vědomě mimo rozsah:** nezávislé, cross-runtime ověření heartbeatu (mimo tenhle stejný Worker) — oponentura to
+navrhla jako "ideální", ale je to samostatný, výrazně větší úkol (externí uptime služba/jiný účet). Dnešní
+heartbeat detekuje "cron přestal chodit" jen tehdy, když někdo/něco jiného (člověk na `/farm`, nebo budoucí
+zdravý tik) o tom Argose požádá — pořád lepší než nic, ale ne opravdu nezávislé.
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare`), **287/287 testů** (5 nových), `arch`, `farm:check`.
+
 ## 2026-09-11 (91) — Scheduled self-test živě potvrzen prvním skutečným tikem + druhá externí oponentura
 
 **(88)'s poslední otevřená otázka zodpovězená:** `wrangler tail` zachytil `"*/30 * * * *" @ 10:00:49 - Ok` a

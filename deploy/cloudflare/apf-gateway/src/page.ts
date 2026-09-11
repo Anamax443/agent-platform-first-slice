@@ -124,11 +124,21 @@ export interface FarmModel {
   models: ModelsInfo;
   stats: FarmStats;
   /** When the self-test summary carried on deployables[].selfTest/capabilities[].selfTest was recorded —
-   * undefined when self-test was never run on this farm yet. */
+   * undefined when self-test was never run on this farm yet. Doubles as the scheduled self-test's own
+   * heartbeat (HANDOFF 92, "watchdog watching itself"): a healthy 30-minute cron keeps this fresh on its own,
+   * so computeWatchdog() escalates a STALE (not just absent) selfTestAt to its own INCIDENT finding. */
   selfTestAt?: string;
   /** Currently-open watchdog incidents (index.ts reconcileAndPersistIncidents, D1 kind "watchdog-incident") —
    * absent/empty is a valid state (a fresh farm, or the very first render before any run has persisted one). */
   incidents?: IncidentRecord[];
+  /** When this FarmModel was assembled (index.ts buildFarmModel, ISO) — the single clock reference every
+   * staleness check in computeWatchdog() compares against, so nothing drifts between two separate `new Date()`
+   * calls in the same request. */
+  now: string;
+  /** Argos's own alerting channel health (HANDOFF 92, MAJOR 3 of the second external review) — last attempted
+   * send and its outcome, so a broken alert channel becomes a watchdog finding instead of a silently swallowed
+   * console.error. Absent = no send has ever been attempted yet on this installation. */
+  alertHealth?: ArgosAlertHealth;
 }
 
 export interface InstanceView {
@@ -319,6 +329,16 @@ const capabilityRow = (c: CapabilityRow, watchdog: WatchdogSnapshot): string => 
   return `<div class="p-card${c.lifecycleStatus === "QUARANTINED" ? " st-crit-card" : ""}"><div class="p-card-head"><code>${esc(c.capability)}</code>/v${esc(c.version)}${c.usesLlm ? ' <small title="volá jazykový model">🤖</small>' : ""}${stateBadge(c.lifecycleStatus)}</div><div class="p-card-meta"><span>riziko ${riskBadge(c.riskClass)}</span><span${iso.title ? ` title="${esc(iso.title)}"` : ""}>izolace <b>${esc(iso.label || "—")}</b></span><span>${esc(c.sideEffects ?? "—")}</span></div><div class="p-card-meta">${selfTestBadge(c.selfTest)}${argosBadge}</div>${selfTestDrilldown(c.selfTestFixtures, c.capability)}</div>`;
 };
 
+/** How long something lasted between two ISO timestamps, for a human reading a finding — minutes/hours/days,
+ * not a raw ms diff. Used by computeWatchdog()'s staleness checks and composeIncidentAlert()'s resolved text. */
+const humanDuration = (fromIso: string, toIso: string): string => {
+  const minutes = Math.round((Date.parse(toIso) - Date.parse(fromIso)) / 60000);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} h`;
+  return `${Math.round(hours / 24)} dní`;
+};
+
 export type WatchdogLevel = "HEALTHY" | "DEGRADED" | "INCIDENT";
 export interface WatchdogFinding {
   /** Stable identity for the underlying problem, independent of the human-readable text (which carries mutable
@@ -332,13 +352,20 @@ export interface WatchdogSnapshot {
   findings: WatchdogFinding[];
 }
 
+/** How stale m.selfTestAt can get before it stops meaning "the 30-minute scheduled self-test is healthy" and
+ * starts meaning "the scheduled tick itself has probably stopped firing" — 3 missed ticks' worth of slack
+ * (HANDOFF 92), wide enough that one transient miss or a slow deploy doesn't false-alarm. */
+const WATCHDOG_HEARTBEAT_STALE_MS = 90 * 60 * 1000;
+
 /**
  * Argos's own verdict over what /farm already knows — first slice of "Argos jako skutečný watchdog"
  * (external review + owner 2026-09-10, HANDOFF 82/83): today a human has to read every card to notice
  * something's wrong; this computes one rollup instead. Deterministic rules only, no AI, no new data source —
- * same facts the cards already show (deployable health, Admission Gate lifecycle, self-test results, the
- * Ohrada backlog). No persistence and no alerting yet: this only computes a verdict, it doesn't act on one
- * (docs/SEVERKA.md zero-trust section: detection must stay a rule, never an LLM guess).
+ * mostly the same facts the cards already show (deployable health, Admission Gate lifecycle, self-test
+ * results, the Ohrada backlog), plus two watchdog-of-watchdog signals added in HANDOFF 92 (second external
+ * review MAJOR 2/3): the scheduled self-test's own heartbeat, and Argos's alert channel's own health — so
+ * Argos noticing it can't watch or can't speak is itself a finding, not silence (docs/SEVERKA.md zero-trust
+ * section: detection must stay a rule, never an LLM guess).
  */
 export function computeWatchdog(m: FarmModel): WatchdogSnapshot {
   const findings: WatchdogFinding[] = [];
@@ -356,12 +383,26 @@ export function computeWatchdog(m: FarmModel): WatchdogSnapshot {
     }
   }
 
-  if (!m.selfTestAt) findings.push({ key: "selftest-stale", level: "WARN", text: "self-test nikdy neproběhl na téhle farmě — Argos nemá žádný živý důkaz, že kapability doopravdy fungují" });
+  if (!m.selfTestAt) {
+    findings.push({ key: "selftest-stale", level: "WARN", text: "self-test nikdy neproběhl na téhle farmě — Argos nemá žádný živý důkaz, že kapability doopravdy fungují" });
+  } else if (Date.parse(m.now) - Date.parse(m.selfTestAt) > WATCHDOG_HEARTBEAT_STALE_MS) {
+    // Dead-man switch (HANDOFF 92, MAJOR 2): a healthy 30-min cron keeps selfTestAt fresh on its own — this
+    // stale means the scheduled tick itself has likely stopped firing, not just "nobody looked in a while".
+    findings.push({ key: "selftest-stale", level: "INCIDENT", text: `self-test naposledy proběhl před ${humanDuration(m.selfTestAt, m.now)} — scheduled self-test (každých 30 min) zřejmě přestal fungovat` });
+  }
 
   // Same filter and the same honest instanceLimit/instanceWindow window as the Ohrada tab (page.ts ohradaInstances)
   // — not a separate query, so this can miss an old open problem that fell out of the window (known limit, P1).
   const openProblems = m.instances.filter((i) => !i.purged && (i.status === "WAITING" || i.status === "FAILED" || i.status === "UNKNOWN_OUTCOME"));
   if (openProblems.length > 0) findings.push({ key: "ohrada-backlog", level: "WARN", text: `${openProblems.length} ${openProblems.length === 1 ? "instance čeká" : "instancí čeká"} v Ohradě na člověka nebo skončila chybou` });
+
+  // Alert channel health (HANDOFF 92, MAJOR 3): a send failure alone only logs (sendArgosAlerts, index.ts) —
+  // this is what turns "Argos couldn't speak" into something visible on /farm even when the alert itself
+  // couldn't go out. "Unhealthy" = the most recent attempt failed and no later attempt has since succeeded.
+  const alertHealth = m.alertHealth;
+  if (alertHealth?.lastFailureAt && (!alertHealth.lastSuccessAt || Date.parse(alertHealth.lastFailureAt) > Date.parse(alertHealth.lastSuccessAt))) {
+    findings.push({ key: "alert-channel", level: "INCIDENT", text: `Argosovo vlastní odesílání e-mailu selhává: ${alertHealth.lastFailureReason ?? "neznámý důvod"} (naposledy ${shortAt(alertHealth.lastFailureAt)})` });
+  }
 
   const level: WatchdogLevel = findings.some((f) => f.level === "INCIDENT") ? "INCIDENT" : findings.length > 0 ? "DEGRADED" : "HEALTHY";
   return { level, findings };
@@ -393,6 +434,15 @@ export interface IncidentRecord {
   resolvedAt?: string;
 }
 
+/** Argos's own alerting channel health (HANDOFF 92, D1 audit kind "argos-alert-health", one fixed row) — the
+ * last attempted send's outcome, independent of whether there was anything to report that run. */
+export interface ArgosAlertHealth {
+  lastAttemptAt: string;
+  lastSuccessAt?: string;
+  lastFailureAt?: string;
+  lastFailureReason?: string;
+}
+
 /**
  * Turns this run's watchdog findings into incident state, given what was already known — Incident Store, first
  * slice (oponentura item 2, HANDOFF 84 continued). A finding that keeps showing up updates the SAME incident
@@ -414,15 +464,6 @@ export function reconcileIncidents(existing: IncidentRecord[], findings: Watchdo
   const resolved: IncidentRecord[] = [...openByKey.values()].filter((i) => !seenKeys.has(i.key)).map((i) => ({ ...i, resolvedAt: now }));
   return [...upserted, ...resolved];
 }
-
-/** How long an incident lasted, for a human reading the resolved-alert e-mail — minutes/hours/days, not a raw ms diff. */
-const humanDuration = (fromIso: string, toIso: string): string => {
-  const minutes = Math.round((Date.parse(toIso) - Date.parse(fromIso)) / 60000);
-  if (minutes < 60) return `${minutes} min`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 48) return `${hours} h`;
-  return `${Math.round(hours / 24)} dní`;
-};
 
 /**
  * Argos's own e-mail alert (oponentura bod 11, "hlídací pes potřebuje štěkat") — composed here, pure and
