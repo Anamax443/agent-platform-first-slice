@@ -2,6 +2,42 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-11 (111) — SEVERKA: API research pro cz.company.verify/cz.vat.verify + dávkový provoz, fronta, capability-gap
+
+**API research (bezplatné, oficiální zdroje jen — vlastník explicitně odmítl platit třetím
+stranám, zapsáno i jako feedback memory):**
+- **`cz.company.verify`** → ARES `EkonomickeSubjektySluzba`, `GET .../ekonomicke-subjekty/{ico}`,
+  bezplatné, MF ČR. IČO formát (8 číslic) se shoduje s `invoice.extract`'s `companyId` validací.
+- **`cz.vat.verify`** → SOAP webová služba MOJE daně, `getStatusNespolehlivySubjektRozsirenyV2`,
+  bezplatné, GFŘ. **Klíčový nález:** `zverejneneUcty` (zveřejněné bankovní účty) je přímý zdroj dat
+  pro Import Gate's ACCOUNT_VERIFICATION princip (dřív jen koncept bez konkrétního zdroje) — účet
+  na faktuře se dá ověřit proti oficiálně zveřejněnému, ne proti tvrzení dokumentu.
+- **`cz.insolvency.check`** → zdroj zatím NEurčen. `isir.info` (Prowia system) je placený
+  third-party wrapper — odmítnuto. Jeho vlastní XML odkazuje na oficiální bezplatnou
+  `isir.justice.cz:8443/isir_public_ws/...`, tu je potřeba dohledat, než se capabilita začne
+  stavět.
+
+**Nová sekce v SEVERKA — dávkový provoz, fronta, bounded looping, capability-gap:**
+- **Druhý typ úlohy** vedle dnešního "jeden dokument → jedna instance": dávkový audit (např. "ověř
+  zdraví zákazníků v BC") — stejné krávy, jiný spouštěč, ne nová sada capabilit.
+- **Dvě nové krávy**: načti seznam z BC (read-only) + ověř dávku (jen tolik subjektů, kolik
+  povoluje dokumentace zdroje). "Počkej a udělej další kolo" patří workflow vrstvě, ne dovnitř
+  jednoho synchronního volání kráv (deadline/timeout kontrakt by to porušil).
+  
+- **Fronta pro sdílené omezené zdroje** — Total Commander F5 vzor: farma běží paralelně
+  defaultně, ale operace na stejný rate-limitovaný externí zdroj (MOJE daně/ARES/ISIR) se
+  serializují přes frontu per systém, ne globálním zámkem. Stejný tvar, jaký vlastník už řešil v
+  ITDashboardu (per-host zámek přes `pc:id`) — přirozená hranice fronty je stejná jako dnešní
+  credential doména.
+- **Bounded looping** — tři různé případy (retry v dávce, opravné kolečko Farmáře, periodické
+  opakování), žádný nesmí být nekonečný — stejná norma jako dnešní `reconciliationBudget`
+  (`WF-UNK-002`), ne nový mechanismus.
+- **Capability gap** — Farmář/Planner nesmí improvizovat náhradou, když v Agent Registry chybí
+  odpovídající kráva; navrhovaný `CAPABILITY_GAP` výstup, analogický `WAITING(REVIEW)` —
+  "požadavek na nákup nové krávy", ne tichá degradace.
+
+Čistě dokumentační krok — žádný kód, žádné nové capability zatím nepostaveny.
+
 ## 2026-09-11 (110) — SEVERKA: BC Executor dočasně nahrazen JSON Exportem + Invoice Generatorem (ověřovací fáze)
 
 **Pokyn vlastníka:** dokud invoice→BC řetěz není hotový a ověřený, poslední krok nebude zápis do BC, ale

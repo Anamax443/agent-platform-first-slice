@@ -80,23 +80,46 @@ human review — ne „pošli všechno nejdražšímu modelu").
 
 ---
 
-## Připravované doménové COW (invoice.extract → cz.company.verify → cz.vat.verify)
+## Připravované doménové COW (invoice.extract → cz.company.verify → cz.vat.verify → cz.insolvency.check)
 
 Vzor „extrahuj → ověř proti autoritě → rozhodni" se má opakovat napříč doménami (faktura dnes,
 kalendář/počasí/ERP později) — vždycky jako řetěz samostatných capabilities, nikdy jako jeden
 agent, co dělá všechno:
 
 - **`invoice.extract`** (AI) — z faktury vytáhne IČO, DIČ, bankovní účet, částku, měnu, položky.
-  Zůstává čistě extrakce, žádné rozhodování o důvěryhodnosti protistrany.
-- **`cz.company.verify`** (deterministický, žádné AI) — IČO a základní údaje proti ARES, shoda
-  názvu subjektu, nespolehlivý plátce.
+  Zůstává čistě extrakce, žádné rozhodování o důvěryhodnosti protistrany. **Hotovo 11. 9. 2026**
+  (HANDOFF 109) — pole podle VC §5: `companyId`, `bankAccount`, `totalWithVat`, `invoiceNumber`;
+  DIČ/měna/položky vědomě mimo rozsah v1.
+- **`cz.company.verify`** (deterministický, žádné AI) — IČO a základní údaje proti ARES.
+  API zdroj ověřen 11. 9. 2026: `EkonomickeSubjektySluzba` (`GET
+  https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/ekonomicke-subjekty/{ico}`) — bezplatné,
+  oficiální (MF ČR). `Ico_T` je pevných 8 číslic, shoduje se s `invoice.extract`'s `companyId`
+  validací beze změny. Klíčová pole: 404/`VYSTUP_SUBJEKT_NENALEZEN` = IČO neexistuje (business
+  výsledek, ne technická chyba — stejně jako `OTHER` u `document.classify`), `datumZaniku` =
+  subjekt zanikl i když "existuje", `seznamRegistraci.stavZdrojeRes`/`stavZdrojeVr` = per-registr
+  aktivní/neaktivní stav.
 - **`cz.vat.verify`** (deterministický, žádné AI) — stav plátce DPH a **zveřejněný bankovní účet
-  u Finanční správy** (webová služba FS pro SW třetích stran) — u tuzemských faktur vysoce
-  hodnotná kontrola, přesně ten typ věci, co má být deterministický kontrolní krok, ne volná
-  úvaha AI.
+  u Finanční správy**. API zdroj ověřen 11. 9. 2026: SOAP webová služba MOJE daně
+  (`https://adisrws.mfcr.cz/dpr/axis2/services/rozhraniCRPDPH.rozhraniCRPDPHSOAP`, operace
+  `getStatusNespolehlivySubjektRozsirenyV2` — nejúplnější, jediná neuzavřená verze), bezplatné,
+  oficiální. **`zverejneneUcty` (zveřejněné bankovní účty) je přímý zdroj dat pro Import Gate's
+  ACCOUNT_VERIFICATION** (viz `### Kontrola musí být svázaná s konkrétní hodnotou` níže) — účet na
+  faktuře se ověřuje proti tomuhle, ne proti tvrzení dokumentu samotného. Tři stavy
+  (`ANO`/`NE`/`NENALEZEN`), dávka až 100 DIČ (ale `statusCode 1` = tiše ořízne na prvních 100 —
+  musí se hlídat), rate limity (10k/24h, 2k/hod, max 4 paralelně), předvídatelná okna nedostupnosti
+  (denně 0:00–0:10, neděle 3:00–4:00) → `DEPENDENCY_UNAVAILABLE`/retryable. SOAP/XML, ne REST/JSON.
+- **`cz.insolvency.check`** (deterministický, žádné AI) — insolvence subjektu (IČO) i fyzické
+  osoby (RČ, pro OSVČ/statutáry bez IČO). **Zdroj zatím neurčen** — `isir.info` (Prowia system) je
+  placený third-party wrapper, vlastník 11. 9. 2026 explicitně odmítl platit třetím stranám
+  ([[agent-platform-no-paid-third-parties]]); jeho vlastní XML odkazuje na oficiální bezplatnou
+  službu `isir.justice.cz:8443/isir_public_ws/...` — tu je potřeba dohledat a ověřit, než se tahle
+  capabilita začne stavět.
 
 Tohle se **nesmí míchat do OCR/extraction agenta** — je to ověření proti autoritativním
 registrům, jiná bezpečnostní a spolehlivostní kategorie než čtení textu z PDF.
+
+Žádný z těchto tří ověřovacích zdrojů (ARES, MOJE daně, budoucí ISIR) není JSON — REST/JSON,
+SOAP/XML a REST/XML jsou tři různé protokoly, tři různé adaptéry, ne jedna sdílená kostra.
 
 ---
 
@@ -243,6 +266,86 @@ scénář, kde je **kompromitovaný sám orchestrátor** (ne jen jedna COW): př
 zfalšovaný Farmář, co se zkouší zeptat rovnou na akci s vlastními hodnotami („pošli milion korun na
 můj účet", „importuj s jinou částkou") — systém musí zůstat bezpečný i tak, protože Import Gate čte
 ze skladu, ne z Farmářova tvrzení, a BC Executor nemá vlastní úsudek, co by šlo přemluvit.
+
+---
+
+## Dávkové úlohy, fronta a mezera v capabilitách (11. 9. 2026)
+
+Vznikl z diskuze vlastníka 11. 9. 2026. **Cílový obraz, ne rozhodnuté zadání** — stejná výhrada
+jako u zbytku dokumentu. Motivace: Farmář dnes umí jen "jeden dokument → jedna workflow instance".
+Skutečný provoz bude potřebovat i druhý tvar úlohy — dávkový, proaktivní, ne reaktivní na jeden
+příchozí dokument.
+
+### Druhý typ úlohy: dávkový audit, ne jen reakce na dokument
+
+Příklad zadání: „ověř zdraví zákazníků v BC". Farmář dostane úkol, který se nevejde do
+`document-intake`/`mail-intake` vzoru:
+
+```
+Dnešní (reaktivní):  faktura přijde → extract → krávy ověří → dojička → Import Gate
+Nový (dávkový):      úkol "ověř zákazníky" → načti seznam z BC → krávy ověří KAŽDÉHO
+                      → dojička agreguje → report s příznaky (pro člověka, ne auto-akce)
+```
+
+Používá **stejné krávy** jako invoice řetěz (`cz.company.verify`/`cz.vat.verify`/
+`cz.insolvency.check`) — jde jen o jiný spouštěč, ne o novou sadu capabilit. Farmář zůstává
+stejně bez autority jako u jednoho dokumentu (`### Hlavní invariant` výše): report je vždy pro
+člověka, nikdy automatický zápis do BC.
+
+### Dvě nové krávy pro dávkový vzor, obě hloupé a jednoúčelové
+
+- Jedna kráva **jen načte** seznam zákazníků z BC (read-only, žádné rozhodování).
+- Druhá kráva **ověří dávku** — zpracuje jen tolik subjektů, kolik povoluje dokumentace
+  konkrétního externího zdroje (viz rate limity u `cz.vat.verify`/`cz.insolvency.check` výše), a
+  vrátí se. **"Počkej a udělej další kolo" nesmí být uvnitř jednoho volání kráv** — synchronní
+  capability kontrakt (deadline/`notValidAfter`, executor timeouty) neumožňuje handleru spát
+  minuty. Kráva zůstává čistě "ověř N položek, vrať se"; pauzu mezi koly řídí workflow vrstva,
+  stejný vzor jako dnešní `WAITING(EXTERNAL)`/naplánovaný resume — ne nový mechanismus.
+
+### Fronta pro sdílené omezené zdroje — Total Commander F5 vzor
+
+Procesy přes farmu běží defaultně **paralelně**. Výjimka: operace sahající na **stejný omezený
+externí zdroj** (rate limit u MOJE daně/ARES/ISIR) se musí serializovat, jinak si dvě paralelní
+workflow instance vzájemně vyčerpají limit nebo se překročí. Řešení: sdílená fronta per externí
+systém — stejný obrázek jako kopírování přes frontu v Total Commanderu (F5), ne globální
+zámek přes celou farmu.
+
+Tohle už vlastník jednou řešil jinde ([[itdashboard-host-lock]] — těžké per-PC operace
+serializované přes `pc:id`) — stejný tvar, jiný klíč fronty (`moje-dane:queue`, `isir:queue`,
+`ares:queue` místo `pc:id`). Přirozená hranice pro frontu je **stejná jako dnešní credential
+doména** (SMTP, DMS, budoucí BC Executor mají každý svůj vyhrazený credential resolver) — rate
+limit je vlastnost téhož externího systému, takže tempo/fronta patří do stejné hranice jako jeho
+credential, ne jako samostatný farm-wide mechanismus.
+
+### Bounded looping — žádná nová smyčka nesmí být nekonečná
+
+„Looping" se v dávkovém vzoru objevuje na třech různých místech, co se nesmí splynout do jednoho
+univerzálního mechanismu:
+
+1. **Retry v rámci dávky** — položka #47 selže (rate limit/timeout), zkusí se znovu později,
+   zbytek dávky pokračuje.
+2. **Opravné kolečko Farmáře** — když Farmář dostane jen kusé informace a rozřadí špatně, korekce
+   ho vrátí zpátky na rozhodnutí (ne že se chyba tiše opraví o úroveň níž).
+3. **Periodické opakování celé dávky** — plánovaný běh nanovo, stejný vzor jako dnešní self-test
+   rotace na cronu (`selfTestCapabilityForTick()`), ne opravný mechanismus, jen rozvrh.
+
+Pro všechny tři platí existující norma (VC `WF-UNK-002`, reconciliation bez konce): smyčka má
+vlastní **`reconciliationBudget`** — po X pokusech přechod do `WAITING(REVIEW)` s deadline,
+**nikdy nekonečná smyčka**. Žádný z těch tří typů výše nesmí být výjimkou.
+
+### Capability gap — Farmář nesmí improvizovat náhradou, musí eskalovat
+
+Přímé rozšíření `### Hlavní invariant: farmář nesmí nosit hodnoty` výše: když Farmář/Planner
+narazí na úkol, pro který **v Agent Registry není žádná odpovídající kráva**, nesmí zkusit
+nejbližší přibližnou náhradu (např. použít `cz.company.verify` na otázku, co patří insolvenci,
+"protože je to podobné") — to by bylo nebezpečnější než čestné přiznání mezery.
+
+Navrhovaný nový strukturovaný výstup — pracovní název **`CAPABILITY_GAP`** — analogický
+dnešnímu `WAITING(REVIEW)`: eskalace na člověka/produktové rozhodnutí ("požadavek na nákup nové
+krávy"), ne tichá degradace ani pokus o řešení s tím, co je po ruce. Přímo navazuje na budoucí
+**Planner jako generátor `WorkflowDef`** (`## Pořadí` bod 8) — plánovač skládající workflow z
+dostupných capabilit musí mít tuhle únikovou cestu vestavěnou od začátku, ne jako dodatečnou
+záplatu.
 
 ---
 
@@ -396,8 +499,12 @@ control plane ani farmy jako celku.*
    `bankAccount`, `totalWithVat`, `invoiceNumber`; DIČ/měna/položky vědomě mimo rozsah v1. Deterministická
    cross-check validace (classify→validate vzor pro tenhle řetěz), dojička, Import Gate a BC Executor
    ještě nejsou postavené.
-6. **`cz.company.verify`**
-7. **`cz.vat.verify`**
+6. **`cz.company.verify`** — API zdroj ověřen 11. 9. 2026 (ARES, bezplatné, viz
+   `## Připravované doménové COW` výše), zatím nepostaveno.
+7. **`cz.vat.verify`** — API zdroj ověřen 11. 9. 2026 (MOJE daně SOAP, bezplatné, zveřejněné účty
+   = zdroj pro Import Gate ACCOUNT_VERIFICATION), zatím nepostaveno.
+7b. **`cz.insolvency.check`** — zdroj zatím neurčen (placený `isir.info` vlastník odmítl, hledá se
+   oficiální bezplatná `isir.justice.cz` alternativa) — vloženo do pořadí až po nalezení zdroje.
 8. **Planner jako generátor `WorkflowDef`** (nikdy přímý executor) — teprve teď plánuje nad
    reálnou farmou (`document.*`, `mail.ingest`, `email.send`, `invoice.extract`, `cz.*.verify`),
    ne nad dvěma umělými capabilities — proto až poslední, ne proto, že by byl málo důležitý.
