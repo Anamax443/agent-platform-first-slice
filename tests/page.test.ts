@@ -322,3 +322,23 @@ describe("composeIncidentAlert() — Argos's e-mail content (HANDOFF 85, oponent
     expect(alert?.body.indexOf("NOVÉ:")).toBeLessThan(alert?.body.indexOf("VYŘEŠENO:") as number);
   });
 });
+
+describe("Kapability karta ukazuje Argosův živý nález odděleně od formálního Admission Gate stavu (HANDOFF 89)", () => {
+  it("quarantined capability gets its own 'Argos: INCIDENT' badge next to the formal QUARANTINED one — two separate facts, not merged into one", () => {
+    const html = renderFarm(model);
+    const argosSection = html.slice(html.indexOf('id="view-argos"'), html.indexOf('id="view-kravicky"'));
+    const cardStart = argosSection.indexOf(">document.archive<");
+    const card = argosSection.slice(cardStart - 200, cardStart + 900);
+    expect(card).toContain("QUARANTINED");
+    expect(card).toContain("Argos:");
+    expect(card).toContain(">INCIDENT<");
+  });
+
+  it("a capability with no open Argos finding (email.send: ACTIVE, no self-test data) shows no Argos badge at all", () => {
+    const html = renderFarm(model);
+    const argosSection = html.slice(html.indexOf('id="view-argos"'), html.indexOf('id="view-kravicky"'));
+    const cardStart = argosSection.indexOf(">email.send<");
+    const card = argosSection.slice(cardStart - 200, cardStart + 600);
+    expect(card).not.toContain("Argos:");
+  });
+});

@@ -2,6 +2,31 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-11 (89) — DEGRADED: Argosův živý nález na kartě, odděleně od formálního Admission Gate stavu
+
+**Pokyn vlastníka:** "pokračuj" — poslední bod z (82)'s oponentury. Přes `AskUserQuestion` rozhodnuto: DEGRADED
+je **jen zobrazovaný, živě počítaný signál** (z Argosových WARN nálezů, co `computeWatchdog()` už dnes umí),
+**ne** nová hodnota v samotném `LifecycleStatus` enum — ten zůstává jen `ACTIVE`/`QUARANTINED`, ruční, s vlastním
+commitem (HANDOFF 83). Vlastník výslovně odmítl variantu, co by tohle mísila do jednoho pole.
+
+**Proč takhle:** `config/<installation>/lifecycle.json` je bezpečnostní allow-list, co Router doopravdy
+vynucuje — psaný komentář v `capabilityRow()` sekci to už dřív říkal explicitně ("tahle stránka jen čte, nikdy
+nezapisuje"). Argosovo živé zdraví (self-test procenta, otevřené incidenty) je jiná kategorie faktu — nemá
+smysl je slévat do jednoho pole jen proto, že mají podobná jména.
+
+**Postaveno:** `capabilityWatchdogLevel(capability, watchdog)` (page.ts, čistá funkce) — přesné klíče
+(`quarantined:`/`selftest-broken:`/`selftest-degraded:` + kapabilita), ne volné `endsWith()` (riziko
+přeshodnocení, kdyby jedno jméno kapability bylo někdy sufix druhého). `capabilityRow()` teď vedle formálního
+`stateBadge(c.lifecycleStatus)` ukazuje `Argos: DEGRADED`/`Argos: INCIDENT`, jen když má Argos pro tu
+kapabilitu otevřený nález — jinak nic navíc. `computeWatchdog(m)` se v `renderFarm()` počítá jen jednou (dřív
+jen pro banner, teď sdíleno i s kartami).
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare`), **282/282 testů** (2 nové), `arch`, `farm:check`.
+
+**Oponentura (82) dokončená — všech 15 bodů se buď opravilo, nebo vědomě zapsalo jako budoucí práce
+(scheduled probes pro jiné než self-test kontroly, trend engine nad self-test-check historií, automatická
+karanténa jen pro tvrdé security invarianty, trusted/signed telemetry na `/audit`).**
+
 ## 2026-09-11 (88) — Scheduled self-test: Argos hlídá i bez otevřeného /farm (oponentura bod 1 a 6)
 
 **Pokyn vlastníka:** "pokračuj" — poslední bod z (82)'s oponentury. Zvoleno přes `AskUserQuestion`: každých

@@ -310,10 +310,13 @@ const selfTestList = (fixtures: SelfTestFixtureState[] | undefined): string =>
 const selfTestDrilldown = (fixtures: SelfTestFixtureState[] | undefined, capability: string): string =>
   `${selfTestList(fixtures)}<form method="post" action="/farm/self-test?capability=${encodeURIComponent(capability)}"><button class="p-btn p-btn-sm" type="submit">Spustit jen ${esc(capability)}</button></form>`;
 
-/** One card of the Admission Gate pen: capability, its risk/isolation claim, live lifecycle. */
-const capabilityRow = (c: CapabilityRow): string => {
+/** One card of the Admission Gate pen: capability, its risk/isolation claim, live lifecycle, and — separately —
+ * Argos's own live health opinion on top of it (HANDOFF 89), when there's an open finding to show. */
+const capabilityRow = (c: CapabilityRow, watchdog: WatchdogSnapshot): string => {
   const iso = isolationLabel(c.isolationClass ?? "");
-  return `<div class="p-card${c.lifecycleStatus === "QUARANTINED" ? " st-crit-card" : ""}"><div class="p-card-head"><code>${esc(c.capability)}</code>/v${esc(c.version)}${c.usesLlm ? ' <small title="volá jazykový model">🤖</small>' : ""}${stateBadge(c.lifecycleStatus)}</div><div class="p-card-meta"><span>riziko ${riskBadge(c.riskClass)}</span><span${iso.title ? ` title="${esc(iso.title)}"` : ""}>izolace <b>${esc(iso.label || "—")}</b></span><span>${esc(c.sideEffects ?? "—")}</span></div><div class="p-card-meta">${selfTestBadge(c.selfTest)}</div>${selfTestDrilldown(c.selfTestFixtures, c.capability)}</div>`;
+  const argos = capabilityWatchdogLevel(c.capability, watchdog);
+  const argosBadge = argos ? `<span title="Argosův živý nález, ne formální stav Admission Gate">Argos: ${stateBadge(argos)}</span>` : "";
+  return `<div class="p-card${c.lifecycleStatus === "QUARANTINED" ? " st-crit-card" : ""}"><div class="p-card-head"><code>${esc(c.capability)}</code>/v${esc(c.version)}${c.usesLlm ? ' <small title="volá jazykový model">🤖</small>' : ""}${stateBadge(c.lifecycleStatus)}</div><div class="p-card-meta"><span>riziko ${riskBadge(c.riskClass)}</span><span${iso.title ? ` title="${esc(iso.title)}"` : ""}>izolace <b>${esc(iso.label || "—")}</b></span><span>${esc(c.sideEffects ?? "—")}</span></div><div class="p-card-meta">${selfTestBadge(c.selfTest)}${argosBadge}</div>${selfTestDrilldown(c.selfTestFixtures, c.capability)}</div>`;
 };
 
 export type WatchdogLevel = "HEALTHY" | "DEGRADED" | "INCIDENT";
@@ -363,6 +366,20 @@ export function computeWatchdog(m: FarmModel): WatchdogSnapshot {
   const level: WatchdogLevel = findings.some((f) => f.level === "INCIDENT") ? "INCIDENT" : findings.length > 0 ? "DEGRADED" : "HEALTHY";
   return { level, findings };
 }
+
+/** One capability's own live health, as Argos currently sees it — INCIDENT/DEGRADED/undefined (healthy), read
+ * off the same findings computeWatchdog() already produced for that capability's keys (quarantined:/
+ * selftest-broken:/selftest-degraded:). Deliberately NOT a LifecycleStatus: this is Argos's live opinion shown
+ * next to the Admission Gate's own ACTIVE/QUARANTINED badge, never a replacement for it (HANDOFF 89). */
+const capabilityWatchdogLevel = (capability: string, watchdog: WatchdogSnapshot): "INCIDENT" | "DEGRADED" | undefined => {
+  // Exact keys, matching computeWatchdog()'s own scheme precisely — not a loose endsWith(), which could
+  // over-match if one capability name were ever a suffix of another.
+  const ownKeys = new Set([`quarantined:${capability}`, `selftest-broken:${capability}`, `selftest-degraded:${capability}`]);
+  const own = watchdog.findings.filter((f) => ownKeys.has(f.key));
+  if (own.some((f) => f.level === "INCIDENT")) return "INCIDENT";
+  if (own.some((f) => f.level === "WARN")) return "DEGRADED";
+  return undefined;
+};
 
 /** One persisted incident (config/<installation>-independent, lives in D1 audit as kind "watchdog-incident") —
  * gives a WatchdogFinding an identity across runs instead of it being recomputed from scratch every page load. */
@@ -461,6 +478,11 @@ export function renderFarm(m: FarmModel): string {
   // Answering /version (HTTP 200) only proves the Worker is alive — its own body can still say wired:false
   // (a skeleton that hasn't been wired into the flow yet). "OK" here must mean the second thing too.
   const up = m.deployables.filter((d) => workerReady(d)).length;
+  // Computed once, reused by both the Argos banner and each Kapability card's live health badge below — never
+  // written to config/lifecycle.json (HANDOFF 89, owner's choice: DEGRADED stays a computed display signal,
+  // deliberately not a third LifecycleStatus value — Admission Gate's ACTIVE/QUARANTINED stays a human decision
+  // with its own commit, this is Argos's live opinion on top of it, not a replacement for it).
+  const watchdog = computeWatchdog(m);
 
   // Declared first: penHead() (built further down, inside an IIFE that runs immediately) reads ICONS too —
   // a const only hoists its binding, not its value, so anything that reads it before this line throws
@@ -522,7 +544,7 @@ export function renderFarm(m: FarmModel): string {
       (byModule.get(c.module) as CapabilityRow[]).push(c);
     }
     return [...byModule.entries()]
-      .map(([mod, caps]) => `<div class="pen"><div class="pen-label">${ICONS.kravicky}${esc(mod)}</div><div class="p-cardgrid">${caps.map(capabilityRow).join("")}</div></div>`)
+      .map(([mod, caps]) => `<div class="pen"><div class="pen-label">${ICONS.kravicky}${esc(mod)}</div><div class="p-cardgrid">${caps.map((c) => capabilityRow(c, watchdog)).join("")}</div></div>`)
       .join("");
   })();
 
@@ -682,7 +704,7 @@ export function renderFarm(m: FarmModel): string {
 
     <div id="view-argos" hidden>
       <div class="p-panehead">${ICONS.argos}<span>Argos hlídá — Kapability (Admission Gate)</span><span class="n">3 · kontrola · ${m.capabilities.length}, ${m.capabilities.filter((c) => c.lifecycleStatus === "QUARANTINED").length} v karanténě</span></div>
-      ${watchdogBanner(computeWatchdog(m), m.incidents ?? [])}
+      ${watchdogBanner(watchdog, m.incidents ?? [])}
       <div class="p-toolbar"><span class="meta">Co každá kravička skutečně smí vykonat, seskupeno po modulu jako ohrada — riziko a izolace jsou vlastní tvrzení komponenty (descriptor), stav na kartě je to, co <b>Router doopravdy vynucuje</b> před každým dispatchem. Karanténa (config/&lt;instalace&gt;/lifecycle.json) se mění deploym, ne odsud — tahle stránka jen čte, nikdy nezapisuje</span></div>
       <div class="p-toolbar"><span class="meta">„self-test X/Y" na kartě = kolik vzorových případů té kapability naposledy skutečně prošlo proti reálnému běhu (ne jen že Worker odpověděl) — spusť ho na záložce Kravičky${m.selfTestAt ? `, naposledy ${shortAt(m.selfTestAt)}` : ""}</span></div>
       ${m.capabilities.length ? penGrid : '<div class="pen-empty">zatím žádné (vzdálení Workeři neodpověděli)</div>'}
