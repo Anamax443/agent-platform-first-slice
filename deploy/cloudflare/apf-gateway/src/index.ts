@@ -45,6 +45,7 @@ import {
   type InboxItem,
   type InstanceView,
   type ModelsInfo,
+  type OpenWorkflowProblem,
   type SelfTestFixtureState,
   type SelfTestRow,
   type Wired,
@@ -819,6 +820,39 @@ const recentInstances = async (env: Env, limit = 15, sinceIso?: string): Promise
   return Promise.all(rows.results.map((r) => farmRowOf(env, r.workflow_id, r.last_at)));
 };
 
+const OPEN_PROBLEM_STATUSES = new Set(["WAITING", "FAILED", "UNKNOWN_OUTCOME"]);
+
+/**
+ * Every workflow currently WAITING/FAILED/UNKNOWN_OUTCOME (HANDOFF 94, MAJOR 4 of the second external review:
+ * "monitoring data source nesmí být UI pagination") — independent of Ohrada's own instanceLimit/instanceWindow,
+ * so an old open problem can't quietly fall out of Argos's view just because enough newer instances arrived.
+ *
+ * Pure SQL, no per-instance Durable Object round trip (unlike recentInstances()/farmRowOf() — that N+1 pattern
+ * is exactly why that query IS limited): src/platform/orchestrator.ts writes a `kind: "state", capability: null`
+ * audit row with `details.status` at every instance-level transition (RUNNING at start, SUCCEEDED/FAILED/the
+ * terminal review outcome at the end) — capability-scoped records like a classify result use a real
+ * `capability` value and are excluded here on purpose (the same distinction the existing farmStats() query
+ * already relies on). The latest such row per workflow_id (SQLite's bare-column GROUP BY, same idiom as
+ * recentInstances()'s MAX(at)) is the true current status — including "PURGED" once a purge appends its own
+ * state row, so a purged instance naturally drops out with no extra filtering. Reads the whole state-transition
+ * table once (no recency LIMIT before filtering — a LIMIT there would just reintroduce the same windowing bug);
+ * acceptable at today's instance volume, revisit if that ever grows enough to make this slow.
+ */
+async function authoritativeOpenProblems(env: Env): Promise<OpenWorkflowProblem[]> {
+  await ensureD1Audit(env.AUDIT);
+  const rows = await env.AUDIT.prepare(
+    "SELECT workflow_id, json, MAX(at) AS last_at FROM audit WHERE kind = 'state' AND capability IS NULL AND workflow_id IS NOT NULL AND workflow_id != ? GROUP BY workflow_id",
+  )
+    .bind(SELF_TEST_WORKFLOW_ID)
+    .all<{ workflow_id: string; json: string; last_at: string }>();
+  const problems: OpenWorkflowProblem[] = [];
+  for (const r of rows.results) {
+    const status = (JSON.parse(r.json) as { details?: { status?: string } }).details?.status;
+    if (status && OPEN_PROBLEM_STATUSES.has(status)) problems.push({ workflowId: r.workflow_id, status, at: r.last_at });
+  }
+  return problems;
+}
+
 /** The "deník": the shared audit trail as-is, same source as /audit.json, newest first. */
 const auditLog = async (env: Env, limit = 50): Promise<AuditLogRow[]> => {
   await ensureD1Audit(env.AUDIT);
@@ -1130,7 +1164,7 @@ async function inboxDetail(env: Env): Promise<{ pending: InboxItem[]; failed: In
  */
 async function buildFarmModel(env: Env, instanceLimit: number, instanceWindow: string): Promise<FarmModel> {
   const now = iso(new SystemClock().now());
-  const [documentHost, emailExecutor, mailIngest, fakes, instances, log, inbox, stats, documentHostCaps, emailExecutorCaps, selfTestSummary, alertHealth] = await Promise.all([
+  const [documentHost, emailExecutor, mailIngest, fakes, instances, log, inbox, stats, documentHostCaps, emailExecutorCaps, selfTestSummary, alertHealth, openWorkflowProblems] = await Promise.all([
     deployableInfo(env.DOCUMENT_HOST, "https://apf-document-host.internal"),
     deployableInfo(env.EMAIL_EXECUTOR, "https://apf-email-executor.internal"),
     deployableInfo(env.MAIL_INGEST, "https://apf-mail-ingest.internal"),
@@ -1143,6 +1177,7 @@ async function buildFarmModel(env: Env, instanceLimit: number, instanceWindow: s
     capabilitiesOf(env.EMAIL_EXECUTOR, "https://apf-email-executor.internal"),
     latestSelfTestSummary(env),
     latestAlertHealth(env),
+    authoritativeOpenProblems(env),
   ]);
   // Admission Gate visibility (HANDOFF 70/71): the same LifecycleRegistry the Router enforces, read here only —
   // this page never writes it. Quarantining a module still means editing config/<installation>/lifecycle.json
@@ -1191,6 +1226,7 @@ async function buildFarmModel(env: Env, instanceLimit: number, instanceWindow: s
     now,
     alertHealth,
     capabilitiesUnavailableFrom,
+    openWorkflowProblems,
   };
 }
 

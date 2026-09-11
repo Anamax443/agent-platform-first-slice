@@ -2,6 +2,36 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-11 (94) — Authoritative Ohrada dotaz: starý problém nesmí vypadnout z okna (MAJOR 4)
+
+**Pokyn vlastníka:** "pokračuj" — MAJOR 4 z druhé oponentury, vybráno přes `AskUserQuestion`. Oponentura: "Monitoring
+data source nesmí být UI pagination" — `computeWatchdog()`'s `ohrada-backlog` nález četl `m.instances`, přesně
+stejný `instanceLimit`/`instanceWindow` seznam, co ukazuje Ohrada tab. Starý otevřený problém (WAITING/FAILED/
+UNKNOWN_OUTCOME) mohl tiše vypadnout z přehledu, jakmile přišlo dost novějších instancí — a `reconcileIncidents()`
+by ho tiše "vyřešil".
+
+**Nová `authoritativeOpenProblems()` (index.ts):** čistě SQL, žádné N+1 volání na Durable Object jako
+`recentInstances()`/`farmRowOf()` (proto je *tamta* funkce limitovaná — to je přesně důvod, ne náhoda).
+`src/platform/orchestrator.ts` zapisuje `kind: "state", capability: null` audit záznam s `details.status` při
+každém přechodu na úrovni instance (RUNNING na startu, SUCCEEDED/FAILED/review-outcome na konci) —
+capability-scoped záznamy (např. výsledek klasifikace) mají `capability` nastavené a jsou tím vyloučené (stejné
+rozlišení, co už dřív používal `farmStats()`'s dotaz). Poslední takový řádek na `workflow_id` (SQLite bare-column
+`GROUP BY`, stejný idiom jako `recentInstances()`'s `MAX(at)`) je pravdivý aktuální stav — včetně "PURGED", jakmile
+purge zapíše vlastní state řádek, takže smazaná instance sama vypadne beze zvláštního filtru. Žádný LIMIT před
+filtrováním (to by tu samou díru jen znovu zavedlo) — čte celou tabulku přechodů stavu, dnes v pořádku, revize
+až při reálném růstu objemu.
+
+**`computeWatchdog()`** teď čte `m.openWorkflowProblems` (nové povinné pole, index.ts `buildFarmModel()`),
+ne `m.instances` — Ohrada UI tab zůstává beze změny (pořád windowed, to je v pořádku pro zobrazení lidem;
+problém byl v tom, že to samé okno krmilo i Argose).
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare`), **293/293 testů** (2 nové, včetně přímého důkazu:
+"instances prázdné + openWorkflowProblems neprázdné → nález"; "instances neprázdné + openWorkflowProblems
+prázdné → žádný nález"), `arch`, `farm:check`.
+
+**Zbývá z druhé oponentury:** MAJOR 1 (povinné why/onFailure), MAJOR 6 (risk-based cadence), MAJOR 7 (trusted
+telemetry).
+
 ## 2026-09-11 (93) — Bezpečné auto-resolve: incident se nesmí "vyřešit" jen proto, že zmizela telemetrie (MAJOR 5)
 
 **Pokyn vlastníka:** "pokračuj" — MAJOR 5 z druhé oponentury, vybráno přes `AskUserQuestion` jako pokračování

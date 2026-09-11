@@ -71,6 +71,7 @@ const model: FarmModel = {
   stats: { totalProcessed: 12, processedToday: 3, avgProcessingMs: 4200, byType: [{ type: "INVOICE", count: 8 }] },
   selfTestAt: "2026-09-09T13:20:00Z",
   now: "2026-09-09T13:25:00Z",
+  openWorkflowProblems: [{ workflowId: "wf-waiting1", status: "WAITING", at: "2026-09-09T08:01:00Z" }],
 };
 
 describe("PAGE-FARM-001 renderFarm() actually runs, not just typechecks", () => {
@@ -205,7 +206,7 @@ describe("PAGE-FARM-001 renderFarm() actually runs, not just typechecks", () => 
   });
 
   it("renders cleanly with zero capabilities and zero instances (empty-state paths)", () => {
-    const empty: FarmModel = { ...model, capabilities: [], instances: [] };
+    const empty: FarmModel = { ...model, capabilities: [], instances: [], openWorkflowProblems: [] };
     expect(() => renderFarm(empty)).not.toThrow();
     expect(renderFarm(empty)).toContain("zatím žádné");
   });
@@ -226,6 +227,7 @@ describe("computeWatchdog() — Argos's own deterministic verdict (HANDOFF 83, o
       deployables: model.deployables.map((d) => ({ ...d, body: { ...(d.body as Record<string, unknown>), wired: true } })),
       capabilities: model.capabilities.map((c) => ({ ...c, lifecycleStatus: "ACTIVE" as const, selfTest: c.selfTest ? { passed: c.selfTest.total, total: c.selfTest.total } : undefined })),
       instances: [],
+      openWorkflowProblems: [],
     };
     const snapshot = computeWatchdog(clean);
     expect(snapshot).toEqual({ level: "HEALTHY", findings: [] });
@@ -240,7 +242,7 @@ describe("computeWatchdog() — Argos's own deterministic verdict (HANDOFF 83, o
   });
 
   it("self-test that never ran at all (selfTestAt undefined) is a WARN, not silently HEALTHY", () => {
-    const neverRan: FarmModel = { ...model, selfTestAt: undefined, capabilities: [], deployables: model.deployables.map((d) => ({ ...d, body: { ...(d.body as Record<string, unknown>), wired: true } })), instances: [] };
+    const neverRan: FarmModel = { ...model, selfTestAt: undefined, capabilities: [], deployables: model.deployables.map((d) => ({ ...d, body: { ...(d.body as Record<string, unknown>), wired: true } })), instances: [], openWorkflowProblems: [] };
     const snapshot = computeWatchdog(neverRan);
     expect(snapshot.level).toBe("DEGRADED");
     expect(snapshot.findings).toEqual([{ key: "selftest-stale", level: "WARN", text: expect.stringContaining("self-test nikdy neproběhl") }]);
@@ -251,6 +253,7 @@ describe("computeWatchdog() — Argos's own deterministic verdict (HANDOFF 83, o
     deployables: model.deployables.map((d) => ({ ...d, body: { ...(d.body as Record<string, unknown>), wired: true } })),
     capabilities: [],
     instances: [],
+    openWorkflowProblems: [],
   };
 
   it("dead-man switch (HANDOFF 92, MAJOR 2): selfTestAt older than the 90-minute heartbeat threshold escalates to its own INCIDENT — the scheduled cron itself looks dead, not just 'nobody ran it recently'", () => {
@@ -286,6 +289,18 @@ describe("computeWatchdog() — Argos's own deterministic verdict (HANDOFF 83, o
     const snapshot = computeWatchdog(withGap);
     expect(snapshot.level).toBe("DEGRADED");
     expect(snapshot.findings).toEqual([{ key: "capabilities-unavailable:apf-document-host", level: "WARN", text: expect.stringContaining("apf-document-host") }]);
+  });
+
+  it("MAJOR 4 (HANDOFF 94): ohrada-backlog reads openWorkflowProblems, NOT the windowed instances — an old problem that fell out of the 'Poslední instance' window still surfaces", () => {
+    const fellOutOfWindow: FarmModel = { ...cleanBase, instances: [], openWorkflowProblems: [{ workflowId: "wf-old", status: "FAILED", at: "2026-09-01T00:00:00Z" }] };
+    const snapshot = computeWatchdog(fellOutOfWindow);
+    expect(snapshot.level).toBe("DEGRADED");
+    expect(snapshot.findings).toEqual([{ key: "ohrada-backlog", level: "WARN", text: expect.stringContaining("1 instance čeká") }]);
+  });
+
+  it("the converse: instances still lists a WAITING row but openWorkflowProblems (the authoritative source) says it's no longer open — no finding, instances alone is never consulted", () => {
+    const staleInstancesView: FarmModel = { ...cleanBase, instances: model.instances, openWorkflowProblems: [] };
+    expect(computeWatchdog(staleInstancesView)).toEqual({ level: "HEALTHY", findings: [] });
   });
 });
 

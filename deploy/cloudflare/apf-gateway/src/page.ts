@@ -143,6 +143,11 @@ export interface FarmModel {
    * review) — distinguishes "capabilitiesOf() found zero" from "capabilitiesOf() couldn't ask", so a
    * capability that silently drops out of `capabilities` this run is visibly explained, not just missing. */
   capabilitiesUnavailableFrom?: string[];
+  /** Every WAITING/FAILED/UNKNOWN_OUTCOME workflow farm-wide (HANDOFF 94, index.ts authoritativeOpenProblems)
+   * — what computeWatchdog()'s ohrada-backlog finding is based on, NOT the same windowed `instances` the
+   * Ohrada tab renders (MAJOR 4 of the second external review: "monitoring data source nesmí být UI
+   * pagination" — an old open problem must stay visible to Argos even once it falls out of that window). */
+  openWorkflowProblems: OpenWorkflowProblem[];
 }
 
 export interface InstanceView {
@@ -402,10 +407,11 @@ export function computeWatchdog(m: FarmModel): WatchdogSnapshot {
     findings.push({ key: "selftest-stale", level: "INCIDENT", text: `self-test naposledy proběhl před ${humanDuration(m.selfTestAt, m.now)} — scheduled self-test (každých 30 min) zřejmě přestal fungovat` });
   }
 
-  // Same filter and the same honest instanceLimit/instanceWindow window as the Ohrada tab (page.ts ohradaInstances)
-  // — not a separate query, so this can miss an old open problem that fell out of the window (known limit, P1).
-  const openProblems = m.instances.filter((i) => !i.purged && (i.status === "WAITING" || i.status === "FAILED" || i.status === "UNKNOWN_OUTCOME"));
-  if (openProblems.length > 0) findings.push({ key: "ohrada-backlog", level: "WARN", text: `${openProblems.length} ${openProblems.length === 1 ? "instance čeká" : "instancí čeká"} v Ohradě na člověka nebo skončila chybou` });
+  // Authoritative, not the same windowed instanceLimit/instanceWindow the Ohrada tab renders (HANDOFF 94,
+  // MAJOR 4 of the second external review: "monitoring data source nesmí být UI pagination") — an old open
+  // problem stays visible here even once enough newer instances pushed it out of that window.
+  if (m.openWorkflowProblems.length > 0)
+    findings.push({ key: "ohrada-backlog", level: "WARN", text: `${m.openWorkflowProblems.length} ${m.openWorkflowProblems.length === 1 ? "instance čeká" : "instancí čeká"} v Ohradě na člověka nebo skončila chybou` });
 
   // Alert channel health (HANDOFF 92, MAJOR 3): a send failure alone only logs (sendArgosAlerts, index.ts) —
   // this is what turns "Argos couldn't speak" into something visible on /farm even when the alert itself
@@ -452,6 +458,15 @@ export interface ArgosAlertHealth {
   lastSuccessAt?: string;
   lastFailureAt?: string;
   lastFailureReason?: string;
+}
+
+/** One workflow currently WAITING/FAILED/UNKNOWN_OUTCOME (HANDOFF 94, index.ts authoritativeOpenProblems) —
+ * independent of Ohrada's own instanceLimit/instanceWindow, so computeWatchdog() can't miss an old open
+ * problem just because enough newer instances arrived and pushed it out of the windowed "Poslední instance". */
+export interface OpenWorkflowProblem {
+  workflowId: string;
+  status: string;
+  at: string;
 }
 
 /** Key prefixes computeWatchdog() only ever emits for a capability actually present in that run's m.capabilities
