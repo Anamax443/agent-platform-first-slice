@@ -2,6 +2,20 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-11 (108) — Posudek 9 bod 3: CTR-WHY-001 uzamyká 82/82 why/onFailure pokrytí testem
+
+**Pokyn vlastníka:** Posudek 9's bod 3 — `why`/`onFailure` zůstávaly na typu `Fixture` volitelné, i když
+po (100) je obsah fakticky 82/82; nic nebránilo budoucí fixture proklouznout bez nich.
+
+**`tests/harness/suite.ts`:** `Fixture` interface doplněn o `why?`/`onFailure?` (mirror stejných polí na
+`self-test.ts`'s vlastním, záměrně duplikovaným `Fixture` — Worker bundle si dál nepůjčuje nic z `tests/`).
+**`tests/ctr.test.ts`:** nový `CTR-WHY-001 ${capability}` blok (stejné místo jako `CTR-ERR-001`, jeden na
+capabilitu) — `expect(f.why).toBeTruthy()` + `expect(f.onFailure).toBeTruthy()` pro každou fixture v sadě.
+Nová fixture bez jednoho z nich teď shodí testy, ne že by tiše prošla.
+
+**Brány zelené:** typecheck, **314/314 testů** (6 nových, jeden na capabilitu), `arch`, `farm:check`.
+Test-only změna — netýká se Worker bundlu, nenasazeno (není co nasazovat).
+
 ## 2026-09-11 (107) — Posudek 9 zapsán a ověřen: HEALTHY badge už rozpis nese, 3 reálné mezery na výběr
 
 **Kontext:** vlastník poslal externí oponenturu nad `a4b16cf` (106) — teze "HEALTHY znamená jen že Argos

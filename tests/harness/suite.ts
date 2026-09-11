@@ -20,6 +20,12 @@ export interface Fixture {
   id: string;
   kind: FixtureKind;
   description?: string;
+  /** Why this check exists (CTR-WHY-001 requires it on every fixture) — mirrors the same field on self-test.ts's
+   * own Fixture (duplicated there, not imported, so the Worker bundle never pulls in node:fs across the
+   * deploy/cloudflare <-> tests boundary). */
+  why?: string;
+  /** What to do when this fixture goes red (CTR-WHY-001 requires it on every fixture too). */
+  onFailure?: string;
   actor?: string;
   artifact?: { tenantId?: string; bytes: string };
   payload: Record<string, unknown>;

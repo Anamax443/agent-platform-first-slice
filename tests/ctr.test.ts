@@ -129,6 +129,19 @@ for (const [module, { caps, output }] of Object.entries(COMPONENTS)) {
         for (const code of documented) expect(known.has(code), `${code} documented but neither platform nor declared`).toBe(true);
       });
     });
+
+    describe(`CTR-WHY-001 ${capability}`, () => {
+      // Locks in HANDOFF (97)/(100)'s full 82/82 why/onFailure coverage (Posudek 9, owner's request
+      // 2026-09-11: "vynutit why/onFailure") — why/onFailure stayed optional on the Fixture type itself
+      // (self-test.ts's page.ts "not every one earns it" comment predates full coverage), so nothing
+      // previously stopped a future fixture from being added without either. This does.
+      it("every fixture in this suite has both why and onFailure", () => {
+        for (const f of suite.fixtures) {
+          expect(f.why, `${capability}/${f.id}: missing why`).toBeTruthy();
+          expect(f.onFailure, `${capability}/${f.id}: missing onFailure`).toBeTruthy();
+        }
+      });
+    });
   }
 }
 
