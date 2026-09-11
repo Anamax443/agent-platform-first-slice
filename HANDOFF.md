@@ -2,6 +2,27 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-11 (105) — Argos acknowledge živě ověřen: banner šel z INCIDENT na DEGRADED, dva nálezy záměrně otevřené
+
+**Návaznost na (104):** nasazeno (`gitSha 98cb0da`), potvrzeno `/version`. `/farm` v tu chvíli ukazoval
+`INCIDENT`, 5 otevřených nálezů — přesně ten stav, co (104) měla vyladit.
+
+**`POST /farm/incidents/acknowledge` použito naostro, ne jen otestováno:** `selftest-degraded:
+document.stamp` a `selftest-degraded:document.archive` potvrzeny (dobře zdokumentovaný self-test
+harness artefakt, HANDOFF 55–60/101) — banner je teď ukazuje šedě "✓ potvrzeno jako známé
+(access:service-token, ...)", tlačítko zmizelo, `occurrences`/`lastSeenAt` dál rostou beze změny.
+`audit-tenant-mismatch` (první výskyt 09:02:59) ověřen jako časově odpovídající vlastníkovu rannímu
+živému bezpečnostnímu testu z HANDOFF 96 (záměrné zfalšování tenantId na `/audit`, MAJOR 7 to správně
+odmítlo a zalogovalo) — potvrzeno vlastníkem přes `AskUserQuestion`, ne odhadem. **Banner: INCIDENT →
+DEGRADED** (poslední INCIDENT-úrovně nález potvrzen, zbylé dva jsou jen WARN).
+
+**Záměrně nepotvrzeno, zůstává otevřené:** `selftest-degraded:document.classify` (`injection-approve`,
+první výskyt dnes 10:00) — na rozdíl od ostatních tří nemá dosud vysvětlenou příčinu, prověřit
+samostatně, ne potvrdit naslepo. `ohrada-backlog` (1 instance čeká) — taky neprozkoumáno, co přesně to
+je.
+
+Žádný kód navíc — jen živé použití (104)'s mechanismu na skutečném produkčním stavu.
+
 ## 2026-09-11 (104) — Argos tuning: acknowledge/known-issue mechanismus, banner nesvítí navždy za odložený nález
 
 **Pokyn vlastníka:** "vyladit argose, farmáře, dojičky a potom začneme testovat jednotlivé krávy. nic
