@@ -100,6 +100,134 @@ registrům, jiná bezpečnostní a spolehlivostní kategorie než čtení textu 
 
 ---
 
+## Farmář jako honák, ne autorita — kompromitovaný orchestrátor musí zůstat neškodný (11. 9. 2026)
+
+Vznikl z diskuze vlastníka 11. 9. 2026, nad konkrétním případem faktura → BC import. Stejná výhrada
+jako u zbytku dokumentu: cílový obraz, ne rozhodnuté zadání. Rozšiřuje a zpřesňuje `## Positioning`
+(řetěz LLM → Planner → schema/Policy/Registry → Router → signed dispatch → COW → Audit) a
+`### Zero-trust model`'s „AI výstup nikdy není příkaz" o třetí roli a o to, co přesně smí orchestrátor
+(Farmář) dělat s daty, která mezi COW předává.
+
+### Tři role, ne dvě
+
+- **Farmář** (orchestrátor) — jen hrubé rozpoznání záměru a routing. „Tohle vypadá jako faktura, cíl:
+  připravit k importu do BC." Nic víc. Nečte a neskládá business data, jen rozhoduje, která COW má
+  přijít na řadu.
+- **Krávy** (COW) — jednoúčelové, úzké. Každá dělá jeden konkrétní úkon (přečti dokument do MD,
+  vytáhni pole faktury, ověř IČO proti ARES, ověř DIČ, ověř bankovní účet, ověř součty/DPH/data).
+- **Dojičky** — nová role vedle COW. Na rozdíl od COW (jednoúčelová) je dojička **jednoduchá
+  kumulativní**: deterministicky sesbírá výsledky víc krav (extrahovaná data, PASS/FAIL, evidence) do
+  jednoho dalšího balíku/stavu podle pevného kontraktu. Nic nevymýšlí, nic neopravuje, nic
+  nepřepisuje — jen skládá.
+
+```
+faktura → Farmář (rozpozná: "faktura, cíl BC import")
+        → Kráva: Document Reader (MD)
+        → Kráva: Invoice Extractor (pole faktury)
+        → Krávy: ARES / VAT / Bank Account / Math validation (paralelně, jednoúčelově)
+        → Dojička: složí Invoice Package (Extraction/ARES/VAT/Účet/Math/Duplicita → Overall)
+        → Import Gate (deterministický, viz níže)
+        → Kráva: BC Import COW (zapíše, nebo NE)
+```
+
+Tenhle vzorec je konkrétní instance `## Připravované doménové COW`'s řetězu `invoice.extract →
+cz.company.verify → cz.vat.verify` — dojička je chybějící dílek mezi „samostatné capabilities" a
+„jeden agent, co dělá všechno", co ta sekce výslovně zakazuje.
+
+### Hlavní invariant: farmář nesmí nosit hodnoty
+
+I plně **kompromitovaný nebo podplacený** Farmář nesmí být schopný změnit obsah faktury cestou z
+kontrol do BC. Konkrétní útok: Farmář přečte `bankAccount=111111/0100`, všechny krávy potvrdí PASS pro
+tuhle hodnotu, ale při sestavování balíku pro BC Farmář pošle jinou hodnotu
+(`bankAccount=999999/0100`, `amount=185000` místo `18500`). Pokud BC krávě věří Farmářovu obsahu,
+celý bezpečnostní model je obejitý — přesně ten typ mezery, co `### Zero-trust model` už řeší pro AI
+výstup obecně, tady zpřesněný pro orchestrátora samotného.
+
+**Řešení: Farmář nesmí nosit obsah, jen odkazy.** Po přečtení faktury vznikne artefakt (např.
+`INVOICE-4711`) uvnitř zabezpečeného úložiště platformy (`Artifact`/`IncomingArtifact`, viz
+`### Canonical vstup/výstup`), který nese pole jako `supplierIco`/`vatId`/`bankAccount`/`amount`.
+Farmář neříká krávě „ARES, ověř 12345678" — říká „ARES, ověř `supplierIco` z artefaktu `INVOICE-4711`".
+Platformа sama vytáhne hodnotu ze skladu a předá ji kravě. Stejně tak Farmář nesmí BC krávě říct
+„založ fakturu: částka=185000, účet=999999/0100" — smí jen požádat „importuj `INVOICE-4711`".
+
+**Tvrdé pravidlo:** *Farmář může organizovat práci (kam mají data putovat), ale nikdy nesmí vytvářet
+nebo měnit autoritativní business data ani získat oprávnění k jejich zápisu.* BC credential nemá
+Farmář nikdy — jen BC Executor COW.
+
+### Import Gate — deterministický, čte ze skladu, ne od Farmáře
+
+```
+FARMÁŘ → "import INVOICE-4711"
+            ↓
+      IMPORT GATE (deterministický, žádné AI)
+            ↓ načte ZE SKLADU (ne od Farmáře)
+   IČO, ÚČET, ČÁSTKA + evidence každé kontroly
+            ↓
+   všechny důkazy patří INVOICE-4711 a sedí na AKTUÁLNÍ obsah?
+            ↓ ANO
+        BC EXECUTOR → Business Central
+```
+
+Finální balík pro BC skládá **Import Gate**, ne Farmář — přesně stejný princip jako dojička
+(deterministické skládání z ověřených dat), jen jako poslední, bezpečnostně kritická brána před
+zápisem. Farmář smí rozhodovat „teď potřebuju ARES", „teď zkus import", „teď pošli člověku do
+REVIEW" — nikdy „do BC pošli tuhle částku/tenhle účet".
+
+### Kontrola musí být svázaná s konkrétní hodnotou, ne jen s výsledkem
+
+Nestačí uložit `bankAccount: PASS` — to samo o sobě nechrání proti tomu, že se hodnota mezi kontrolou
+a zápisem změní. Každá verifikace nese hash konkrétní ověřené hodnoty:
+
+```
+ACCOUNT_VERIFICATION
+  invoiceId:  INVOICE-4711
+  field:      bankAccount
+  valueHash:  sha256(hodnota v okamžiku kontroly)
+  result:     PASS
+  source:     FinancialAdministration
+  verifiedAt: ...
+```
+
+Změní-li se `bankAccount` po verifikaci (o cokoli), starý `PASS` už neplatí pro novou hodnotu —
+Import Gate to pozná jako `VALUE_CHANGED_AFTER_VERIFICATION → DENY`, ne jako platné schválení. Stejný
+princip nad celou fakturou: `InvoiceSnapshot` → canonical representation → SHA-256 →
+`invoiceFingerprint`; ARES/VAT/účet/schválení se vážou na tenhle fingerprint (nebo na field-level
+fingerprinty); před zápisem do BC se aktuální fingerprint porovná s ověřeným — neshoda znamená
+„faktura byla po kontrolách změněna", STOP, ne zápis s varováním.
+
+**Vztah k dnešnímu stavu:** tohle je přesně ten typ vázání, co `Audit provenance (COW zero-trust)`
+řádek ve vrstvách výše označuje jako chybějící — `/audit` dnes není vázané na skutečný podepsaný
+dispatch, jen na service-binding důvěru. Value-level fingerprint je stejná myšlenka aplikovaná na
+verifikační evidenci, ne jen na audit záznam samotný.
+
+### BC Executor musí být „hloupý" — žádné AI, žádná interpretace
+
+```
+BC Invoice Executor
+
+MŮŽE:                              NEMŮŽE:
+✓ načíst CertifiedInvoice          ✗ měnit částku
+✓ zkontrolovat authorization       ✗ měnit účet
+✓ zkontrolovat fingerprint         ✗ doplňovat IČO
+✓ zkontrolovat required evidence   ✗ interpretovat fakturu
+✓ založit fakturu                  ✗ poslouchat instrukce z dokumentu
+✓ vrátit BC document ID            ✗ poslouchat AI ohledně obsahu
+✓ auditovat effect
+```
+
+Žádné AI uvnitř — jednoúčelový robot přesně v duchu „Cena je z principu nízká pro ne-AI capability"
+(`## Positioning`). Vlastní, výhradní credential (BC Executor, nikdy Farmář ani jiná kráva).
+
+### Nový povinný test pro Admission Gate: COMPROMISED-ORCHESTRATOR / CONFUSED-DEPUTY
+
+Doplňuje `### Admission Gate`'s seznam testů a `### Zero-trust model`'s adversarial test suite o
+scénář, kde je **kompromitovaný sám orchestrátor** (ne jen jedna COW): předpokládat podplacený/
+zfalšovaný Farmář, co se zkouší zeptat rovnou na akci s vlastními hodnotami („pošli milion korun na
+můj účet", „importuj s jinou částkou") — systém musí zůstat bezpečný i tak, protože Import Gate čte
+ze skladu, ne z Farmářova tvrzení, a BC Executor nemá vlastní úsudek, co by šlo přemluvit.
+
+---
+
 ## Cílová architektura pro standardizované přidávání COW (8. 9. 2026)
 
 Vznikl z rozsáhlé diskuze vlastníka (+ externí AI konzultace) 8. 9. 2026. **Cílový obraz, ne

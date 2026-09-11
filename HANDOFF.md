@@ -2,6 +2,25 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-11 (102) — SEVERKA.md: Farmář jako honák, ne autorita (kompromitovaný orchestrátor invariant)
+
+**Pokyn vlastníka:** vize z diskuze o BC importu faktur (farmář/krávy/dojičky, "pro info") — dlouhodobá
+architektonická zásada patří do repa, ne jen do konverzace (memory: vždy severka).
+
+**Nová sekce v `docs/SEVERKA.md`** (mezi `Připravované doménové COW` a `Cílová architektura...`):
+tři role místo dvou — Farmář (jen hrubé rozpoznání záměru a routing, nikdy nečte/neskládá business
+data), Krávy (COW, jednoúčelové), **Dojička** (nová role — deterministický kumulativní agregátor
+výsledků víc krav, nic nevymýšlí ani nepřepisuje). Hlavní invariant: i plně kompromitovaný/podplacený
+Farmář nesmí být schopný změnit obsah faktury cestou z kontrol do BC — Farmář nesmí nosit hodnoty, jen
+odkazy do zabezpečeného skladu. Mechanismus: deterministický Import Gate čte data ze skladu (ne od
+Farmáře) a skládá finální balík; kontroly svázané s konkrétní hodnotou (`valueHash`), ne jen s
+výsledkem (`VALUE_CHANGED_AFTER_VERIFICATION → DENY` při změně po verifikaci); `invoiceFingerprint`
+(canonical → SHA-256) porovnaný před zápisem; BC Executor COW bez AI, bez interpretace, vlastní
+výhradní credential (Farmář BC credential nikdy nemá). Nový povinný test pro Admission Gate:
+COMPROMISED-ORCHESTRATOR / CONFUSED-DEPUTY.
+
+Čistě dokumentační krok — žádný kód, žádné brány, nenasazeno (SEVERKA.md se nenasazuje).
+
 ## 2026-09-11 (101) — MAJOR 1 živě ověřen: nový why text se vykresluje, žádné selhání nesouvisí s touto změnou
 
 **Návaznost na (100):** nasazeno na `farm-bass443` (`node scripts/farm-deploy.mjs farm-bass443`), `/version` potvrdil
