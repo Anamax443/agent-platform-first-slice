@@ -2,6 +2,17 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-11 (99) — Checkpoint: druhá oponentura z většiny vyřízená, `git status` čistý
+
+Shrnutí dneška (82–98): první externí oponentura (15 bodů) dokončena → druhá oponentura nad `fd3f048`
+ověřena proti kódu → 6 ze 7 MAJOR bodů (heartbeat, alert channel health, authoritative Ohrada dotaz, bezpečné
+auto-resolve, trusted telemetry, bezpečnostní podmnožina why/onFailure) plně implementováno, otestováno,
+nasazeno a **živě ověřeno na produkci** (`farm-bass443`), poslední gitSha `19dc71a`. Zbývá vědomě: MAJOR 6
+(risk-based cadence — design pro budoucí COW, ne oprava dnešního) a zbylých ~50 nesecurity fixtures z MAJOR 1
+(nižší priorita, mechanismus funguje beze změny).
+
+Žádná rozdělaná práce — `git status` čistý, `origin/main` odpovídá lokálnímu `HEAD`.
+
 ## 2026-09-11 (98) — MAJOR 1 živě ověřen: nový why/onFailure text se opravdu zobrazuje
 
 **Návaznost na (97):** nasazeno (`gitSha 27e29b6`), plný `POST /farm/self-test` napříč všemi 6 kapabilitami.
