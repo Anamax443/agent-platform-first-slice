@@ -2,6 +2,22 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-11 (113) — SEVERKA: bc.customers/bc.vendors potvrzeny jako skutečné krávy, ne jen reference
+
+Vlastník: "rozhodně pro ověření u faktury budeme potřebovat krávu zákazníci, dodavatelé... i teď
+mít krávu na tahání dat z BC není špatné" + fakt: číslování zákazníků v BC tenantu je `C*****`.
+
+Rozlišeny dva různé účely, co doteď splývaly: `cz.company.verify` (ARES) je **vnější** autorita
+("existuje ten IČO vůbec"), `vendors`/`customers` čtení z BC je **vnitřní** ("je tenhle IČO už u
+nás v BC veden, pod jakým číslem"). Bez týhle druhé krávy nejde invoice→BC import nikdy dotáhnout,
+i kdyby BC Executor byl hotový — zápis potřebuje existující Vendor No., ne jen ověřený IČO zvenčí.
+
+`customers` (spotřebitel: dávkový audit) a `vendors` (spotřebitel: invoice řetěz samotný) teď mají
+oba potvrzeného skutečného spotřebitele — povýšeny z "referenční zdroj bez enumerace" na
+"kandidát na stavbu". Obě read-only, stavitelné nezávisle na odloženém BC Executoru (write strana).
+
+Zapsáno do `docs/SEVERKA.md`. Čistě dokumentační krok — žádný kód zatím.
+
 ## 2026-09-11 (112) — SEVERKA: BC API v2.0 referenční zdroj (uložen, ne enumerovaný)
 
 Vlastník ukázal oficiální BC API v2.0 dokumentaci a `company` entitu (80+ navigačních zdrojů:

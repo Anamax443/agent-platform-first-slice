@@ -132,8 +132,22 @@ až se pro konkrétní entitu najde skutečný spotřebitel ve farmě. Ostré ro
 **read-only entity** (nízké riziko, `sideEffects: none`, levné přidat) vs. **write-capable entity**
 (`salesInvoices`/`purchaseInvoices`/`journals`/platby — teritorium budoucího BC Executoru, plný
 Admission Gate + vyhrazený credential + COMPROMISED-ORCHESTRATOR test, ne příležitostné přidání).
-Jediná entita s dnes už identifikovaným spotřebitelem: `customers` (pro krávu "načti seznam
-zákazníků z BC" z `## Dávkové úlohy...` výše).
+**Potvrzeno 11. 9. 2026 — dvě entity s reálným spotřebitelem, ne jedna:**
+
+- **`customers` (zákazníci)** — spotřebitel: dávkový audit ("ověř zdraví zákazníků v BC", `##
+  Dávkové úlohy...` výše). Číslování v tenantu vlastníka: `C*****` (např. `C00010`).
+- **`vendors` (dodavatelé)** — spotřebitel: **invoice→BC řetěz samotný**, ne dávkový audit. Faktura
+  (`invoice.extract`) je typicky přijatá od dodavatele — `cz.company.verify` ověří IČO proti ARES
+  (**vnější** autorita: "existuje ten subjekt vůbec"), ale zápis do BC (budoucí BC Executor)
+  potřebuje existující **Vendor No.** — tedy druhou, **vnitřní** otázku: "je tenhle IČO už u nás v
+  BC veden, a pod jakým číslem". Bez týhle krávy import nejde nikdy dotáhnout, i kdyby BC Executor
+  byl hotový — `cz.company.verify` sama o sobě zápis neumožní najít cílový záznam. Přesné pole, kam
+  BC ukládá IČO dodavatele (`VAT Registration No.`, `Registration Number`, nebo tenant-specific
+  custom pole), zatím neověřeno — zjistí se při stavbě, ne teoreticky teď.
+
+Obě jsou **read-only** (nízké riziko) a **stavitelné už dnes**, nezávisle na tom, že BC Executor
+(write strana) je zatím odložený za JSON Export mezifázi — čtecí strana integrace nemusí čekat na
+zápisovou.
 
 Generický "obecný OData čtecí hack" (AL tabulka/stránka konfigurovatelná na libovolné pole,
 zdrojový blog Josh Anglesea, GitHub `JAng13sea/Blogs`) zvažován a zamítnut jako výchozí volba —
