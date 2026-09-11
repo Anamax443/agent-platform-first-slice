@@ -1,0 +1,54 @@
+{
+  "$id": "invoice.extract.output.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifactId", "sha256"],
+  "properties": {
+    "artifactId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "companyId": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "source", "trustLevel"],
+      "properties": {
+        "value": { "type": "string", "pattern": "^[0-9]{8}$" },
+        "source": { "type": "string", "enum": ["llm", "rules"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "trustLevel": { "type": "string", "enum": ["untrusted-derived"] }
+      }
+    },
+    "bankAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "source", "trustLevel"],
+      "properties": {
+        "value": { "type": "string", "minLength": 4, "maxLength": 34, "pattern": "^[0-9A-Z/-]{4,34}$" },
+        "source": { "type": "string", "enum": ["llm", "rules"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "trustLevel": { "type": "string", "enum": ["untrusted-derived"] }
+      }
+    },
+    "invoiceNumber": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "source", "trustLevel"],
+      "properties": {
+        "value": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9 ./_-]{0,63}$" },
+        "source": { "type": "string", "enum": ["llm", "rules"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "trustLevel": { "type": "string", "enum": ["untrusted-derived"] }
+      }
+    },
+    "totalWithVat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "source", "trustLevel"],
+      "properties": {
+        "value": { "type": "number", "exclusiveMinimum": 0 },
+        "source": { "type": "string", "enum": ["llm", "rules"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "trustLevel": { "type": "string", "enum": ["untrusted-derived"] }
+      }
+    }
+  }
+}

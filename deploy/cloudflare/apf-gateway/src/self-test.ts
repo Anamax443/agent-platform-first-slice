@@ -22,6 +22,8 @@ import ingestFixtures from "../../../../conformance/mail.ingest/fixtures/mail.in
 import ingestGolden from "../../../../conformance/mail.ingest/golden/mail.ingest.golden.json" with { type: "json" };
 import emailFixtures from "../../../../conformance/email.send/fixtures/email.send.fixtures.json" with { type: "json" };
 import emailGolden from "../../../../conformance/email.send/golden/email.send.golden.json" with { type: "json" };
+import extractFixtures from "../../../../conformance/invoice.extract/fixtures/invoice.extract.fixtures.json" with { type: "json" };
+import extractGolden from "../../../../conformance/invoice.extract/golden/invoice.extract.golden.json" with { type: "json" };
 import { sha256 } from "../../../../src/platform/artifacts.js";
 import type { ArtifactWriter } from "../../../../src/platform/artifacts.js";
 import type { Clock } from "../../../../src/platform/clock.js";
@@ -73,6 +75,9 @@ export const SELF_TEST_WORKFLOW_ID = "wf-selftest";
 const SUITES: { capability: string; worker: string; fixtures: Fixture[]; golden: Record<string, Golden> }[] = [
   { capability: "document.classify", worker: "apf-gateway", fixtures: classifyFixtures as Fixture[], golden: classifyGolden as Record<string, Golden> },
   { capability: "document.validate", worker: "apf-gateway", fixtures: validateFixtures as Fixture[], golden: validateGolden as Record<string, Golden> },
+  // First capability of the invoice→verify→BC chain (SEVERKA.md ## Pořadí, VC §5's worked example) — in-process
+  // on the gateway like classify/validate (no side effects, no credential to isolate).
+  { capability: "invoice.extract", worker: "apf-gateway", fixtures: extractFixtures as Fixture[], golden: extractGolden as Record<string, Golden> },
   { capability: "document.stamp", worker: "apf-document-host", fixtures: stampFixtures as Fixture[], golden: stampGolden as Record<string, Golden> },
   { capability: "document.archive", worker: "apf-document-host", fixtures: archiveFixtures as Fixture[], golden: archiveGolden as Record<string, Golden> },
   // SEVERKA.md item 3, second real write-type: mail.ingest runs in-process on the gateway (no credential to

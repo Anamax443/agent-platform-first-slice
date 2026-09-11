@@ -381,7 +381,11 @@ control plane ani farmy jako celku.*
    `document-host` nebyl jednorázová výjimka; zároveň první event-driven case.
 4. **Agent Registry** — zatím čistě deterministický katalog capabilities (formalizace
    `descriptor.json` + `router.register()`), žádné AI v rozhodování.
-5. **`invoice.extract`**
+5. **`invoice.extract`** — první krok hotový (11. 9. 2026, HANDOFF 109): komponenta, wiring, conformance
+   (12 fixtures) a testy lokálně zelené, **nenasazeno**. Pole podle normy (VC §5): `companyId`,
+   `bankAccount`, `totalWithVat`, `invoiceNumber`; DIČ/měna/položky vědomě mimo rozsah v1. Deterministická
+   cross-check validace (classify→validate vzor pro tenhle řetěz), dojička, Import Gate a BC Executor
+   ještě nejsou postavené.
 6. **`cz.company.verify`**
 7. **`cz.vat.verify`**
 8. **Planner jako generátor `WorkflowDef`** (nikdy přímý executor) — teprve teď plánuje nad

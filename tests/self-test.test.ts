@@ -11,14 +11,15 @@ describe("selfTestCapabilityForTick() — one capability per scheduled tick, no 
   });
 
   it("consecutive intervals step through SELF_TEST_CAPABILITIES in order", () => {
-    const picks = [0, 1, 2, 3, 4, 5].map((i) => selfTestCapabilityForTick(i * 1000, 1000));
+    const picks = Array.from({ length: SELF_TEST_CAPABILITIES.length }, (_, i) => selfTestCapabilityForTick(i * 1000, 1000));
     expect(picks).toEqual([...SELF_TEST_CAPABILITIES]);
   });
 
   it("wraps back to the first capability once every entry has had a turn", () => {
-    const picks = [0, 1, 2, 3, 4, 5, 6].map((i) => selfTestCapabilityForTick(i * 1000, 1000));
-    expect(picks[6]).toBe(picks[0]);
-    expect(picks[6]).toBe(SELF_TEST_CAPABILITIES[0]);
+    const n = SELF_TEST_CAPABILITIES.length;
+    const picks = Array.from({ length: n + 1 }, (_, i) => selfTestCapabilityForTick(i * 1000, 1000));
+    expect(picks[n]).toBe(picks[0]);
+    expect(picks[n]).toBe(SELF_TEST_CAPABILITIES[0]);
   });
 
   it("every entry of SELF_TEST_CAPABILITIES gets picked exactly once per full cycle — none skipped, none doubled", () => {

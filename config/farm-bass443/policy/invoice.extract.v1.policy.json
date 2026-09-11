@@ -1,0 +1,14 @@
+{
+  "$comment": "Platform policy (ADR-016): authority artefact. Grants scopes to actors per tenant; the descriptor only claims requiredScopes. The AI identity is deliberately absent (F1) — same as every capability except document.classify. Times UTC with Z.",
+  "policyRef": "policy/invoice.extract/v1",
+  "capability": "invoice.extract",
+  "capabilityVersion": "1",
+  "owner": "platform",
+  "validFrom": "2026-09-11T00:00:00Z",
+  "grants": [
+    { "actorId": "svc-orchestrator", "actorType": "service", "scopes": ["invoice.extract"], "tenants": ["tenant-42"], "rateLimit": { "commandsPerMinute": 300 } },
+    { "actorId": "svc-orchestrator-t7", "actorType": "service", "scopes": ["invoice.extract"], "tenants": ["tenant-7"], "rateLimit": { "commandsPerMinute": 300 } }
+  ],
+  "approval": { "required": false },
+  "failClosed": true
+}

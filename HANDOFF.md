@@ -2,6 +2,61 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-11 (109) — invoice.extract: první nová kráva mimo classify/validate/stamp, lokálně hotová, nenasazeno
+
+**Pokyn vlastníka:** "vyladit argose, farmáře, dojičky a potom začneme testovat jednotlivé krávy. nic
+neuspěchat" — Farmář se ukázal už hotový (`document.classify`'s výstupní schéma je přesně to restriktivní
+schéma, co Posudek 8 chtěl — `additionalProperties:false`, uzavřený enum, `MODEL_OUTPUT_NOT_ALLOWED` na
+cokoli mimo allowlist), Dojička nemá co agregovat (žádná ARES/VAT kráva neexistuje) — vlastník přes
+`AskUserQuestion` potvrdil začít `invoice.extract` (SEVERKA's `## Pořadí` bod 5, i doslovný worked
+example v normě `VERIFICATION-CONTRACT.md` §5). Postaveno přes `EnterPlanMode` (2 paralelní Explore agenti
+zmapovali celý wiring checklist + conformance/LLM-adapter vzory), plán schválen.
+
+**Pole z normy, ne odhadem:** VC §5 řádek 161 jmenuje MUST pole pro fakturu explicitně: `companyId`,
+`bankAccount`, `totalWithVat`, `invoiceNumber`. DIČ/měna/položky ze SEVERKA's neformálního popisu záměrně
+mimo rozsah (norma je nejmenuje jako MUST, přidat je později je aditivní `CDC-ADD-001`, ne breaking
+change). VC §10's jiný seznam (AI-EVAL `criticalFields`: IBAN/částka/IČO/datum splatnosti) je jiný,
+mnohem větší, nikde v repu zatím nepostavený systém (golden-set drift tracking) — `document.classify`
+sám ho taky nemá (Posudek 2: "AI-EVAL nepokryto", vědomá mezera). Tahle kráva zůstává na stejné úrovni
+zralosti jako classify: conformance fixtures + injection obrana, žádný samostatný AI-EVAL režim.
+
+**`src/components/invoice-extractor/`** (nová komponenta, přesně podle `document-classifier` šablony):
+`handler.ts` — jeden jednotný `strategy → LlmAdapter → complete()` pipeline, žádné větvení podle
+strategie v handleru (mirror classify přesně, ne moje první verze, co `rules` volala přímo — opraveno
+po zjištění nesouladu). Výstup: `FieldValue<T>` (`src/platform/types.ts`, stejný vzor jako `documentType`)
+na pole, každé volitelné — chybějící pole je informace, ne chyba (`canonical-partial-fields` fixture to
+dokazuje). Pole, co neprojde vlastní strukturální kontrolou (regex/typ), se prostě vynechá, nikdy
+nezpůsobí selhání celé extrakce — jen nerozebiratelný JSON od modelu je `MODEL_OUTPUT_NOT_ALLOWED`.
+
+**Dvě strategie** — `llm` (`FakeInvoiceExtractorAdapter`, `src/adapters/llm.ts`, gullible jako
+`FakeLlmAdapter`) a `rules` (`RulesInvoiceExtractorAdapter` nad `extractInvoiceFieldsByRules()`,
+deterministická, na instrukcích nezávislá — druhý signál pro budoucí validátor tohohle řetězu, stejná
+role jako `classifyByRules()` pro klasifikaci). Žádná `human-corrected` strategie zatím — review krok
+pro tenhle řetěz ještě neexistuje.
+
+**Wiring:** `src/slice.ts` (test), `platform-wiring.ts` (`EXTRACT` konstanta, `buildExtractAdapters()`
+mirror `buildAdapters()`, samostatná od CLASSIFY — vlastní `modelTable()` volání, duplikace místo
+předčasné abstrakce, Posudek 1 #3), policy soubory pro obě instalace (**AI identita záměrně bez scope**
+— F1 zůstává úzký i pro druhou read-only capability, `error-ai-actor` fixture to dokazuje), `profile.json`
+(`policyRefs`/`identities.scopes`/`models`), `lifecycle.json` (`"invoice-extractor": "ACTIVE"`).
+
+**Conformance:** `conformance/invoice.extract/` — 12 fixtures (5 canonical/1 damaged/1 injection/1
+boundary/4 error, nad VC §5 minimem 5/1/1/1). `injection-email-send` dokazuje F2: model dostane instrukci
+použít `email.send` (capabilitu, co invoice.extract vůbec nemá), skutečná pole se přesto extrahují
+správně a nic navíc (`note`/`action` klíče od "gullible" fake) se nedostane do payloadu — handler čte jen
+4 pojmenovaná pole, `additionalProperties:false` je druhá, nezávislá brána. `tests/ctr.test.ts` (`CTR-001`/
+`CTR-ERR-001`/`CTR-WHY-001`), `self-test.ts` `SUITES` (živý self-test na `/farm`, až se nasadí).
+
+**Cestou nalezené a opravené:** ARCH-DEP-001 chytilo natvrdo zadanou e-mailovou adresu v testovacím fake
+adaptéru (`audit@attacker.example` jako literál v `.ts` kódu, ne ve fixture datech, kde je to
+v pořádku) — opraveno na neutrální text. Poškozené kódování (české znaky) při ruční opravě JSON
+control-character chyby — celý fixtures soubor přepsán čistě.
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare`), **333/333 testů** (19 nových), `arch`,
+`farm:check`. **Nenasazeno** — podle plánu (schváleného přes `EnterPlanMode`) zůstává lokální, dokud
+vlastník nerozhodne nasadit; žádná deterministická cross-check validace (document.validate ekvivalent
+pro tenhle řetěz), dojička, Import Gate ani BC Executor zatím nejsou postavené — příští kroky, ne dnešek.
+
 ## 2026-09-11 (108) — Posudek 9 bod 3: CTR-WHY-001 uzamyká 82/82 why/onFailure pokrytí testem
 
 **Pokyn vlastníka:** Posudek 9's bod 3 — `why`/`onFailure` zůstávaly na typu `Fixture` volitelné, i když

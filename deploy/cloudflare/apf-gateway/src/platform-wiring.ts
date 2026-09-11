@@ -3,11 +3,12 @@
 // document.validate), and the transport the orchestrator talks to. Nothing installation-bound is written here.
 import { createPrivateKey, createPublicKey, generateKeyPairSync, type KeyObject } from "node:crypto";
 import { AnthropicAdapter } from "../../../../src/adapters/anthropic.js";
-import { classifyByRules, FakeLlmAdapter, KeywordClassifierAdapter, type LlmAdapter } from "../../../../src/adapters/llm.js";
+import { classifyByRules, FakeInvoiceExtractorAdapter, FakeLlmAdapter, KeywordClassifierAdapter, RulesInvoiceExtractorAdapter, type LlmAdapter } from "../../../../src/adapters/llm.js";
 import type { RegistryAdapter } from "../../../../src/adapters/registry.js";
 import { WorkersAiAdapter, type WorkersAiBinding } from "../../../../src/adapters/workers-ai.js";
 import * as classifier from "../../../../src/components/document-classifier/handler.js";
 import hostDescriptor from "../../../../src/components/document-executor-host/descriptor.json" with { type: "json" };
+import * as extractor from "../../../../src/components/invoice-extractor/handler.js";
 import * as validator from "../../../../src/components/document-validator/handler.js";
 import emailDescriptor from "../../../../src/components/email-executor/descriptor.json" with { type: "json" };
 import * as ingest from "../../../../src/components/mail-ingest/handler.js";
@@ -26,6 +27,7 @@ import { InProcessTransport, RemoteHostTransport, type DispatchTransport, type S
 import type { MessageEnvelope, ResultEnvelope } from "../../../../src/platform/types.js";
 
 export const CLASSIFY = "document.classify";
+export const EXTRACT = "invoice.extract";
 /**
  * Capabilities the gateway itself provides; everything else is a host and stays "not wired" until its unit lands.
  * `mail.ingest` runs here too (not as a remote dispatch): it holds no credential to isolate and writes no external
@@ -33,7 +35,12 @@ export const CLASSIFY = "document.classify";
  * Derived from each component's own descriptor (Agent Registry, SEVERKA.md item 4), not hand-duplicated — a
  * capability added to a descriptor without also touching this file used to risk silently misrouting to notWired.
  */
-export const GATEWAY_CAPABILITIES: readonly string[] = [...capabilityNamesOf(classifier.descriptor), ...capabilityNamesOf(validator.descriptor), ...capabilityNamesOf(ingest.descriptor)];
+export const GATEWAY_CAPABILITIES: readonly string[] = [
+  ...capabilityNamesOf(classifier.descriptor),
+  ...capabilityNamesOf(validator.descriptor),
+  ...capabilityNamesOf(ingest.descriptor),
+  ...capabilityNamesOf(extractor.descriptor),
+];
 /** Capabilities apf-document-host serves over a signed dispatch across a service binding (celek D). */
 export const DOCUMENT_HOST_CAPABILITIES: readonly string[] = capabilityNamesOf(hostDescriptor);
 export const DOCUMENT_HOST_ORIGIN = "https://apf-document-host.internal";
@@ -43,7 +50,7 @@ export const EMAIL_EXECUTOR_ORIGIN = "https://apf-email-executor.internal";
 
 /** Agent Registry (SEVERKA.md item 4): the gateway's own in-process catalog, for its `/capabilities` endpoint — no live Router round-trip needed, same reasoning as GATEWAY_CAPABILITIES above. */
 export function gatewayCatalog(): CapabilityRecord[] {
-  return [...catalogOf(classifier.descriptor), ...catalogOf(validator.descriptor), ...catalogOf(ingest.descriptor)];
+  return [...catalogOf(classifier.descriptor), ...catalogOf(validator.descriptor), ...catalogOf(ingest.descriptor), ...catalogOf(extractor.descriptor)];
 }
 
 export interface ModelChoice {
@@ -92,6 +99,25 @@ function buildAdapters(installation: Installation, secrets: SecretsSource, ai: W
   // Strategy names of the workflow definitions: "llm" = the installation's default model, "keyword" = rules (second signal).
   adapters.llm = adapters[t.default] as LlmAdapter;
   adapters.keyword = new KeywordClassifierAdapter();
+  return adapters;
+}
+
+/** invoice.extract's own adapter set (EXTRACT, not CLASSIFY) — same structure as buildAdapters(), a separate
+ * function rather than a parameterized one, matching this codebase's own stated preference for duplication
+ * over premature abstraction (Posudek 1 #3, agent-platform-foundation) until a third capability needs it too. */
+function buildExtractAdapters(installation: Installation, secrets: SecretsSource, ai: WorkersAiBinding): Record<string, LlmAdapter> {
+  const t = modelTable(installation, secrets, EXTRACT);
+  const adapters: Record<string, LlmAdapter> = {};
+  for (const [key, opt] of Object.entries(t.available)) {
+    adapters[key] =
+      opt.provider === "workers-ai"
+        ? new WorkersAiAdapter(opt.model, ai)
+        : opt.provider === "anthropic"
+          ? new AnthropicAdapter(opt.model, opt.secret as string, { ...(opt.inferenceGeo ? { inferenceGeo: opt.inferenceGeo } : {}) })
+          : new FakeInvoiceExtractorAdapter();
+  }
+  adapters.llm = adapters[t.default] as LlmAdapter;
+  adapters.rules = new RulesInvoiceExtractorAdapter();
   return adapters;
 }
 
@@ -150,6 +176,18 @@ export function wirePlatform(o: WiringOptions): Wiring {
         version: "1",
         inputSchema: classifier.inputSchema,
         handler: classifier.createDocumentClassifier({ artifacts: o.artifacts, models: buildAdapters(o.installation, o.secrets, o.ai), clock: o.clock, modelTimeoutMs: o.modelTimeoutMs ?? 60_000 }),
+      },
+    ],
+  });
+  router.register({
+    descriptor: extractor.descriptor as never,
+    policies: { [EXTRACT]: policy(EXTRACT) },
+    capabilities: [
+      {
+        name: EXTRACT,
+        version: "1",
+        inputSchema: extractor.inputSchema,
+        handler: extractor.createInvoiceExtractor({ artifacts: o.artifacts, models: buildExtractAdapters(o.installation, o.secrets, o.ai), clock: o.clock, modelTimeoutMs: o.modelTimeoutMs ?? 60_000 }),
       },
     ],
   });

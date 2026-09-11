@@ -4,10 +4,11 @@
 // come from the installation profile, secret values from a SecretsSource (config/<installation>/, docs/NAVRHOVY-LIST-farma.md).
 import { FakeArchiveAdapter } from "./adapters/archive.js";
 import { FakeDmsAdapter } from "./adapters/dms.js";
-import { classifyByRules, FakeLlmAdapter, KeywordClassifierAdapter, type LlmAdapter } from "./adapters/llm.js";
+import { classifyByRules, FakeInvoiceExtractorAdapter, FakeLlmAdapter, KeywordClassifierAdapter, RulesInvoiceExtractorAdapter, type LlmAdapter } from "./adapters/llm.js";
 import { FakeRegistryAdapter, type RegistryAdapter } from "./adapters/registry.js";
 import { FakeSmtpAdapter } from "./adapters/smtp.js";
 import * as classifier from "./components/document-classifier/handler.js";
+import * as extractor from "./components/invoice-extractor/handler.js";
 import * as validator from "./components/document-validator/handler.js";
 import * as host from "./components/document-executor-host/stamp-handler.js";
 import { createArchiveHandler, ARCHIVE_CREDENTIAL, ARCHIVE_HANDLER_ID, type ArchiveDeps } from "./components/document-executor-host/archive-handler.js";
@@ -57,6 +58,9 @@ export interface SliceOptions {
   archive?: FakeArchiveAdapter;
   smtp?: FakeSmtpAdapter;
   models?: Record<string, LlmAdapter>;
+  /** invoice.extract's own model map — separate from `models` (classify's) because the two capabilities'
+   * adapters return different response shapes (a single token vs. a JSON object). */
+  extractModels?: Record<string, LlmAdapter>;
   contextTtlMs?: number;
   modelTimeoutMs?: number;
   registryTimeoutMs?: number;
@@ -91,6 +95,7 @@ export function createSlice(installation: Installation, secrets: SecretsSource, 
   const archive = o.archive ?? new FakeArchiveAdapter();
   const smtp = o.smtp ?? new FakeSmtpAdapter();
   const models = o.models ?? { llm: new FakeLlmAdapter(), keyword: new KeywordClassifierAdapter() };
+  const extractModels = o.extractModels ?? { llm: new FakeInvoiceExtractorAdapter(), rules: new RulesInvoiceExtractorAdapter() };
 
   // Credential domains (CredentialResolverFixture, VC §6): one table per deployable, rows only for its handlers,
   // references from the profile, values from the secrets source; a missing or ungranted reference stops the wiring.
@@ -129,6 +134,18 @@ export function createSlice(installation: Installation, secrets: SecretsSource, 
         version: "1",
         inputSchema: classifier.inputSchema,
         handler: classifier.createDocumentClassifier({ artifacts, models, clock, ...(o.modelTimeoutMs !== undefined ? { modelTimeoutMs: o.modelTimeoutMs } : {}) }),
+      },
+    ],
+  });
+  router.register({
+    descriptor: extractor.descriptor as never,
+    policies: { "invoice.extract": policy("invoice.extract") },
+    capabilities: [
+      {
+        name: "invoice.extract",
+        version: "1",
+        inputSchema: extractor.inputSchema,
+        handler: extractor.createInvoiceExtractor({ artifacts, models: extractModels, clock, ...(o.modelTimeoutMs !== undefined ? { modelTimeoutMs: o.modelTimeoutMs } : {}) }),
       },
     ],
   });

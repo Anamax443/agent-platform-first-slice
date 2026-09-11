@@ -3,8 +3,8 @@
   "description": "Farm on the Cloudflare account bass443 (zone maxferit.cz). Addresses decided 2026-09-06 (assistant on the owner's 'up to you'): gateway apiHost behind Access, intake and notify addresses on the zone, recipients in policy/email.send are Email Routing aliases whose forwarding targets live only in the account. Plan: Workers Free until step 5 (queues) shows a need.",
   "tenants": ["tenant-42", "tenant-7"],
   "identities": [
-    { "actorId": "svc-orchestrator", "actorType": "service", "tenantId": "tenant-42", "scopes": ["document.classify", "document.validate", "document.stamp", "document.archive", "mail.ingest", "email.send"], "authStrength": "client-credentials" },
-    { "actorId": "svc-orchestrator-t7", "actorType": "service", "tenantId": "tenant-7", "scopes": ["document.classify", "document.validate", "document.stamp", "document.archive", "mail.ingest", "email.send"], "authStrength": "client-credentials" },
+    { "actorId": "svc-orchestrator", "actorType": "service", "tenantId": "tenant-42", "scopes": ["document.classify", "document.validate", "document.stamp", "document.archive", "mail.ingest", "email.send", "invoice.extract"], "authStrength": "client-credentials" },
+    { "actorId": "svc-orchestrator-t7", "actorType": "service", "tenantId": "tenant-7", "scopes": ["document.classify", "document.validate", "document.stamp", "document.archive", "mail.ingest", "email.send", "invoice.extract"], "authStrength": "client-credentials" },
     { "actorId": "ai-doc-classifier", "actorType": "ai-agent", "tenantId": "tenant-42", "scopes": ["document.classify"], "authStrength": "client-credentials" },
     { "actorId": "access:bass443@gmail.com", "actorType": "human", "tenantId": "tenant-42", "scopes": ["document.reviewer", "document.supervisor"], "authStrength": "oidc-user" }
   ],
@@ -17,8 +17,19 @@
   },
   "channels": { "apiHost": "apf.maxferit.cz", "intakeAddress": "apf-intake@maxferit.cz", "notifyFrom": "apf-notify@maxferit.cz", "notifyFromName": "agent-platform-farm", "operatorAlertTo": "argos@maxferit.cz" },
   "retentionDays": { "originals": 30, "journal": 30, "audit": 90 },
-  "policyRefs": ["document.classify", "document.validate", "document.stamp", "document.archive", "mail.ingest", "email.send"],
+  "policyRefs": ["document.classify", "document.validate", "document.stamp", "document.archive", "mail.ingest", "email.send", "invoice.extract"],
   "models": {
+    "invoice.extract": {
+      "default": "llama-8b",
+      "options": {
+        "llama-8b": {
+          "provider": "workers-ai",
+          "model": "@cf/meta/llama-3.1-8b-instruct-fp8",
+          "label": "Workers AI · Llama 3.1 8B fp8 (Free)",
+          "processor": "Cloudflare Workers AI (Cloudflare, Inc.; DPA in the Cloudflare Customer Agreement; no training on inputs; region chosen by Cloudflare)"
+        }
+      }
+    },
     "document.classify": {
       "default": "llama-8b",
       "options": {

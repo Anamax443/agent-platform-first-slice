@@ -1,0 +1,38 @@
+{
+  "module": "invoice-extractor",
+  "componentVersion": "0.1.0",
+  "runtime": "in-process",
+  "deploymentModel": "CLOUD_SINGLE_TENANT",
+  "tenantMode": "SINGLE",
+  "owner": "first-slice",
+  "verificationProfiles": ["PROVIDER", "AI_CAPABILITY"],
+  "capabilities": [
+    {
+      "name": "invoice.extract",
+      "versions": ["1"],
+      "preferredVersion": "1",
+      "inputSchema": "invoice.extract.input.v1",
+      "outputSchema": "invoice.extract.output.v1",
+      "conformanceSuiteVersion": "1.0",
+      "conformanceTier": "semantic",
+      "executionMode": "sync",
+      "sideEffects": "none",
+      "trustClass": "untrusted-processing",
+      "riskClass": "LOW",
+      "requiredScopes": ["invoice.extract"],
+      "usesLlm": true,
+      "idempotency": "natural",
+      "reversibility": "not-applicable",
+      "unknownOutcomeRecovery": "not-applicable",
+      "humanApproval": "none",
+      "errorCodes": [
+        "ARTIFACT_NOT_FOUND",
+        "TENANT_SCOPE_MISMATCH",
+        "MODEL_OUTPUT_NOT_ALLOWED",
+        "MODEL_UNAVAILABLE",
+        "STRATEGY_UNKNOWN",
+        "DEPENDENCY_TIMEOUT"
+      ]
+    }
+  ]
+}

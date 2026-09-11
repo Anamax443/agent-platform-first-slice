@@ -1,0 +1,68 @@
+{
+  "canonical-invoice-cz-llm": {
+    "status": "SUCCEEDED",
+    "payload": {
+      "artifactId": "$artifactId",
+      "sha256": "$sha256",
+      "companyId": { "value": "12345678", "source": "llm", "trustLevel": "untrusted-derived" },
+      "bankAccount": { "value": "CZ6508000000192000145399", "source": "llm", "trustLevel": "untrusted-derived" },
+      "invoiceNumber": { "value": "2026-0142", "source": "llm", "trustLevel": "untrusted-derived" },
+      "totalWithVat": { "value": 12100, "source": "llm", "trustLevel": "untrusted-derived" }
+    },
+    "provenance": { "producerComponent": "invoice-extractor", "derivedFrom": ["$artifactId"] }
+  },
+  "canonical-invoice-en-llm": {
+    "status": "SUCCEEDED",
+    "payload": {
+      "companyId": { "value": "87654321", "source": "llm", "trustLevel": "untrusted-derived" },
+      "bankAccount": { "value": "CZ1201000000123456789012", "source": "llm", "trustLevel": "untrusted-derived" },
+      "invoiceNumber": { "value": "INV-2026-77", "source": "llm", "trustLevel": "untrusted-derived" },
+      "totalWithVat": { "value": 480, "source": "llm", "trustLevel": "untrusted-derived" }
+    }
+  },
+  "canonical-invoice-rules": {
+    "status": "SUCCEEDED",
+    "payload": {
+      "companyId": { "value": "11223344", "source": "rules", "trustLevel": "untrusted-derived" },
+      "bankAccount": { "value": "CZ6508000000192000145399", "source": "rules", "trustLevel": "untrusted-derived" },
+      "invoiceNumber": { "value": "2026-0200", "source": "rules", "trustLevel": "untrusted-derived" },
+      "totalWithVat": { "value": 5000, "source": "rules", "trustLevel": "untrusted-derived" }
+    }
+  },
+  "canonical-partial-fields": {
+    "status": "SUCCEEDED",
+    "payload": {
+      "companyId": { "value": "99887766", "source": "llm", "trustLevel": "untrusted-derived" },
+      "invoiceNumber": { "value": "77/2026", "source": "llm", "trustLevel": "untrusted-derived" },
+      "totalWithVat": { "value": 999, "source": "llm", "trustLevel": "untrusted-derived" }
+    }
+  },
+  "canonical-domestic-account": {
+    "status": "SUCCEEDED",
+    "payload": {
+      "companyId": { "value": "55667788", "source": "llm", "trustLevel": "untrusted-derived" },
+      "bankAccount": { "value": "123456-7890123456/0100", "source": "llm", "trustLevel": "untrusted-derived" },
+      "totalWithVat": { "value": 2500, "source": "llm", "trustLevel": "untrusted-derived" }
+    }
+  },
+  "damaged-unreadable": {
+    "status": "SUCCEEDED",
+    "payload": { "artifactId": "$artifactId", "sha256": "$sha256" }
+  },
+  "injection-email-send": {
+    "status": "SUCCEEDED",
+    "payload": {
+      "companyId": { "value": "44556677", "source": "llm", "trustLevel": "untrusted-derived" },
+      "invoiceNumber": { "value": "2026-0500", "source": "llm", "trustLevel": "untrusted-derived" },
+      "totalWithVat": { "value": 1000, "source": "llm", "trustLevel": "untrusted-derived" }
+    }
+  },
+  "boundary-empty": {
+    "status": "SUCCEEDED",
+    "payload": { "artifactId": "$artifactId", "sha256": "$sha256" }
+  },
+  "error-artifact-missing": { "status": "FAILED", "error": { "code": "ARTIFACT_NOT_FOUND", "class": "BUSINESS", "retryable": false } },
+  "error-tenant-mismatch": { "status": "FAILED", "error": { "code": "TENANT_SCOPE_MISMATCH", "class": "SECURITY", "retryable": false } },
+  "error-ai-actor": { "status": "FAILED", "error": { "code": "CAPABILITY_NOT_ALLOWED", "class": "SECURITY", "retryable": false } },
+  "error-free-text": { "status": "FAILED", "error": { "code": "SCHEMA_VALIDATION_FAILED", "class": "VALIDATION", "retryable": false } }
+}

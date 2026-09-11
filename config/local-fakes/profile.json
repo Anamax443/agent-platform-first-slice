@@ -3,8 +3,8 @@
   "description": "Test installation: two tenants, one orchestrator identity per tenant, one AI identity with a single read scope; every external system is a fake; no channels.",
   "tenants": ["tenant-42", "tenant-7"],
   "identities": [
-    { "actorId": "svc-orchestrator", "actorType": "service", "tenantId": "tenant-42", "scopes": ["document.classify", "document.validate", "document.stamp", "document.archive", "mail.ingest", "email.send"], "authStrength": "client-credentials" },
-    { "actorId": "svc-orchestrator-t7", "actorType": "service", "tenantId": "tenant-7", "scopes": ["document.classify", "document.validate", "document.stamp", "document.archive", "mail.ingest", "email.send"], "authStrength": "client-credentials" },
+    { "actorId": "svc-orchestrator", "actorType": "service", "tenantId": "tenant-42", "scopes": ["document.classify", "document.validate", "document.stamp", "document.archive", "mail.ingest", "email.send", "invoice.extract"], "authStrength": "client-credentials" },
+    { "actorId": "svc-orchestrator-t7", "actorType": "service", "tenantId": "tenant-7", "scopes": ["document.classify", "document.validate", "document.stamp", "document.archive", "mail.ingest", "email.send", "invoice.extract"], "authStrength": "client-credentials" },
     { "actorId": "ai-doc-classifier", "actorType": "ai-agent", "tenantId": "tenant-42", "scopes": ["document.classify"], "authStrength": "client-credentials" }
   ],
   "roles": { "orchestrator": "svc-orchestrator" },
@@ -16,9 +16,15 @@
   },
   "channels": { "apiHost": null, "intakeAddress": null, "notifyFrom": null, "notifyFromName": "agent-platform-first-slice (local)", "operatorAlertTo": null },
   "retentionDays": { "originals": 30, "journal": 30, "audit": 90 },
-  "policyRefs": ["document.classify", "document.validate", "document.stamp", "document.archive", "mail.ingest", "email.send"],
+  "policyRefs": ["document.classify", "document.validate", "document.stamp", "document.archive", "mail.ingest", "email.send", "invoice.extract"],
   "models": {
     "document.classify": {
+      "default": "fake-llm",
+      "options": {
+        "fake-llm": { "provider": "fake", "model": "fake-llm-1", "label": "fake (deliberately gullible, tests only)", "processor": "none: in-process fake" }
+      }
+    },
+    "invoice.extract": {
       "default": "fake-llm",
       "options": {
         "fake-llm": { "provider": "fake", "model": "fake-llm-1", "label": "fake (deliberately gullible, tests only)", "processor": "none: in-process fake" }

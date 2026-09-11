@@ -3,5 +3,6 @@
   "document-validator": "ACTIVE",
   "document-executor-host": "ACTIVE",
   "email-executor": "ACTIVE",
-  "mail-ingest": "ACTIVE"
+  "mail-ingest": "ACTIVE",
+  "invoice-extractor": "ACTIVE"
 }

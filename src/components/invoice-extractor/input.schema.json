@@ -1,0 +1,10 @@
+{
+  "$id": "invoice.extract.input.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifactId"],
+  "properties": {
+    "artifactId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$" },
+    "strategy": { "type": "string", "enum": ["llm", "rules"], "description": "llm = real model, JSON-prompted. rules = deterministic regex extraction, the second signal, immune to instructions." }
+  }
+}
