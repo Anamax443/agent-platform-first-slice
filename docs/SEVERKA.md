@@ -226,6 +226,16 @@ MŮŽE:                              NEMŮŽE:
 Žádné AI uvnitř — jednoúčelový robot přesně v duchu „Cena je z principu nízká pro ne-AI capability"
 (`## Positioning`). Vlastní, výhradní credential (BC Executor, nikdy Farmář ani jiná kráva).
 
+**Vývojová/ověřovací fáze, rozhodnuto 11. 9. 2026 (vlastník):** dokud řetěz není hotový a ověřený,
+BC Executor se nestaví ani nezapojuje — poslední krok místo něj je **JSON Export** (stejně „hloupý",
+no-AI, jen zapíše `CertifiedInvoice` jako JSON, žádný reálný credential ani side effect mimo
+platformu). K ověření, že extrakce+verifikace vrací správná data, slouží samostatný krok
+**Invoice Generator** — vezme JSON a **deterministicky, bez AI** z něj sestaví fakturu (šablona,
+ne věrný vizuál — „rychlé, levné, hloupé, jen pro kontrolu"). Člověk porovná vygenerovanou fakturu s
+originálem = živé ověření, že řetěz nic needitoval a nic nevynechal, bez nutnosti reálného BC přístupu.
+Až řetěz projde touhle kontrolou, JSON Export se nahradí skutečným BC Executorem beze změny zbytku
+řetězu (Import Gate/fingerprint/farmář-bez-přístupu zůstává stejné, mění se jen poslední krok).
+
 ### Nový povinný test pro Admission Gate: COMPROMISED-ORCHESTRATOR / CONFUSED-DEPUTY
 
 Doplňuje `### Admission Gate`'s seznam testů a `### Zero-trust model`'s adversarial test suite o

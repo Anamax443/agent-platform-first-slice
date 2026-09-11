@@ -2,6 +2,18 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-11 (110) — SEVERKA: BC Executor dočasně nahrazen JSON Exportem + Invoice Generatorem (ověřovací fáze)
+
+**Pokyn vlastníka:** dokud invoice→BC řetěz není hotový a ověřený, poslední krok nebude zápis do BC, ale
+**JSON Export** (stejně „hloupý" jako plánovaný BC Executor, jen jiný cíl — žádný reálný credential/side
+effect). Nový samostatný krok **Invoice Generator** vezme ten JSON a **deterministicky, bez AI** z něj
+sestaví fakturu — „rychlé, levné, hloupé, jen pro kontrolu", ne věrný vizuál. Člověk porovná s originálem
+= živé ověření řetězu bez nutnosti reálného BC přístupu. Zbytek řetězu (Import Gate, fingerprint,
+farmář-bez-přístupu-k-datům) se neměnní — až projde kontrolou, JSON Export se vymění za skutečný BC
+Executor beze změny zbytku.
+
+Zapsáno do `docs/SEVERKA.md` (sekce „BC Executor musí být hloupý"). Čistě dokumentační krok — žádný kód.
+
 ## 2026-09-11 (109) — invoice.extract: první nová kráva mimo classify/validate/stamp, lokálně hotová, nenasazeno
 
 **Pokyn vlastníka:** "vyladit argose, farmáře, dojičky a potom začneme testovat jednotlivé krávy. nic
