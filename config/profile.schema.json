@@ -47,7 +47,8 @@
         "apiHost": { "type": ["string", "null"], "description": "Gateway host behind Access, e.g. apf.example.org; null = in-process only." },
         "intakeAddress": { "type": ["string", "null"], "description": "Email Routing address delivered to mail.ingest; null = no inbound mail." },
         "notifyFrom": { "type": ["string", "null"], "description": "Sender address of email.send; null = sandbox only." },
-        "notifyFromName": { "type": "string", "maxLength": 100 }
+        "notifyFromName": { "type": "string", "maxLength": 100 },
+        "operatorAlertTo": { "type": ["string", "null"], "description": "Where Argos sends watchdog incident alerts (HANDOFF 85); null = no alerting configured, ARGOS_ALERT_MODE stays sandbox regardless." }
       }
     },
     "retentionDays": {

@@ -27,6 +27,7 @@ import { ReviewService, type Decision } from "../../../../src/platform/review.js
 import type { MessageEnvelope, ResultEnvelope } from "../../../../src/platform/types.js";
 import { WORKFLOW_NAMES, workflowDef } from "../../../../src/platform/workflow.js";
 import {
+  composeIncidentAlert,
   computeWatchdog,
   reconcileIncidents,
   renderError,
@@ -72,6 +73,12 @@ export interface Env {
   SIGNING_KEY_ID: string;
   CONTRACTS_VERSION: string;
   WORKFLOW_DEADLINE_MS: string;
+  /** Argos watchdog alert e-mail (HANDOFF 85): the send_email binding itself is the authorization, same
+   * reasoning as apf-email-executor's EMAIL binding — no separate secret. */
+  ARGOS_MAIL: SendEmail;
+  /** "sandbox" (log only, sends nothing) until deliberately flipped to "live" for an installation — same
+   * explicit-opt-in discipline as apf-email-executor's SEND_MODE. */
+  ARGOS_ALERT_MODE: "sandbox" | "live";
   /** Secrets (wrangler secret put): values never appear in any file of this repo. */
   GATEWAY_SIGNING_KEY?: string;
   ANTHROPIC_API_KEY?: string;
@@ -221,6 +228,47 @@ async function allIncidents(env: Env): Promise<IncidentRecord[]> {
 }
 
 /**
+ * Argos's own e-mail port (HANDOFF 85, oponentura bod 11 "hlídací pes potřebuje štěkat") — direct Cloudflare
+ * Email Sending, deliberately not the email.send capability (Argos is platform self-monitoring, not a
+ * tenant-scoped business workflow; going through Router/Policy would be the wrong boundary for it). Same
+ * "sandbox by default" split as apf-email-executor's CloudflareSmtpAdapter/FakeSmtpAdapter.
+ */
+interface ArgosAlertPort {
+  send(to: string, from: { email: string; name: string }, subject: string, body: string): Promise<void>;
+}
+class LiveArgosAlertPort implements ArgosAlertPort {
+  constructor(private readonly email: SendEmail) {}
+  async send(to: string, from: { email: string; name: string }, subject: string, body: string): Promise<void> {
+    await this.email.send({ to, from, subject, text: body });
+  }
+}
+class SandboxArgosAlertPort implements ArgosAlertPort {
+  async send(to: string, _from: { email: string; name: string }, subject: string): Promise<void> {
+    console.log(`[apf-gateway] ARGOS_ALERT_MODE=sandbox, not sending "${subject}" to ${to}`);
+  }
+}
+
+/** Sends the alert e-mail for whatever reconcileAndPersistIncidents() found new this run, if `channels.
+ * operatorAlertTo` is configured. Best-effort — a send failure must never break the page rendering it triggered
+ * from, same reasoning as the D1 write itself. */
+async function sendArgosAlerts(env: Env, newlyOpened: IncidentRecord[], newlyResolved: IncidentRecord[]): Promise<void> {
+  const to = installation.profile.channels.operatorAlertTo;
+  const fromEmail = installation.profile.channels.notifyFrom;
+  // No installation-bound fallback here (ARCH-DEP-001): an installation without both a destination and a real
+  // sender address has nothing correct to send from, not a default to send from instead.
+  if (!to || !fromEmail) return;
+  const alert = composeIncidentAlert(newlyOpened, newlyResolved);
+  if (!alert) return;
+  const from = { email: fromEmail, name: "Argos — " + installation.profile.channels.notifyFromName };
+  const port: ArgosAlertPort = env.ARGOS_ALERT_MODE === "live" ? new LiveArgosAlertPort(env.ARGOS_MAIL) : new SandboxArgosAlertPort();
+  try {
+    await port.send(to, from, alert.subject, alert.body);
+  } catch (e) {
+    console.error(`[apf-gateway] sendArgosAlerts failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+/**
  * Incident Store, first slice (oponentura item 2, HANDOFF 84 continued): turns this render's watchdog findings
  * into persisted incident state — page.ts's reconcileIncidents() decides what changed, this just reads/writes
  * it. Runs on every GET /farm (reuses the FarmModel already assembled for the page, no extra fetches); there is
@@ -236,6 +284,11 @@ async function reconcileAndPersistIncidents(env: Env, model: FarmModel, now: str
     if (changed.length > 0) {
       const stmt = env.AUDIT.prepare("INSERT OR REPLACE INTO audit (audit_id, at, kind, correlation_id, workflow_id, tenant_id, actor_id, capability, json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
       await env.AUDIT.batch(changed.map((i) => stmt.bind(watchdogIncidentAuditId(i.key), now, WATCHDOG_INCIDENT_KIND, null, null, null, "argos", null, JSON.stringify(i))));
+      // "New to us" = first occurrence (whether truly first-ever, or a fresh incident after a prior one with the
+      // same key already resolved — reconcileIncidents() always starts a reopened key at occurrences 1).
+      const newlyOpened = changed.filter((i) => !i.resolvedAt && i.occurrences === 1);
+      const newlyResolved = changed.filter((i) => i.resolvedAt);
+      await sendArgosAlerts(env, newlyOpened, newlyResolved);
     }
     const byKey = new Map(existing.map((i) => [i.key, i]));
     for (const i of changed) byKey.set(i.key, i);
@@ -1155,6 +1208,18 @@ export default {
       const rows = (await stub.selfTest(only.capability || only.worker ? only : undefined)) as SelfTestRow[];
       await recordSelfTestSummary(env, rows);
       return html(renderSelfTest(rows));
+    }
+
+    // Manual verification for the Argos alert wiring (HANDOFF 85) — "never deploy untested" for a real external
+    // side effect means actually confirming an e-mail arrives, which nothing automated here can do. Goes through
+    // the exact same sendArgosAlerts()/ArgosAlertPort path a real incident would (respects ARGOS_ALERT_MODE),
+    // just with a synthetic IncidentRecord instead of a real one.
+    if (url.pathname === "/farm/test-alert" && request.method === "POST") {
+      if (!installation.profile.channels.operatorAlertTo) return Response.json({ error: "NO_ALERT_TO", message: "channels.operatorAlertTo not configured for this installation" }, { status: 400 });
+      const now = iso(new SystemClock().now());
+      const testIncident: IncidentRecord = { key: "test-alert", level: "WARN", text: "Testovací zpráva z /farm/test-alert — pokud tohle vidíš, doručení funguje.", firstSeenAt: now, lastSeenAt: now, occurrences: 1 };
+      await sendArgosAlerts(env, [testIncident], []);
+      return Response.json({ ok: true, mode: env.ARGOS_ALERT_MODE, to: installation.profile.channels.operatorAlertTo });
     }
 
     // Upload straight into the R2 inbox from the Farmář page (owner's request, 2026-09-07: "potřebuji to u

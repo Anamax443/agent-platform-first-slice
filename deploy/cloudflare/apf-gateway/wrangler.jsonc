@@ -43,11 +43,21 @@
     { "binding": "FAKES", "service": "apf-fakes" }
   ],
 
+  // Argos watchdog alerts (HANDOFF 85), direct from apf-gateway — deliberately NOT the email.send capability
+  // (Argos is platform self-monitoring, not a tenant-scoped business workflow, so it has no reason to go through
+  // Router/Policy). Same "sender domain must be onboarded in the account" prerequisite as apf-email-executor's
+  // EMAIL binding.
+  "send_email": [{ "name": "ARGOS_MAIL" }],
+
   "vars": {
     "KILL_SWITCH": "false",
     "SIGNING_KEY_ID": "k1",
     "CONTRACTS_VERSION": "agent-platform-foundation 1.0-rc2.1 12a3c32",
-    "WORKFLOW_DEADLINE_MS": "1800000"
+    "WORKFLOW_DEADLINE_MS": "1800000",
+    // Same explicit-opt-in discipline as apf-email-executor's SEND_MODE: stays "sandbox" (logs only, sends
+    // nothing) until deliberately flipped to "live" for an installation that actually wants real alert email —
+    // config/farm-bass443/farm.json overrides this one, local-fakes stays sandbox.
+    "ARGOS_ALERT_MODE": "sandbox"
   }
   // Secrets (wrangler secret put, never in this file): GATEWAY_SIGNING_KEY
 }

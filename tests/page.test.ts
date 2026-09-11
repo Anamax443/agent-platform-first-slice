@@ -4,7 +4,7 @@
 // page.ts has no Cloudflare-runtime imports (only src/platform types + bank.js/farm-theme.js, both plain strings),
 // so it is directly callable here — same reasoning as relay-audit.ts being split out of index.ts for testability.
 import { describe, expect, it } from "vitest";
-import { computeWatchdog, reconcileIncidents, renderFarm, type CapabilityRow, type FarmModel, type IncidentRecord, type WatchdogFinding } from "../deploy/cloudflare/apf-gateway/src/page.js";
+import { composeIncidentAlert, computeWatchdog, reconcileIncidents, renderFarm, type CapabilityRow, type FarmModel, type IncidentRecord, type WatchdogFinding } from "../deploy/cloudflare/apf-gateway/src/page.js";
 
 const model: FarmModel = {
   installation: "local-fakes",
@@ -282,5 +282,43 @@ describe("reconcileIncidents() — Incident Store, first slice (HANDOFF 84 conti
     expect(changed.find((i) => i.key === "ohrada-backlog")).toMatchObject({ occurrences: 2, lastSeenAt: "2026-09-10T09:05:00Z", firstSeenAt: "2026-09-10T09:00:00Z" });
     expect(changed.find((i) => i.key === "worker:apf-mail-ingest")).toMatchObject({ occurrences: 1, firstSeenAt: "2026-09-10T09:05:00Z" });
     expect(changed.find((i) => i.key === "selftest-stale")).toMatchObject({ resolvedAt: "2026-09-10T09:05:00Z", occurrences: 5 });
+  });
+});
+
+describe("composeIncidentAlert() — Argos's e-mail content (HANDOFF 85, oponentura bod 11 'hlídací pes potřebuje štěkat')", () => {
+  const opened = (level: WatchdogFinding["level"], text: string): IncidentRecord => ({ key: text, level, text, firstSeenAt: "2026-09-10T10:00:00Z", lastSeenAt: "2026-09-10T10:00:00Z", occurrences: 1 });
+  const resolvedAfter = (text: string, firstSeenAt: string, resolvedAt: string): IncidentRecord => ({ key: text, level: "WARN", text, firstSeenAt, lastSeenAt: firstSeenAt, occurrences: 3, resolvedAt });
+
+  it("nothing new and nothing resolved -> undefined, never an empty e-mail", () => {
+    expect(composeIncidentAlert([], [])).toBeUndefined();
+  });
+
+  it("a new INCIDENT-level finding gets the red icon and shows up under NOVÉ", () => {
+    const alert = composeIncidentAlert([opened("INCIDENT", "apf-mail-ingest neodpovídá")], []);
+    expect(alert?.subject).toContain("🔴");
+    expect(alert?.subject).toContain("1 nový nález");
+    expect(alert?.body).toContain("NOVÉ:");
+    expect(alert?.body).toContain("[INCIDENT] apf-mail-ingest neodpovídá");
+  });
+
+  it("a new finding that's only WARN (no INCIDENT among them) gets the yellow icon, not red", () => {
+    const alert = composeIncidentAlert([opened("WARN", "self-test nikdy neproběhl")], []);
+    expect(alert?.subject).toContain("🟡");
+    expect(alert?.subject).not.toContain("🔴");
+  });
+
+  it("only a resolution (nothing new) gets the green icon and shows duration under VYŘEŠENO", () => {
+    const alert = composeIncidentAlert([], [resolvedAfter("6 instancí čeká v Ohradě", "2026-09-10T09:00:00Z", "2026-09-10T09:17:00Z")]);
+    expect(alert?.subject).toContain("🟢");
+    expect(alert?.subject).toContain("1 vyřešený nález");
+    expect(alert?.body).toContain("VYŘEŠENO:");
+    expect(alert?.body).toContain("6 instancí čeká v Ohradě (trvalo 17 min)");
+  });
+
+  it("both new and resolved findings in the same run appear in the same e-mail, each under its own heading", () => {
+    const alert = composeIncidentAlert([opened("INCIDENT", "email.send: self-test 0/13")], [resolvedAfter("document.archive je v karanténě", "2026-09-09T08:00:00Z", "2026-09-10T10:00:00Z")]);
+    expect(alert?.subject).toContain("1 nový nález");
+    expect(alert?.subject).toContain("1 vyřešený nález");
+    expect(alert?.body.indexOf("NOVÉ:")).toBeLessThan(alert?.body.indexOf("VYŘEŠENO:") as number);
   });
 });

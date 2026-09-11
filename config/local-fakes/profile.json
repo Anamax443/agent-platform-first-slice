@@ -14,7 +14,7 @@
     "email-send-handler": ["cred:smtp"],
     "mail-ingest-handler": []
   },
-  "channels": { "apiHost": null, "intakeAddress": null, "notifyFrom": null, "notifyFromName": "agent-platform-first-slice (local)" },
+  "channels": { "apiHost": null, "intakeAddress": null, "notifyFrom": null, "notifyFromName": "agent-platform-first-slice (local)", "operatorAlertTo": null },
   "retentionDays": { "originals": 30, "journal": 30, "audit": 90 },
   "policyRefs": ["document.classify", "document.validate", "document.stamp", "document.archive", "mail.ingest", "email.send"],
   "models": {

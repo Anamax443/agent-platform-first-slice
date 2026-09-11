@@ -2,6 +2,42 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-11 (86) — Argos umí štěkat: e-mailový alerting postavený, zatím v sandboxu (ještě neposílá naostro)
+
+**Pokyn vlastníka:** "pokračuj" + rozhodnuto přes sérii otázek (`AskUserQuestion`, krok za krokem): kanál
+e-mail, adresa na doméně `maxferit.cz` (zóna je na stejném CF účtu `bass443` jako farma — ověřeno živě přes
+`wrangler whoami` + MX/SPF dotaz na `maxferit.cz`, oba potvrzují Cloudflare Email Routing tam už běží),
+navržená adresa `argos@maxferit.cz` (vlastník: "je to ošetřeno", žádné přesměrování nestavět), mechanismus
+**přímé Cloudflare Email Sending z apf-gateway** (ne přes `email.send` capabilitu — Argos je platformní
+self-monitoring, ne tenant-scoped byznys tok, nemá důvod procházet Router/Policy), práh **INCIDENT i WARN**,
+**ano** i notifikace o vyřešení.
+
+**Postaveno:**
+- `channels.operatorAlertTo` — nové volitelné pole v `profile.schema.json`/`profile.json` (editovatelné v
+  configu, ne natvrdo v kódu, jak vlastník žádal) — `argos@maxferit.cz` na `farm-bass443`, `null` na
+  `local-fakes`.
+- `deploy/cloudflare/apf-gateway/wrangler.jsonc` — nový `send_email` binding (`ARGOS_MAIL`) + `ARGOS_ALERT_MODE`
+  var, **stejná explicitní "sandbox dokud se vědomě nezapne" disciplína jako `apf-email-executor`'s
+  `SEND_MODE`** — dnes `"sandbox"` na obou instalacích (jen loguje, nic neposílá naostro).
+- `composeIncidentAlert()` (page.ts, čistá funkce) — skládá předmět/tělo e-mailu z nově otevřených a nově
+  vyřešených incidentů (🔴 aspoň jeden nový INCIDENT / 🟡 jen nové WARN / 🟢 jen vyřešeno), vrací `undefined`
+  když není co hlásit (žádný prázdný e-mail).
+- `sendArgosAlerts()`/`ArgosAlertPort` (index.ts) — `LiveArgosAlertPort` (skutečný `send_email` binding) vs.
+  `SandboxArgosAlertPort` (jen `console.log`), volané ze `reconcileAndPersistIncidents()` po zápisu do D1.
+  From adresa = `channels.notifyFrom` (znovupoužita, žádná nová natvrdo zadaná hodnota — **ARCH-DEP-001 chytil
+  můj první pokus** s `?? "apf-notify@maxferit.cz"` fallbackem jako zakázaný literál, opraveno na "bez to/from
+  se prostě nic nepošle", žádný náhradní default).
+- `POST /farm/test-alert` — ruční ověřovací endpoint, projde přesně stejnou cestou jako skutečný incident
+  (respektuje `ARGOS_ALERT_MODE`), pro živé ověření před spolehnutím na automatickou cestu.
+
+**Vědomě NEnasazeno naostro:** `ARGOS_ALERT_MODE` zůstává `"sandbox"` i na `farm-bass443` — přepnutí na `"live"`
+a první opravdový testovací e-mail (přes `/farm/test-alert`, potvrzeno doručení) je záměrně **oddělený další
+krok**, ne součást tohohle nasazení — [[never-deploy-untested]] pro reálný externí side-effect znamená
+opravdu ověřit doručení, ne jen že se nasazení a typecheck nezhroutí.
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare`), **276/276 testů** (5 nových pro
+`composeIncidentAlert()`), `arch` (22 instalačních hodnot, 0 nálezů po opravě), `farm:check`.
+
 ## 2026-09-10 (85) — Incident Store: watchdog nálezy dostaly identitu napříč běhy, ne jen čerstvý přepočet
 
 **Pokyn vlastníka:** "pokračuj" — čtvrtý krok z (82)'s oponentury, item 2 (Incident Store), hned po (84)'s

@@ -32,7 +32,7 @@ export interface InstallationProfile {
   roles: { orchestrator: string };
   /** handlerId -> credential references it may resolve. Values come from a SecretsSource, never from the profile. */
   credentials: Record<string, string[]>;
-  channels: { apiHost: string | null; intakeAddress: string | null; notifyFrom: string | null; notifyFromName?: string };
+  channels: { apiHost: string | null; intakeAddress: string | null; notifyFrom: string | null; notifyFromName?: string; operatorAlertTo?: string | null };
   retentionDays: { originals: number; journal: number; audit: number };
   policyRefs: string[];
   /** capability -> models. Absent only in installations that never call a model (tests with fakes). */

@@ -398,6 +398,47 @@ export function reconcileIncidents(existing: IncidentRecord[], findings: Watchdo
   return [...upserted, ...resolved];
 }
 
+/** How long an incident lasted, for a human reading the resolved-alert e-mail — minutes/hours/days, not a raw ms diff. */
+const humanDuration = (fromIso: string, toIso: string): string => {
+  const minutes = Math.round((Date.parse(toIso) - Date.parse(fromIso)) / 60000);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} h`;
+  return `${Math.round(hours / 24)} dní`;
+};
+
+/**
+ * Argos's own e-mail alert (oponentura bod 11, "hlídací pes potřebuje štěkat") — composed here, pure and
+ * testable, so index.ts's job is only to actually call the send binding. `newlyOpened`/`newlyResolved` are the
+ * subset of reconcileIncidents()'s output that's actually new information (an incident on its first occurrence,
+ * or one that just got resolvedAt) — a continuing incident being seen again is not, by itself, news. Returns
+ * undefined when there is nothing to report; the caller must not send an empty e-mail.
+ */
+export function composeIncidentAlert(newlyOpened: IncidentRecord[], newlyResolved: IncidentRecord[]): { subject: string; body: string } | undefined {
+  if (newlyOpened.length === 0 && newlyResolved.length === 0) return undefined;
+
+  const incidentCount = newlyOpened.filter((i) => i.level === "INCIDENT").length;
+  const icon = incidentCount > 0 ? "🔴" : newlyOpened.length > 0 ? "🟡" : "🟢";
+  const parts: string[] = [];
+  if (newlyOpened.length) parts.push(`${newlyOpened.length} ${newlyOpened.length === 1 ? "nový nález" : "nové nálezy"}`);
+  if (newlyResolved.length) parts.push(`${newlyResolved.length} ${newlyResolved.length === 1 ? "vyřešený nález" : "vyřešené nálezy"}`);
+  const subject = `${icon} Argos: ${parts.join(", ")}`;
+
+  const lines: string[] = [];
+  if (newlyOpened.length) {
+    lines.push("NOVÉ:");
+    for (const i of newlyOpened) lines.push(`  [${i.level}] ${i.text}`);
+    lines.push("");
+  }
+  if (newlyResolved.length) {
+    lines.push("VYŘEŠENO:");
+    for (const i of newlyResolved) lines.push(`  ${i.text} (trvalo ${humanDuration(i.firstSeenAt, i.resolvedAt as string)})`);
+    lines.push("");
+  }
+  lines.push("— Argos, /farm");
+  return { subject, body: lines.join("\n") };
+}
+
 const watchdogFindingLine = (f: WatchdogFinding, incidents: IncidentRecord[]): string => {
   const record = incidents.find((i) => i.key === f.key && !i.resolvedAt);
   const age = record && record.occurrences > 1 ? ` <span class="dim">(poprvé ${shortAt(record.firstSeenAt)}, ${record.occurrences}×)</span>` : "";
