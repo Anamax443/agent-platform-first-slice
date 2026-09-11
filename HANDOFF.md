@@ -2,6 +2,33 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-11 (101) — MAJOR 1 živě ověřen: nový why text se vykresluje, žádné selhání nesouvisí s touto změnou
+
+**Návaznost na (100):** nasazeno na `farm-bass443` (`node scripts/farm-deploy.mjs farm-bass443`), `/version` potvrdil
+`gitSha: "b26d06a"`. Plný `POST /farm/self-test` spuštěn 2×, výsledek identický oba běhy (deterministický, ne
+flaky) — nové `why` texty potvrzeny přítomné v renderovaném HTML (`ClockFixture`, jazyková neutralita CZ/EN,
+`RES-STOR-001`, `WF-UNK-001`, tenant-scoped allowlist text a další, každý nalezen).
+
+**Selhání v self-testu prošetřena jednotlivě, žádné nesouvisí s touto změnou (pure content, jen why/onFailure
+pole):**
+- `document.stamp/canonical-invoice-stamp` (`dmsRef` mismatch) a `canonical-default-stamptext` (timestamp
+  mismatch) — přesně ten **dřív zdokumentovaný 12/14 baseline** (HANDOFF 95/96), golden hodnoty ze statického
+  fixture souboru vs. skutečně generované/real-time hodnoty na produkci, ne regrese.
+- `document.archive` (`canonical-archive`, `damaged-hash-mismatch`) a několik `email.send` fixtur
+  (`RESOURCE_TENANT_UNRESOLVED`/`payload: expected object, got undefined`) — **přesně ten dřív důkladně
+  vyšetřený a uzavřený nález z HANDOFF (55)–(60): "Subrequest depth limit exceeded"**, limitace `self-test.ts`'s
+  vlastního designu (jeden request se desítkami vnořených cross-Worker volání, `document.archive`/`email.send`
+  jsou poslední v `SUITES`, tedy nejblíž limitu). Potvrzeno vlastní diagnostikou (`wrangler tail` na
+  `apf-email-executor`, capability-scoped `?capability=email.send` self-test) — reálný `write-done status:
+  FAILED` bez schema/allowlist deny, konzistentní s dřívějším nálezem. Vlastníkem vědomě odloženo (přestavba
+  `self-test.ts` na menší dávky), netýká se produkčního workflow (`classify→validate→stamp` má jen 3 kroky,
+  hluboko pod limitem).
+- `document.classify/injection-approve` — fixture, co jsem v tomhle celku vůbec needitoval (why/onFailure měl
+  už z (97)) — sporadické FAILED nesouvisí s touto změnou; zapsáno jako vedlejší pozorování k prošetření
+  samostatně, ne řešeno tady.
+
+**Žádný nový/jiný vzorec selhání oproti (100) — jen dřív zdokumentované/odložené jevy.**
+
 ## 2026-09-11 (100) — MAJOR 1 dokončeno: why/onFailure na zbylých 59 canonical/boundary/routing fixtures
 
 **Pokyn vlastníka:** "pokračujeme" — přes `AskUserQuestion` zvolen zbytek MAJOR 1 (ne MAJOR 6, co je jen design
