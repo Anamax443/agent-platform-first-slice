@@ -262,3 +262,24 @@ Pořadí `SEVERKA.md` `## Pořadí` beze změny (nezapsán `DRY_RUN` gate ani z�
 write, dokud to vlastník nerozhodne). Skóre tabulka je čtenářova, ne nezávisle přepočítaná zdejším
 posudkem — na rozdíl od P0-1/P0-2 se jednotlivé číselné hodnoty (9.3/9.5/6.5/...) neověřovaly proti
 kódu bod po bodu.
+
+## Posudek 9 — externí oponentura nad Argos acknowledge mechanismem po (104)–(106) (11. 9. 2026)
+
+**Zdroj:** externí čtenář, reakce na `a4b16cf` (HANDOFF 106, banner INCIDENT → HEALTHY). Skóre podle
+čtenáře: Farmář+Argos celkově **8.8/10** (Farmář 9.2, Argos detection 9.0, incident management 8.7,
+alerting 8.5, dead-man/self-monitoring 8.2, security telemetry 8.0, detail kontrol 7.5, Admission
+fail-closed 9.5). Hlavní teze: `HEALTHY` dnes znamená "Argos podle svých pravidel nevidí žádný
+neakceptovaný problém", ne "farma je bez závad" — rozdíl, co má zůstat viditelný, ne se ztratit za
+zelenou barvou.
+
+**4 body, ověřeny v kódu před zápisem dispozice:**
+
+| # | Bod posudku | Dispozice | Poznámka |
+|---|---|---|---|
+| 1 | Riziko, že se `HEALTHY` dá "dosáhnout" jen acknowledgementem bez rozlišení od skutečně nulového dluhu — navrhuje vždy zobrazovat "0 aktivních / N známé" | **O, už takhle funguje** | `watchdogBanner()` (`page.ts`) ukazuje `stateBadge(level)` VŽDY spolu s `<span class="meta">` textem "N otevřené nálezy, M potvrzeno jako známé" ve stejném řádku — banner nikdy neukazuje holé "HEALTHY" bez rozpisu. Čtenář posuzoval z HANDOFF textu, ne z živého renderu; zamítnuto jako už vyřešené, ne jako špatný nápad |
+| 2 | Self-test má jen jednu osu PASS/FAIL — injection nález je bezpečnostně v pořádku, kvalitativně špatně, a to se dnes neumí rozlišit strukturovaně (jen ručně v HANDOFF textu) | **PÚ, reálná mezera** | `SelfTestRow` (`page.ts:1119`) má jediné `ok: boolean` — `kind: "injection"` samo o sobě neříká, jestli šlo o průlom hranice, nebo jen o zmatenou-ale-bezpečnou odpověď (přesně (106)'s případ). Přijato jako budoucí rozšíření (golden by nesl dvě očekávání, ne jedno) — dnešní rozsah je jen "vysvětlit v textu", ne strukturovaně rozlišit; vlastník rozhodne, kdy na to dojde |
+| 3 | `why`/`onFailure` v `SelfTestRow` jsou `?` (optional) — navrhuje povinná pole (`why`/`expected`/`failureImpact`/`onFailure`/`category`/`severity`) vynucená schématem | **PÚ, částečně** | `why?`/`onFailure?` jsou skutečně optional (`page.ts:1124-1129`, komentář to přiznává: "not every one earns it") — po (100) je ale fakticky **82/82 fixtures pokrytých**, takže mezera dnes neexistuje v datech, jen v typu (nová fixture by mohla proklouznout bez why/onFailure a nic by to nechytilo). `category`/`severity`/`expected`/`failureImpact` jako NOVÁ pole nad rámec dnešního `kind`/`why`/`onFailure` — širší návrh, netříděno dnes, jen zapsáno jako kandidát |
+| 4 | Argos heartbeat je jen `selfTestAt` — nerozlišuje "cron neběží" od "cron běží, self-test/reconcile uvnitř padá" — navrhuje `lastWatchdogTickAt`/`lastSelfTestAt`/`lastIncidentReconcileAt`/`lastAlertAttemptAt` | **PÚ, částečná mezera** | `lastAlertAttemptAt` už fakticky existuje (`ArgosAlertHealth.lastAttemptAt`, HANDOFF 92). Chybí: samostatný `lastWatchdogTickAt` nezávislý na tom, jestli self-test uvnitř tiku uspěl — dnes `scheduled()` aktualizuje `selfTestAt` jen když self-test krok doběhne, takže "cron žije, self-test uvnitř padá" a "cron vůbec neběží" vypadají dnes stejně (oba = stárnoucí `selfTestAt`). Reálné zjemnění diagnostiky, ne kosmetika |
+
+**Co posudek nezměnil:** žádný kód dnes — čeká na vlastníkovo rozhodnutí, který z bodů 2–4 (pokud
+vůbec) je další krok, stejně jako Posudek 8's P0-1/P0-2.

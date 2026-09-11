@@ -2,6 +2,28 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-11 (107) — Posudek 9 zapsán a ověřen: HEALTHY badge už rozpis nese, 3 reálné mezery na výběr
+
+**Kontext:** vlastník poslal externí oponenturu nad `a4b16cf` (106) — teze "HEALTHY znamená jen že Argos
+podle svých pravidel nevidí neakceptovaný problém, ne že farma je bez závad", 4 konkrétní body. Všechny
+ověřeny v kódu před zápisem dispozice (Posudek 7/8 disciplína).
+
+**Bod 1 zamítnut jako už vyřešený:** `watchdogBanner()` vždycky ukazuje badge (HEALTHY/DEGRADED/INCIDENT)
+spolu s textem "N otevřené nálezy, M potvrzeno jako známé" ve stejném řádku — nikdy holé zelené
+"HEALTHY" bez rozpisu. Čtenář posuzoval z HANDOFF popisu, ne živého renderu.
+
+**3 reálné mezery přijaté (s úpravou), čekají na vlastníkovo rozhodnutí kdy:**
+- **Bod 2:** self-test má jen `ok: boolean` — bezpečnostní PASS + kvalitativní FAIL (přesně (106)'s
+  injection-approve) se dnes rozlišuje jen ručně v HANDOFF textu, ne strukturovaně.
+- **Bod 3:** `why`/`onFailure` v `SelfTestRow` zůstávají `?` (optional) v typu, i když po (100) jsou
+  fakticky 82/82 fixtures pokrytá — nová budoucí fixture by mohla proklouznout bez nich, nic by to
+  nechytilo.
+- **Bod 4:** heartbeat je jen `selfTestAt` — nerozlišuje "cron neběží" od "cron běží, self-test uvnitř
+  padá". `lastAlertAttemptAt` už fakticky existuje (`ArgosAlertHealth`), chybí samostatný
+  `lastWatchdogTickAt`.
+
+Zapsáno jako `docs/POSUDKY.md` Posudek 9. Žádný kód dnes.
+
 ## 2026-09-11 (106) — Argos banner na HEALTHY: 6 osiřelých instancí smazáno, injection-approve vysvětlen a potvrzen
 
 **Pokyn vlastníka:** "dořeš to" — zbylé dva otevřené nálezy z (105) (`ohrada-backlog`, `document.classify`
