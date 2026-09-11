@@ -2,6 +2,22 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-11 (100) — MAJOR 1 dokončeno: why/onFailure na zbylých 59 canonical/boundary/routing fixtures
+
+**Pokyn vlastníka:** "pokračujeme" — přes `AskUserQuestion` zvolen zbytek MAJOR 1 (ne MAJOR 6, co je jen design
+bez reálné třetí-stranové COW k čemu se vztahovat).
+
+**Rozsah:** všech zbylých 59 fixtures (z 82 celkem, 23 mělo why/onFailure už z (97)) napříč všemi 6
+capabilities — `document.archive` (3), `document.classify` (12), `document.stamp` (12), `document.validate`
+(13), `email.send` (10), `mail.ingest` (9). Na rozdíl od (97)'s bezpečnostní podmnožiny jde o `canonical`/
+`boundary`/routing-config `error` fixtures — nikdy netestují bezpečnostní hranici, jen funkční správnost
+(happy path, jazyková neutralita CZ/EN, unicode/prázdný vstup, DEPENDENCY_UNAVAILABLE vs. business chyba,
+WF-UNK-001 nejednoznačný výsledek adaptéru atd.), takže `onFailure` text u nich cíleně **ne**používá SEV1/
+karanténa jazyk (na rozdíl od (97)'s security podmnožiny) — jde o "co prověřit", ne o incident.
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare`), **298/298 testů** (beze změny — čistě obsah fixture
+dat), `arch`, `farm:check`.
+
 ## 2026-09-11 (99) — Checkpoint: druhá oponentura z většiny vyřízená, `git status` čistý
 
 Shrnutí dneška (82–98): první externí oponentura (15 bodů) dokončena → druhá oponentura nad `fd3f048`

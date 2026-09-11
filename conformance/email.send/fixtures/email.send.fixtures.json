@@ -3,6 +3,8 @@
     "id": "canonical-stamped",
     "kind": "canonical",
     "description": "A validated, stamped invoice notifies the ops mailbox with the 'stamped' template.",
+    "why": "Validovaná orazítkovaná faktura musí spustit notifikaci na ops mailbox se šablonou \"stamped\" — základní šťastná cesta celého e-mailového oznamování.",
+    "onFailure": "Notifikace o orazítkovaném dokumentu se neodeslala nebo použila špatnou šablonu — prověřit napojení email.send na výstup document.stamp.",
     "artifact": { "tenantId": "tenant-42", "bytes": "FAKTURA č. 2026-0142\n--- VALIDATED INVOICE ---" },
     "payload": { "recipientRef": "ops-mailbox", "templateId": "document-stamped", "params": { "documentType": "INVOICE", "artifactId": "$artifactId" } }
   },
@@ -10,6 +12,8 @@
     "id": "canonical-rejected-template",
     "kind": "canonical",
     "description": "OTHER document uses the 'rejected' template instead of 'stamped' — template choice follows the classification outcome.",
+    "why": "Dokument klasifikovaný jako OTHER musí použít šablonu \"rejected\" místo \"stamped\" — volba šablony musí sledovat skutečný výsledek klasifikace, ne být natvrdo jedna pro všechno.",
+    "onFailure": "OTHER dokument spustil \"stamped\" šablonu (nebo naopak) — prověřit mapování documentType → template v email.send.",
     "artifact": { "tenantId": "tenant-42", "bytes": "Newsletter" },
     "payload": { "recipientRef": "ops-mailbox", "templateId": "document-rejected", "params": { "documentType": "OTHER", "artifactId": "$artifactId" } }
   },
@@ -17,6 +21,8 @@
     "id": "canonical-supervisor",
     "kind": "canonical",
     "description": "Sent to the supervisor mailbox instead of ops — a second allowlisted recipient for the same tenant.",
+    "why": "Druhá povolená destinace (supervisor mailbox) pro stejného tenanta musí fungovat stejně spolehlivě jako ops — allowlist není jen jednopoložkový seznam.",
+    "onFailure": "Odeslání na supervisor-mailbox selhává, zatímco ops-mailbox funguje — prověřit, jestli allowlist skutečně obsahuje víc než jednu položku na tenanta.",
     "artifact": { "tenantId": "tenant-42", "bytes": "SMLOUVA\n--- VALIDATED CONTRACT ---" },
     "payload": { "recipientRef": "supervisor-mailbox", "templateId": "document-stamped", "params": { "documentType": "CONTRACT", "artifactId": "$artifactId" } }
   },
@@ -24,6 +30,8 @@
     "id": "canonical-contract",
     "kind": "canonical",
     "description": "Same as canonical-stamped, for a CONTRACT.",
+    "why": "Stejná šťastná cesta jako canonical-stamped, pro CONTRACT — šablona \"stamped\" musí fungovat nezávisle na konkrétním typu dokumentu.",
+    "onFailure": "CONTRACT notifikace selhává tam, kde INVOICE funguje — prověřit, jestli je šablonování skutečně nezávislé na documentType.",
     "artifact": { "tenantId": "tenant-42", "bytes": "AGREEMENT\n--- VALIDATED CONTRACT ---" },
     "payload": { "recipientRef": "ops-mailbox", "templateId": "document-stamped", "params": { "documentType": "CONTRACT", "artifactId": "$artifactId" } }
   },
@@ -31,6 +39,8 @@
     "id": "canonical-tenant7",
     "kind": "canonical",
     "description": "Second tenant with its own allowlist entry for the same reference.",
+    "why": "Druhý tenant má vlastní allowlist položku pro stejnou referenci (ops-mailbox) — allowlist musí být tenant-scoped, ne globální sdílený seznam.",
+    "onFailure": "tenant-7 posílá na jinou skutečnou adresu, než má nakonfigurovanou, nebo sdílí allowlist s tenant-42 — prověřit tenant-scoping allowlistu.",
     "actor": "svc-orchestrator-t7",
     "artifact": { "tenantId": "tenant-7", "bytes": "INVOICE No. 7\n--- VALIDATED INVOICE ---" },
     "payload": { "recipientRef": "ops-mailbox", "templateId": "document-stamped", "params": { "documentType": "INVOICE", "artifactId": "$artifactId" } }
@@ -57,6 +67,8 @@
     "id": "boundary-supervisor-tenant7",
     "kind": "boundary",
     "description": "The allowlist is per tenant: tenant-7 has no supervisor mailbox.",
+    "why": "Allowlist je per tenant — tenant-7 nemá supervisor-mailbox nakonfigurovanou, takže tenhle požadavek musí být odmítnutý, i když stejná reference funguje pro tenant-42.",
+    "onFailure": "tenant-7 dostal e-mail na supervisor-mailbox, i když ji v konfiguraci nemá — vážná chyba tenant-scopingu allowlistu, prověřit okamžitě.",
     "actor": "svc-orchestrator-t7",
     "artifact": { "tenantId": "tenant-7", "bytes": "x" },
     "payload": { "recipientRef": "supervisor-mailbox", "templateId": "document-stamped", "params": { "documentType": "INVOICE", "artifactId": "$artifactId" } }
@@ -65,6 +77,8 @@
     "id": "error-artifact-missing",
     "kind": "error",
     "description": "artifactId points at nothing that was ever stored.",
+    "why": "Stejná kontrola jako u ostatních capabilit — odkaz na neuložený artefakt v params musí vrátit čitelnou chybu.",
+    "onFailure": "Chybějící artefakt nezastavil odeslání e-mailu — prověřit \"artifact not found\" ošetření v email.send.",
     "payload": { "recipientRef": "ops-mailbox", "templateId": "document-stamped", "params": { "documentType": "INVOICE", "artifactId": "art-missing" } }
   },
   {
@@ -80,6 +94,8 @@
     "id": "error-expired",
     "kind": "error",
     "description": "notValidAfter already passed by more than the tolerance.",
+    "why": "Požadavek starší než povolená tolerance nesmí spustit odeslání — chrání proti opožděným/duplicitním notifikacím ze zpožděné fronty.",
+    "onFailure": "Expirovaný požadavek přesto odeslal e-mail — prověřit deadline kontrolu, riziko duplicitních notifikací ze zpožděného zpracování.",
     "deadlineMs": -60000,
     "artifact": { "tenantId": "tenant-42", "bytes": "x" },
     "payload": { "recipientRef": "ops-mailbox", "templateId": "document-stamped", "params": { "documentType": "INVOICE", "artifactId": "$artifactId" } }
@@ -108,6 +124,8 @@
     "id": "error-smtp-reject",
     "kind": "error",
     "description": "SMTP adapter forced to reject — a genuine send failure, not a plumbing timeout.",
+    "why": "SMTP adaptér ve stavu skutečného odmítnutí musí vrátit send failure, ne se tvářit jako úspěch — operátor musí vědět, že e-mail fakticky neodešel.",
+    "onFailure": "Odmítnutí SMTP se ukázalo jako úspěšné odeslání (nebo naopak) — prověřit mapování SMTP chybových stavů, riziko tichého neodeslání důležité notifikace.",
     "adapters": { "smtp": "reject" },
     "artifact": { "tenantId": "tenant-42", "bytes": "x" },
     "payload": { "recipientRef": "ops-mailbox", "templateId": "document-stamped", "params": { "documentType": "INVOICE", "artifactId": "$artifactId" } }
@@ -116,6 +134,8 @@
     "id": "error-unknown-outcome",
     "kind": "error",
     "description": "SMTP adapter's outcome is permanently ambiguous — never SUCCEEDED, never FAILED.",
+    "why": "Trvale nejednoznačný výsledek SMTP adaptéru nesmí být tiše interpretovaný jako SUCCEEDED ani FAILED — stejná třída problému jako document.stamp/error-unknown-outcome, tady na e-mailové cestě.",
+    "onFailure": "Nejednoznačný výsledek odeslání se zapsal jako definitivní — riziko tiše ztracené nebo duplicitně odeslané notifikace, prověřit reconciliation mechanismus pro email.send.",
     "adapters": { "smtp": "unknown-always" },
     "artifact": { "tenantId": "tenant-42", "bytes": "x" },
     "payload": { "recipientRef": "ops-mailbox", "templateId": "document-stamped", "params": { "documentType": "INVOICE", "artifactId": "$artifactId" } }

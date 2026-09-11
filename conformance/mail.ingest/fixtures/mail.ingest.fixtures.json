@@ -3,36 +3,48 @@
     "id": "canonical-invoice-mail",
     "kind": "canonical",
     "description": "Raw mail with headers and an invoice body. The whole thing becomes one immutable original.",
+    "why": "Základní vstupní bod celé farmy — surový e-mail s hlavičkami a fakturou v těle se musí stát jedním neměnným originálem, na kterém stojí všechno downstream zpracování.",
+    "onFailure": "Ingest faktury z e-mailu selhal nebo poškodil obsah — prověřit celou vstupní cestu dřív, než se řeší cokoliv navazujícího (classify/stamp/archive).",
     "payload": { "rawMail": "From: Ucto <ucto@dodavatel.example>\nSubject: Faktura 2026-0142\n\nFAKTURA č. 2026-0142\nDodavatel: Maxferit s.r.o., IČO 12345678\nIBAN: CZ65 0800 0000 1920 0014 5399", "receivedFrom": "smtp:relay.example" }
   },
   {
     "id": "canonical-contract-mail",
     "kind": "canonical",
     "description": "Raw mail whose body is a contract, not an invoice — same ingest path, different downstream classification.",
+    "why": "Stejná ingest cesta, jiný obsah těla (smlouva místo faktury) — mail.ingest nerozlišuje obsah, jen ho uloží; downstream klasifikace je jiná vrstva.",
+    "onFailure": "Ingest se chová jinak podle obsahu těla e-mailu — mail.ingest by neměl obsah vůbec interpretovat, prověřit, jestli se tam nevloudila nějaká závislost na typu dokumentu.",
     "payload": { "rawMail": "From: pravni@partner.example\nSubject: Smlouva o dílo k podpisu\n\nSMLOUVA O DÍLO\nSmluvní strany: Objednatel Faxxar s.r.o. a Zhotovitel Maxferit s.r.o.", "receivedFrom": "smtp:relay.example" }
   },
   {
     "id": "canonical-plain-mail",
     "kind": "canonical",
     "description": "Plain conversational mail with no document markers at all.",
+    "why": "Obyčejný konverzační e-mail bez jakýchkoliv znaků dokumentu musí projít ingestem stejně jako faktura — ingest neposuzuje, jestli je obsah \"užitečný\", jen ho ukládá.",
+    "onFailure": "Obyčejný e-mail byl odmítnutý nebo zpracovaný jinak — prověřit, jestli ingest někde předpokládá přítomnost dokumentu.",
     "payload": { "rawMail": "From: jan.novak@example.org\nSubject: Zápis ze schůzky\n\nAhoj, posílám zápis ze schůzky. Díky, Jan", "receivedFrom": "smtp:relay.example" }
   },
   {
     "id": "canonical-bare-address",
     "kind": "canonical",
     "description": "No Subject header, sender address only — ingest must not require a subject to exist.",
+    "why": "Chybějící Subject hlavička je běžný, ne poškozený vstup (spousta e-mailů nemá předmět) — ingest ji nesmí vyžadovat jako povinnou.",
+    "onFailure": "E-mail bez Subject byl odmítnutý — prověřit, jestli parsing hlaviček nevyžaduje Subject jako povinné pole.",
     "payload": { "rawMail": "From: jan.novak@example.org\n\nBez předmětu.", "receivedFrom": "imap:mailbox-ops" }
   },
   {
     "id": "canonical-unicode-subject",
     "kind": "canonical",
     "description": "Unicode/emoji in the Subject header.",
+    "why": "Unicode/emoji v Subject hlavičce je reálný vstup (české firmy, emotikony v předmětu) — ingest ho nesmí poškodit při parsování hlaviček.",
+    "onFailure": "Unicode v Subject poškodilo parsing nebo uložený originál — prověřit encoding hlaviček na vstupní cestě.",
     "payload": { "rawMail": "From: Účtárna <uctarna@firma.cz>\nSubject: Smlouva – dodatek č. 3 🧾\n\nDobrý den, v příloze dodatek.", "receivedFrom": "smtp:relay.example" }
   },
   {
     "id": "damaged-no-from",
     "kind": "damaged",
     "description": "Missing From header — malformed mail must still ingest without crashing.",
+    "why": "Chybějící From hlavička je poškozený, ale realistický vstup (špatně nakonfigurovaný odesílatel/relay) — ingest musí i tak uložit originál, ne spadnout.",
+    "onFailure": "Chybějící From hlavička shodila ingest — prověřit, jestli parsing hlaviček předpokládá povinnou přítomnost From.",
     "payload": { "rawMail": "Subject: Faktura\n\nFAKTURA č. 1", "receivedFrom": "smtp:relay.example" }
   },
   {
@@ -55,6 +67,8 @@
     "id": "boundary-empty-body",
     "kind": "boundary",
     "description": "Mail with a Subject but an empty body.",
+    "why": "E-mail s předmětem, ale prázdným tělem je nejmenší smysluplný vstup po canonical-bare-address — ingest ho musí zpracovat deterministicky, ne spadnout na nulové délce těla.",
+    "onFailure": "Prázdné tělo shodilo ingest nebo vytvořilo nekonzistentní originál — prověřit ošetření nulové délky těla.",
     "payload": { "rawMail": "From: a@b.cz\nSubject: prázdný\n", "receivedFrom": "smtp:relay.example" }
   },
   {
@@ -78,6 +92,8 @@
     "id": "error-expired",
     "kind": "error",
     "description": "notValidAfter already passed by more than the tolerance.",
+    "why": "Požadavek starší než povolená tolerance nesmí být přijatý jako čerstvý příchozí e-mail — chrání proti replay/zpožděnému doručení ze zpožděné fronty.",
+    "onFailure": "Expirovaný požadavek přesto vytvořil nový originál — prověřit deadline kontrolu na vstupu mail.ingest.",
     "deadlineMs": -60000,
     "payload": { "rawMail": "From: a@b.cz\n\nx", "receivedFrom": "smtp:relay.example" }
   },
@@ -85,6 +101,8 @@
     "id": "error-storage-full",
     "kind": "error",
     "description": "RES-STOR-001: the store cannot take the original; no false acceptance, retryable for backpressure.",
+    "why": "Úložiště, co nemá kapacitu na přijetí originálu, nesmí předstírat úspěch (RES-STOR-001) — volající musí dostat chybu, co jde bezpečně opakovat, ne tichou ztrátu dat.",
+    "onFailure": "Ingest nahlásil úspěch i přes plné úložiště — riziko tiché ztráty e-mailu, prověřit kontrolu kapacity před zápisem originálu.",
     "storage": { "capacityBytes": 16 },
     "payload": { "rawMail": "From: a@b.cz\nSubject: velký\n\nFAKTURA č. 2026-0142 a dlouhé tělo, které se do úložiště nevejde.", "receivedFrom": "smtp:relay.example" }
   }

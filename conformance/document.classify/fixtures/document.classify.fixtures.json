@@ -3,6 +3,8 @@
     "id": "canonical-invoice-cz",
     "kind": "canonical",
     "description": "Czech invoice with IBAN and VAT; the IBAN also feeds EVD-005 (must never appear in an error object).",
+    "why": "Hlavní produkční případ — česká faktura s IBAN a DPH musí projít celou klasifikační cestou a IBAN se nesmí nikdy objevit v chybovém objektu (EVD-005).",
+    "onFailure": "Klasifikace faktury selhala nebo IBAN unikl do chybové zprávy — prověřit LLM prompt/parsing a EVD-005 redakci chyb dřív, než se pustí zpátky do provozu.",
     "artifact": { "tenantId": "tenant-42", "bytes": "FAKTURA č. 2026-0142\nDodavatel: Maxferit s.r.o., IČO 12345678, DIČ CZ12345678\nVariabilní symbol: 20260142\nCelkem k úhradě: 12 100,00 Kč (DPH 21 %)\nIBAN: CZ65 0800 0000 1920 0014 5399" },
     "payload": { "artifactId": "$artifactId", "strategy": "llm" }
   },
@@ -10,6 +12,8 @@
     "id": "canonical-invoice-en",
     "kind": "canonical",
     "description": "English invoice, no Czech-specific markers — same canonical path as canonical-invoice-cz, different language.",
+    "why": "Stejná šťastná cesta jako canonical-invoice-cz, ale v angličtině — klasifikátor nesmí být tajně navázaný na české fráze/formát.",
+    "onFailure": "Anglická faktura klasifikovaná špatně, zatímco česká prochází — signál, že model/prompt je přeučený na český vzor, ne opravdu jazykově neutrální.",
     "artifact": { "tenantId": "tenant-42", "bytes": "INVOICE No. INV-2026-77\nBill to: Faxxar s.r.o.\nTotal due: EUR 480.00 incl. VAT\nDue date: 2026-10-06" },
     "payload": { "artifactId": "$artifactId", "strategy": "llm" }
   },
@@ -17,6 +21,8 @@
     "id": "canonical-contract-cz",
     "kind": "canonical",
     "description": "Czech service contract: no invoice numbers, VAT or IBAN — the classifier's CONTRACT path.",
+    "why": "Druhá hlavní kategorie dokumentu (CONTRACT) — smlouva bez fakturačních znaků (žádné číslo faktury, DPH, IBAN) musí spadnout do jiné větve klasifikace než faktura.",
+    "onFailure": "Smlouva se klasifikuje jako INVOICE nebo OTHER — prověřit rozlišovací signály CONTRACT v promptu/keyword strategii.",
     "artifact": { "tenantId": "tenant-42", "bytes": "SMLOUVA O DÍLO\nSmluvní strany: Objednatel Faxxar s.r.o. a Zhotovitel Maxferit s.r.o.\nPředmět: dodávka software" },
     "payload": { "artifactId": "$artifactId", "strategy": "llm" }
   },
@@ -24,6 +30,8 @@
     "id": "canonical-contract-en",
     "kind": "canonical",
     "description": "English service agreement — canonical CONTRACT path in a second language.",
+    "why": "CONTRACT větev ve druhém jazyce — stejná logika jako canonical-contract-cz, ověřuje jazykovou neutralitu i pro smlouvy.",
+    "onFailure": "Anglická smlouva klasifikovaná jinak než česká — stejné podezření jako u canonical-invoice-en, model není jazykově neutrální.",
     "artifact": { "tenantId": "tenant-42", "bytes": "SERVICE AGREEMENT\nThis agreement is made between Maxferit s.r.o. and Faxxar s.r.o.\nTerm: 12 months" },
     "payload": { "artifactId": "$artifactId", "strategy": "llm" }
   },
@@ -31,6 +39,8 @@
     "id": "canonical-other-newsletter",
     "kind": "canonical",
     "description": "No invoice or contract markers at all — classifies as OTHER, the fallback bucket.",
+    "why": "Fallback větev OTHER musí fungovat pro dokumenty bez jakýchkoliv fakturačních nebo smluvních znaků — bez ní by cokoliv neznámého skončilo jako chyba místo v definované kategorii.",
+    "onFailure": "Newsletter se klasifikuje jako INVOICE/CONTRACT místo OTHER — model vidí signály, co tam nejsou, prověřit prompt na falešně pozitivní shody.",
     "artifact": { "tenantId": "tenant-42", "bytes": "Newsletter září 2026\nNovinky z klubu, termíny tréninků a pozvánka na turnaj." },
     "payload": { "artifactId": "$artifactId", "strategy": "llm" }
   },
@@ -38,6 +48,8 @@
     "id": "canonical-keyword-strategy",
     "kind": "canonical",
     "description": "Second strategy of the same capability (quality retry path).",
+    "why": "Druhá klasifikační strategie (keyword, ne LLM) musí dojít ke stejnému výsledku na stejném dokumentu — je to quality-retry cesta, na kterou se systém spoléhá, když LLM strategie selže nebo má nízkou confidence.",
+    "onFailure": "Keyword strategie dává jiný výsledek než LLM na stejném vstupu — prověřit, jestli je to očekávaný rozdíl v přesnosti, nebo regrese v keyword pravidlech.",
     "artifact": { "tenantId": "tenant-42", "bytes": "FAKTURA č. 2026-0142\nDodavatel: Maxferit s.r.o., IČO 12345678, DIČ CZ12345678\nVariabilní symbol: 20260142\nCelkem k úhradě: 12 100,00 Kč (DPH 21 %)\nIBAN: CZ65 0800 0000 1920 0014 5399" },
     "payload": { "artifactId": "$artifactId", "strategy": "keyword" }
   },
@@ -45,6 +57,8 @@
     "id": "canonical-human-corrected",
     "kind": "canonical",
     "description": "Reviewer decided; no model runs, provenance says human.",
+    "why": "Když recenzent rozhodne ručně, žádný model neběží a provenience výsledku musí zůstat \"human\" — jinak by se ztratilo, že hodnota nepochází z AI.",
+    "onFailure": "Human-corrected výsledek se tváří jako výstup modelu (špatná provenience) — prověřit, kde se strategy/source pole ztrácí mezi vstupem a uloženým výsledkem.",
     "artifact": { "tenantId": "tenant-42", "bytes": "Newsletter září 2026\nNovinky z klubu, termíny tréninků a pozvánka na turnaj." },
     "payload": { "artifactId": "$artifactId", "strategy": "human-corrected", "documentType": "CONTRACT" }
   },
@@ -62,6 +76,8 @@
     "id": "damaged-unreadable",
     "kind": "damaged",
     "description": "Binary garbage instead of text — the classifier must fail gracefully, not guess a type from noise.",
+    "why": "Binární \"šum\" místo textu je reálný vstup (poškozený upload, špatný encoding) — klasifikátor ho musí odmítnout čitelnou chybou, ne uhodnout typ z náhodných bajtů.",
+    "onFailure": "Nečitelný obsah dostal klasifikaci místo chyby — model si \"vymyslel\" typ z šumu, prověřit vstupní validaci/encoding detekci před voláním modelu.",
     "artifact": { "tenantId": "tenant-42", "bytes": "PK ��� binary garbage �" },
     "payload": { "artifactId": "$artifactId", "strategy": "llm" }
   },
@@ -96,6 +112,8 @@
     "id": "boundary-empty",
     "kind": "boundary",
     "description": "Empty artifact bytes — the smallest possible input, nothing to classify.",
+    "why": "Prázdný artefakt je nejmenší možný vstup — capabilita ho musí zpracovat deterministicky (typicky OTHER nebo čitelná chyba), ne spadnout na nulové délce.",
+    "onFailure": "Prázdný vstup shodil capabilitu nebo vrátil nekonzistentní výsledek — prověřit ošetření nulové délky na začátku klasifikačního řetězce.",
     "artifact": { "tenantId": "tenant-42", "bytes": "" },
     "payload": { "artifactId": "$artifactId" }
   },
@@ -103,6 +121,8 @@
     "id": "boundary-unicode",
     "kind": "boundary",
     "description": "Emoji and Czech diacritics/currency signs in an otherwise normal invoice.",
+    "why": "Emoji a česká diakritika/měnové znaky jsou běžné v produkčních fakturách — capabilita nesmí selhat na kódování, co není čisté ASCII.",
+    "onFailure": "Klasifikace selhala nebo se poškodila na unicode vstupu — prověřit encoding na cestě mezi uložením artefaktu a voláním modelu.",
     "artifact": { "tenantId": "tenant-42", "bytes": "Faktura 🧾 — částka 1 000 Kč, DPH 21 %, splatnost 30 dní" },
     "payload": { "artifactId": "$artifactId", "strategy": "llm" }
   },
@@ -110,6 +130,8 @@
     "id": "error-artifact-missing",
     "kind": "error",
     "description": "artifactId points at nothing that was ever stored.",
+    "why": "Stejná kontrola jako document.archive/error-artifact-missing — odkaz na neuložený artefakt musí vrátit čitelnou chybu.",
+    "onFailure": "Chybějící artefakt prošel jako platný vstup — prověřit \"artifact not found\" ošetření v document.classify.",
     "payload": { "artifactId": "art-missing", "strategy": "llm" }
   },
   {
@@ -133,6 +155,8 @@
     "id": "error-correction-missing",
     "kind": "error",
     "description": "strategy human-corrected but no corrected value supplied — the reviewer's decision is mandatory, not optional.",
+    "why": "Strategie human-corrected bez skutečně dodané opravené hodnoty by tiše ponechala starý/neplatný výsledek — rozhodnutí recenzenta musí být povinné, ne volitelné, když se tahle strategie zvolí.",
+    "onFailure": "Chybějící correctedDocumentType prošlo bez chyby — prověřit povinnost pole u strategy=human-corrected, riziko že se do systému dostane nezkontrolovaná klasifikace.",
     "artifact": { "tenantId": "tenant-42", "bytes": "INVOICE No. 2" },
     "payload": { "artifactId": "$artifactId", "strategy": "human-corrected" }
   }

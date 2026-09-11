@@ -3,6 +3,8 @@
     "id": "canonical-archive",
     "kind": "canonical",
     "description": "A document already stamped, now archived — the last step of the happy path.",
+    "why": "Poslední krok šťastné cesty (stamp → archive) musí fungovat spolehlivě jako základ, na kterém stojí všechny ostatní kontroly — pokud tenhle běžný případ začne padat, nic jiného v conformance sadě nedává smysl.",
+    "onFailure": "Základní happy-path selhal — než se řeší cokoliv jiného, zkontrolovat, jestli nedošlo k regresi v samotném document.archive handleru nebo v DMS adaptéru, co archivaci provádí.",
     "artifact": { "tenantId": "tenant-42", "bytes": "FAKTURA č. 2026-0142 (stamped)" },
     "payload": { "artifactId": "$artifactId", "sha256": "$sha256" }
   },
@@ -10,6 +12,8 @@
     "id": "damaged-hash-mismatch",
     "kind": "damaged",
     "description": "Same tamper check as document.stamp/damaged-hash-mismatch, on the archive step.",
+    "why": "Stejná kontrola integrity artefaktu jako u document.stamp, ale na archivačním kroku — sha256 musí sedět i těsně před uložením do DMS, ne jen při razítkování.",
+    "onFailure": "Archivace přijala artefakt s neshodujícím se hashem — prověřit, jestli integrity check na archivačním kroku nevypadl při nedávné změně (stejná třída chyby jako document.stamp/damaged-hash-mismatch).",
     "artifact": { "tenantId": "tenant-42", "bytes": "INVOICE No. 30" },
     "payload": { "artifactId": "$artifactId", "sha256": "$sha256:tampered" }
   },
@@ -17,6 +21,8 @@
     "id": "error-artifact-missing",
     "kind": "error",
     "description": "artifactId points at nothing that was ever stored.",
+    "why": "Odkaz na neexistující artefakt je běžná chyba volajícího (zastaralé ID, překlep) — capabilita ji musí vrátit jako čitelnou chybu, ne spadnout nebo si vymyslet prázdný obsah.",
+    "onFailure": "Chybějící artefakt se zpracoval, jako by existoval, nebo capabilita spadla nečitelně — prověřit ošetření \"artifact not found\" cesty v document.archive.",
     "payload": { "artifactId": "art-missing", "sha256": "0000000000000000000000000000000000000000000000000000000000000000" }
   },
   {

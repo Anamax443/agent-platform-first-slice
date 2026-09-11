@@ -3,6 +3,8 @@
     "id": "canonical-invoice-stamp",
     "kind": "canonical",
     "description": "Straightforward INVOICE, already validated, explicit stampText.",
+    "why": "Základní šťastná cesta razítkování — validovaná faktura s explicitním stampText musí projít beze změny stampText a se správným typem dokumentu.",
+    "onFailure": "Razítkování validované faktury selhalo nebo změnilo zadaný stampText — prověřit executor dřív, než se řeší cokoliv složitějšího.",
     "artifact": { "tenantId": "tenant-42", "bytes": "FAKTURA č. 2026-0142\nIBAN: CZ65 0800 0000 1920 0014 5399" },
     "payload": {
       "artifactId": "$artifactId",
@@ -15,6 +17,8 @@
     "id": "canonical-contract-stamp",
     "kind": "canonical",
     "description": "Straightforward CONTRACT, already validated, explicit stampText.",
+    "why": "Stejná šťastná cesta jako canonical-invoice-stamp, pro CONTRACT — razítkování nesmí být tajně navázané jen na typ INVOICE.",
+    "onFailure": "Smlouva se razítkuje jinak nebo padá tam, kde faktura prochází — prověřit, jestli executor má nějakou skrytou větev jen pro INVOICE.",
     "artifact": { "tenantId": "tenant-42", "bytes": "SMLOUVA O DÍLO" },
     "payload": {
       "artifactId": "$artifactId",
@@ -27,6 +31,8 @@
     "id": "canonical-default-stamptext",
     "kind": "canonical",
     "description": "No stampText: the executor derives one from the type and its injected clock (deterministic under ClockFixture).",
+    "why": "Když volající nedodá stampText, executor ho musí odvodit sám z typu dokumentu a injektovaných hodin (ClockFixture) — deterministicky, ne nahodile.",
+    "onFailure": "Odvozený stampText se liší mezi opakovanými běhy stejné fixture — signál, že executor nepoužívá injektovaný clock, ale systémový čas nebo jiný nedeterministický zdroj.",
     "artifact": { "tenantId": "tenant-42", "bytes": "INVOICE No. 12" },
     "payload": {
       "artifactId": "$artifactId",
@@ -38,6 +44,8 @@
     "id": "canonical-human-corrected-type",
     "kind": "canonical",
     "description": "documentType came from a human reviewer (trustLevel human-corrected), not the model — stamp accepts it the same as a validated model value.",
+    "why": "documentType s trustLevel human-corrected musí executor přijmout stejně jako validovanou hodnotu od modelu — recenzentovo rozhodnutí je stejně důvěryhodné jako projitá validace.",
+    "onFailure": "Human-corrected typ je odmítnutý nebo zpracovaný jinak než validated — prověřit, jestli executor rozlišuje trustLevel správně, ne jen podle zdroje.",
     "artifact": { "tenantId": "tenant-42", "bytes": "Newsletter that a reviewer decided is an invoice" },
     "payload": {
       "artifactId": "$artifactId",
@@ -50,6 +58,8 @@
     "id": "canonical-unicode-bytes",
     "kind": "canonical",
     "description": "Emoji and Czech diacritics/currency in the artifact bytes — stamp must not choke on the encoding.",
+    "why": "Emoji a česká diakritika/měna v artefaktu nesmí rozbít razítkování — stejná třída ověření kódování jako document.classify/boundary-unicode, tady na write cestě.",
+    "onFailure": "Razítkování na unicode obsahu selhalo — prověřit encoding na write cestě (DMS adaptér, stampText skládání).",
     "artifact": { "tenantId": "tenant-42", "bytes": "Faktura 🧾 — částka 1 000 Kč, DPH 21 %" },
     "payload": {
       "artifactId": "$artifactId",
@@ -62,6 +72,8 @@
     "id": "damaged-hash-mismatch",
     "kind": "damaged",
     "description": "sha256 the caller claims doesn't match the stored artifact — stamp must refuse rather than stamp the wrong bytes.",
+    "why": "sha256, co volající tvrdí, musí sedět se skutečně uloženými bajty — jinak by se mohl orazítkovat úplně jiný dokument, než volající myslel.",
+    "onFailure": "Razítkování proběhlo i přes neshodující se hash — vážná chyba integrity na write cestě, prověřit okamžitě, jaký dokument se ve skutečnosti orazítkoval.",
     "artifact": { "tenantId": "tenant-42", "bytes": "INVOICE No. 13" },
     "payload": {
       "artifactId": "$artifactId",
@@ -73,6 +85,8 @@
     "id": "injection-stamptext",
     "kind": "injection",
     "description": "Free text in the only human-readable field: the executor accepts an allowlisted character set, not prose.",
+    "why": "stampText je jediné lidsky čitelné pole na celé write cestě — executor smí přijmout jen povolenou znakovou sadu, ne libovolný text/HTML/skripty, co by se mohly zobrazit jinde.",
+    "onFailure": "Neomezený text (včetně <script>) prošel do stampText — prověřit allowlist znaků, riziko XSS při zobrazení jinde v systému (např. na /farm nebo v DMS).",
     "artifact": { "tenantId": "tenant-42", "bytes": "INVOICE No. 14" },
     "payload": {
       "artifactId": "$artifactId",
@@ -85,6 +99,8 @@
     "id": "boundary-validation-failed",
     "kind": "boundary",
     "description": "documentType.validation.status is 'failed' — stamp must never write over a validation that didn't pass.",
+    "why": "Když validation.status je \"failed\", razítkování nesmí proběhnout za žádných okolností — psaní přes nevalidovaný/odmítnutý dokument by bylo horší než nic nedělat.",
+    "onFailure": "Dokument s neúspěšnou validací se přesto orazítkoval — vážná chyba, prověřit kontrolu validation.status na vstupu executoru okamžitě.",
     "artifact": { "tenantId": "tenant-42", "bytes": "INVOICE No. 15" },
     "payload": {
       "artifactId": "$artifactId",
@@ -96,6 +112,8 @@
     "id": "boundary-validation-wrong-provider",
     "kind": "boundary",
     "description": "Evidence must come from the validator, not from the AI component that produced the value.",
+    "why": "Důkaz o validaci musí pocházet ze skutečného validátoru (document-validator), ne z AI komponenty, co hodnotu jen vyprodukovala — jinak by si model mohl sám \"potvrdit\" vlastní výstup.",
+    "onFailure": "Executor přijal validaci od nesprávného providera — model by mohl obejít skutečnou validaci tím, že si vygeneruje falešné potvrzení, prověřit kontrolu provider pole.",
     "artifact": { "tenantId": "tenant-42", "bytes": "INVOICE No. 16" },
     "payload": {
       "artifactId": "$artifactId",
@@ -107,6 +125,8 @@
     "id": "error-artifact-missing",
     "kind": "error",
     "description": "artifactId points at nothing that was ever stored.",
+    "why": "Stejná kontrola jako u ostatních capabilit — odkaz na neuložený artefakt musí vrátit čitelnou chybu, ne spadnout.",
+    "onFailure": "Chybějící artefakt prošel na write cestě — vážnější než na read cestě (riziko zápisu k neexistujícímu obsahu), prověřit okamžitě.",
     "payload": {
       "artifactId": "art-missing",
       "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -126,6 +146,8 @@
     "id": "error-expired",
     "kind": "error",
     "description": "notValidAfter already passed by more than the 30 s tolerance (IDM-DEADLINE-001).",
+    "why": "Požadavek starší než povolená tolerance (30 s, IDM-DEADLINE-001) nesmí být zpracovaný jako čerstvý — chrání proti replay/zpožděným duplicitním zápisům.",
+    "onFailure": "Expirovaný požadavek prošel a razítkoval dokument — prověřit deadline kontrolu na vstupu executoru, riziko duplicitního/opožděného zápisu.",
     "deadlineMs": -60000,
     "artifact": { "tenantId": "tenant-42", "bytes": "INVOICE No. 18" },
     "payload": {
@@ -180,6 +202,8 @@
     "id": "error-unknown-outcome",
     "kind": "error",
     "description": "The DMS may or may not have written: never SUCCEEDED, never FAILED, a reconciliation reference instead (WF-UNK-001).",
+    "why": "DMS adaptér, co nevrátí ani úspěch ani selhání, nesmí být tiše interpretovaný jako jedno nebo druhé — write cesta musí umět reprezentovat \"nevíme\", ne si to vymyslet (WF-UNK-001).",
+    "onFailure": "Nejednoznačný výsledek DMS se zapsal jako SUCCEEDED nebo FAILED — riziko tichého ztracení nebo duplicitního zápisu dokumentu, prověřit reconciliation mechanismus.",
     "adapters": { "dms": "unknown-always" },
     "artifact": { "tenantId": "tenant-42", "bytes": "INVOICE No. 22" },
     "payload": {
