@@ -7,7 +7,10 @@
   "apf-gateway": {
     "routes": [{ "pattern": "apf.maxferit.cz", "custom_domain": true }],
     "d1_databases": [{ "binding": "AUDIT", "database_name": "apf-audit", "database_id": "ee8b714e-1574-406a-99ce-f5c0bb83055d" }],
-    "vars": { "STAMP_FONT_URL": "https://fonts.gstatic.com/s/roboto/v51/KFOMCnqEu92Fr1ME7kSn66aGLdTylUAMQXC89YmC2DPNWuYjammT.ttf" }
+    "vars": {
+      "STAMP_FONT_URL": "https://fonts.gstatic.com/s/roboto/v51/KFOMCnqEu92Fr1ME7kSn66aGLdTylUAMQXC89YmC2DPNWuYjammT.ttf",
+      "ARGOS_ALERT_MODE": "live"
+    }
   },
   "apf-email-executor": {
     "vars": { "EMAIL_FROM": "apf-notify@maxferit.cz", "EMAIL_FROM_NAME": "agent-platform-farm" }
