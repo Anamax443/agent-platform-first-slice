@@ -2,6 +2,28 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-11 (96) — MAJOR 7 živě ověřen: legitimní cesta i pokus o zfalšování, oba přesně podle návrhu
+
+**Návaznost na (95):** nasazeno (`gitSha d0cc252`), obě strany zvlášť ověřené na produkci, ne jen typecheck.
+
+**1) Legitimní cesta nezasažena:** `POST /farm/self-test?capability=document.stamp` — reálný relay z
+`apf-document-host` do `/audit` — proběhl beze změny, `12/14` (stejné historické základní číslo jako dřív).
+Nová kontrola tenantId nezasáhla ostrý provoz.
+
+**2) Skutečný pokus o zfalšování, ne simulace:** nalezen reálný běžící workflow (`wf-mtrphdch00g36d483`,
+ověřený reálný tenant `tenant-42` přes `/workflow/<id>`), pak přímý `POST https://apf.maxferit.cz/audit` s
+`tenantId: "tenant-7"` (jiný, taky reálný tenant instalace, ale špatný pro tenhle konkrétní workflow).
+Výsledek přesně podle návrhu:
+- HTTP **403** `{"error":"TENANT_MISMATCH", ...}`
+- `/audit.json` obsahuje nový `kind:"security"` záznam: `tenantId` je **serverem odvozené** `tenant-42`
+  (pravda), `details.claimedTenantId: "tenant-7"` (co útočník tvrdil) — přesně jak návrh počítal.
+- `/farm` watchdog banner ukázal nový nález: "pokus o /audit záznam s cizím tenantId za posledních 24 h —
+  možná kompromitovaná nebo vadná COW". Celý okruh uzavřený: pokus → odmítnuto → zalogováno → Argos to
+  našel → (při `ARGOS_ALERT_MODE=live`) poslal e-mail.
+
+**Oponentura (91–96) dokončená z MAJOR bodů 2/3/4/5/7 — všechny živě ověřené na produkci, ne jen testy.
+Zbývá:** MAJOR 1 (povinné why/onFailure) a MAJOR 6 (risk-based cadence).
+
 ## 2026-09-11 (95) — Trusted telemetry, první krok: /audit odmítne cizí tenantId (MAJOR 7)
 
 **Pokyn vlastníka:** "pokračuj" — MAJOR 7 z druhé oponentury, vybráno přes `AskUserQuestion` jako nejdůležitější
