@@ -2,6 +2,17 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-11 (98) — MAJOR 1 živě ověřen: nový why/onFailure text se opravdu zobrazuje
+
+**Návaznost na (97):** nasazeno (`gitSha 27e29b6`), plný `POST /farm/self-test` napříč všemi 6 kapabilitami.
+Nový text se skutečně dostal do vykresleného HTML, ne jen do fixture souborů: "Confused deputy" (4×, cross-tenant
+fixtures), "AI výstup nikdy není příkaz" (3×, AI-scope fixtures), "SEV1" přítomno. HTTP 200, žádná nová chyba.
+
+**Z 15 bodů druhé oponentury (91–98) hotovo 6 z 7 MAJOR bodů (2/3/4/5/7) plná implementace + MAJOR 1
+bezpečnostní podmnožina (19/~69 fixtures) — všechno živě ověřené na produkci. Zbývá:** MAJOR 6 (risk-based
+cadence, design pro budoucí COW) a zbylých ~50 canonical/boundary/routing fixtures z MAJOR 1 (nižší priorita,
+mechanismus na ně funguje beze změny).
+
 ## 2026-09-11 (97) — MAJOR 1, bezpečnostní podmnožina: why/onFailure na 19 fixtures napříč 6 kapabilitami
 
 **Pokyn vlastníka:** "pokračuj" — MAJOR 1 z druhé oponentury, přes `AskUserQuestion` zúženo na bezpečnostní
