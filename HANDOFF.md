@@ -2,6 +2,37 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-11 (87) — Argos alerting živě ověřený až do schránky, po jedné skutečné překážce
+
+**Návaznost na (86):** `ARGOS_ALERT_MODE=live` nasazeno, `POST /farm/test-alert` zavoláno — první pokus **selhal**
+(`wrangler tail`, ne jen HTTP status — endpoint sám vrací `{ok:true}` i když `sendArgosAlerts()` uvnitř hodí a
+chybu jen zaloguje, takže bez tailu by tohle vypadalo jako úspěch): `sendArgosAlerts failed: destination
+address is not a verified address`.
+
+**Příčina, ověřená přes Cloudflare API (zone/account bass443), ne odhad:** Email Routing pravidla na
+`maxferit.cz` jsou v pořádku (catch-all → `bass443@gmail.com`, ověřeno `GET .../email/routing/rules`) — ale
+Workers `send_email` binding vyžaduje **samostatně ověřenou cílovou adresu** na úrovni účtu
+(`GET .../email/routing/addresses`), nezávisle na routing pravidlech. Ověřené byly jen `bass443@gmail.com`,
+`maxla@seznam.cz`, `mtrnka@axima.cz` — `argos@maxferit.cz` mezi nimi nebyl.
+
+**Oprava (vlastník trval na `argos@maxferit.cz`, ne na přepnutí na už ověřenou adresu):** `POST
+/accounts/.../email/routing/addresses {"email":"argos@maxferit.cz"}` přes Cloudflare API — vytvoří
+"unverified" záznam a Cloudflare sama pošle ověřovací e-mail na tu adresu (ten prošel stejným catch-all
+pravidlem do `bass443@gmail.com`, vlastník ho tam našel a potvrdil odkazem). Po ověření (potvrzeno
+`GET .../addresses` — `"status":"verified"`) `POST /farm/test-alert` prošel čistě (žádný `(error)` v tailu).
+
+**Živě potvrzeno vlastníkem (screenshot Gmailu):** e-mail „🟡 Argos: 1 nový nález" od `Argos — agent-platform-farm
+<apf-notify@maxferit.cz>` do `argos` (přes forward), tělo přesně podle `composeIncidentAlert()` — `[WARN]
+Testovací zpráva z /farm/test-alert...`, podpis „— Argos, /farm". Celá cesta incident → e-mail je teď ověřená
+od konce do konce, ne jen po nasazení bez chyby.
+
+**Poučení pro příště (nová obecná past, ne specifická pro tenhle projekt):** Cloudflare Workers `send_email`
+binding potřebuje ověřenou destination address per e-mail adresu, ne jen funkční Email Routing na doméně —
+zjistit/ověřit při jakémkoli budoucím použití tohohle bindingu, ne předpokládat, že fungující routing stačí.
+`POST /farm/test-alert`'s `{ok:true}` i při vnitřní chybě (chyba jen zalogovaná, ne vrácená) je taky vědomě
+zapsaný dluh — pro jednorázové ruční ověření stačilo `wrangler tail`, pro cokoli trvalejšího by endpoint měl
+vrátit skutečný výsledek odeslání.
+
 ## 2026-09-11 (86) — Argos umí štěkat: e-mailový alerting postavený, zatím v sandboxu (ještě neposílá naostro)
 
 **Pokyn vlastníka:** "pokračuj" + rozhodnuto přes sérii otázek (`AskUserQuestion`, krok za krokem): kanál
