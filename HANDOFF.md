@@ -2,6 +2,29 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-11 (93) — Bezpečné auto-resolve: incident se nesmí "vyřešit" jen proto, že zmizela telemetrie (MAJOR 5)
+
+**Pokyn vlastníka:** "pokračuj" — MAJOR 5 z druhé oponentury, vybráno přes `AskUserQuestion` jako pokračování
+po heartbeatu/alert channel (92). Konkrétní díra, co oponentura našla a HANDOFF 91 ověřil proti kódu:
+`capabilitiesOf()` (index.ts) při jakékoli chybě vracelo `[]` — stejný tvar jako "opravdu nula kapabilit". Když
+`/capabilities` selže nezávisle na `/version`, kapability daného Workeru zmizí z `m.capabilities` úplně a
+`reconcileIncidents()` by jejich otevřený incident tiše "vyřešil", i když šlo jen o ztrátu telemetrie.
+
+**Oprava v `reconcileIncidents()`:** nový povinný parametr `knownCapabilities` (jména kapabilit, co tenhle běh
+skutečně měl k dispozici). Existující otevřený incident se `resolvedAt`-ne jen když jeho klíč byl "vyhodnotitelný"
+tenhle běh — pro `quarantined:`/`selftest-broken:`/`selftest-degraded:` klíče to znamená, že kapabilita byla
+v `knownCapabilities`; pro `worker:*`/`ohrada-backlog`/`selftest-stale`/`alert-channel` klíče je to vždycky
+pravda (jejich zdroje selhávají hlasitě — `buildFarmModel()` by spadl celý — ne tiše jako `capabilitiesOf()`).
+
+**`capabilitiesOf()` přepsáno** na `{ ok, capabilities }` místo holého pole — `ok: false` teď jde odlišit od
+"opravdu nic". `buildFarmModel()` z toho staví `capabilitiesUnavailableFrom: string[]` (jména Workerů, co
+selhaly), `computeWatchdog()` z toho generuje vlastní `capabilities-unavailable:<worker>` WARN nález — díra
+teď není jen tiše ošetřená, ale i viditelná na `/farm`.
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare`), **291/291 testů** (9 nových: 3 pro nový scope
+parametr `reconcileIncidents()`, 1 pro `capabilities-unavailable` nález, plus úprava 5 existujících volání),
+`arch`, `farm:check`.
+
 ## 2026-09-11 (92) — Argos hlídá sám sebe: heartbeat + zdraví alert kanálu (druhá oponentura MAJOR 2+3)
 
 **Pokyn vlastníka:** "pokračuj" — vybráno přes `AskUserQuestion` jako první ze 3 nabízených bodů (91). Motivace

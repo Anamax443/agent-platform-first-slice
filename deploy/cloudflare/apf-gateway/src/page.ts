@@ -139,6 +139,10 @@ export interface FarmModel {
    * send and its outcome, so a broken alert channel becomes a watchdog finding instead of a silently swallowed
    * console.error. Absent = no send has ever been attempted yet on this installation. */
   alertHealth?: ArgosAlertHealth;
+  /** Worker names whose /capabilities fetch failed this run (HANDOFF 93, MAJOR 5 of the second external
+   * review) — distinguishes "capabilitiesOf() found zero" from "capabilitiesOf() couldn't ask", so a
+   * capability that silently drops out of `capabilities` this run is visibly explained, not just missing. */
+  capabilitiesUnavailableFrom?: string[];
 }
 
 export interface InstanceView {
@@ -383,6 +387,13 @@ export function computeWatchdog(m: FarmModel): WatchdogSnapshot {
     }
   }
 
+  // MAJOR 5 (HANDOFF 93): makes a failed capabilitiesOf() fetch visible instead of just an absence — the
+  // capabilities that worker serves are missing from m.capabilities this run too, but their existing incidents
+  // (if any) stay open rather than silently resolving, since reconcileIncidents() checks this same set.
+  for (const worker of m.capabilitiesUnavailableFrom ?? []) {
+    findings.push({ key: `capabilities-unavailable:${worker}`, level: "WARN", text: `${worker}: /capabilities se nepodařilo přečíst — jeho kapability chybí v tomhle přehledu, ne že by zmizely` });
+  }
+
   if (!m.selfTestAt) {
     findings.push({ key: "selftest-stale", level: "WARN", text: "self-test nikdy neproběhl na téhle farmě — Argos nemá žádný živý důkaz, že kapability doopravdy fungují" });
   } else if (Date.parse(m.now) - Date.parse(m.selfTestAt) > WATCHDOG_HEARTBEAT_STALE_MS) {
@@ -443,15 +454,25 @@ export interface ArgosAlertHealth {
   lastFailureReason?: string;
 }
 
+/** Key prefixes computeWatchdog() only ever emits for a capability actually present in that run's m.capabilities
+ * — the ones at risk of the MAJOR 5 bug (second external review, HANDOFF 93): capabilitiesOf() (index.ts)
+ * returns [] on ANY fetch failure, not a distinguishable error, so a capability can silently vanish from a run
+ * without the fetch failure itself producing a finding. Kept as the single authoritative list so
+ * reconcileIncidents()'s scope check can never quietly drift from computeWatchdog()'s own key scheme. */
+const CAPABILITY_SCOPED_FINDING_PREFIXES = ["quarantined:", "selftest-broken:", "selftest-degraded:"] as const;
+
 /**
  * Turns this run's watchdog findings into incident state, given what was already known — Incident Store, first
  * slice (oponentura item 2, HANDOFF 84 continued). A finding that keeps showing up updates the SAME incident
  * (lastSeenAt, occurrences+1) instead of looking like a fresh problem on every page load; a finding that stops
- * appearing closes its incident (resolvedAt) instead of leaving it open forever. Pure — no clock, no storage;
- * the caller supplies `now` and persists the result (index.ts). Returns only the records that changed this run
- * (new, updated or newly resolved) — already-resolved history is untouched, nothing to rewrite.
+ * appearing closes its incident (resolvedAt) — but ONLY if this run was actually able to re-evaluate it
+ * (`knownCapabilities`, HANDOFF 93/MAJOR 5): "the capability wasn't in this run's findings" must mean "checked,
+ * currently fine", never "we couldn't tell" — an incident whose capability fell out of the model this run
+ * (a transient capabilitiesOf() fetch failure, not a fix) stays open instead of silently, incorrectly resolving.
+ * Pure — no clock, no storage; the caller supplies `now` and persists the result (index.ts). Returns only the
+ * records that changed this run (new, updated or newly resolved) — already-resolved history is untouched.
  */
-export function reconcileIncidents(existing: IncidentRecord[], findings: WatchdogFinding[], now: string): IncidentRecord[] {
+export function reconcileIncidents(existing: IncidentRecord[], findings: WatchdogFinding[], now: string, knownCapabilities: readonly string[]): IncidentRecord[] {
   const openByKey = new Map(existing.filter((i) => !i.resolvedAt).map((i) => [i.key, i]));
   const seenKeys = new Set<string>();
   const upserted: IncidentRecord[] = findings.map((f) => {
@@ -461,7 +482,15 @@ export function reconcileIncidents(existing: IncidentRecord[], findings: Watchdo
       ? { ...prior, level: f.level, text: f.text, lastSeenAt: now, occurrences: prior.occurrences + 1 }
       : { key: f.key, level: f.level, text: f.text, firstSeenAt: now, lastSeenAt: now, occurrences: 1 };
   });
-  const resolved: IncidentRecord[] = [...openByKey.values()].filter((i) => !seenKeys.has(i.key)).map((i) => ({ ...i, resolvedAt: now }));
+  const knownCapabilitySet = new Set(knownCapabilities);
+  const wasEvaluated = (key: string): boolean => {
+    const prefix = CAPABILITY_SCOPED_FINDING_PREFIXES.find((p) => key.startsWith(p));
+    // Worker/global keys (selftest-stale, ohrada-backlog, alert-channel, worker:*) have no silent-absence
+    // failure mode today — their own sources fail loudly (buildFarmModel throws) rather than vanishing — so
+    // they're always considered evaluated.
+    return prefix === undefined || knownCapabilitySet.has(key.slice(prefix.length));
+  };
+  const resolved: IncidentRecord[] = [...openByKey.values()].filter((i) => !seenKeys.has(i.key) && wasEvaluated(i.key)).map((i) => ({ ...i, resolvedAt: now }));
   return [...upserted, ...resolved];
 }
 

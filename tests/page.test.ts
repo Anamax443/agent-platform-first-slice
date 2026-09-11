@@ -280,31 +280,38 @@ describe("computeWatchdog() — Argos's own deterministic verdict (HANDOFF 83, o
   it("alertHealth absent (no send ever attempted on this installation) is not itself a problem — no finding", () => {
     expect(computeWatchdog(cleanBase)).toEqual({ level: "HEALTHY", findings: [] });
   });
+
+  it("MAJOR 5 (HANDOFF 93): a worker whose /capabilities fetch failed gets its own WARN finding, explaining a gap instead of leaving it silent", () => {
+    const withGap: FarmModel = { ...cleanBase, capabilitiesUnavailableFrom: ["apf-document-host"] };
+    const snapshot = computeWatchdog(withGap);
+    expect(snapshot.level).toBe("DEGRADED");
+    expect(snapshot.findings).toEqual([{ key: "capabilities-unavailable:apf-document-host", level: "WARN", text: expect.stringContaining("apf-document-host") }]);
+  });
 });
 
 describe("reconcileIncidents() — Incident Store, first slice (HANDOFF 84 continued, oponentura item 2)", () => {
   const finding = (key: string, level: WatchdogFinding["level"] = "INCIDENT", text = key): WatchdogFinding => ({ key, level, text });
 
   it("a brand new finding becomes a fresh incident: firstSeenAt = lastSeenAt = now, occurrences 1", () => {
-    const changed = reconcileIncidents([], [finding("worker:apf-mail-ingest")], "2026-09-10T10:00:00Z");
+    const changed = reconcileIncidents([], [finding("worker:apf-mail-ingest")], "2026-09-10T10:00:00Z", []);
     expect(changed).toEqual([{ key: "worker:apf-mail-ingest", level: "INCIDENT", text: "worker:apf-mail-ingest", firstSeenAt: "2026-09-10T10:00:00Z", lastSeenAt: "2026-09-10T10:00:00Z", occurrences: 1 }]);
   });
 
   it("the same finding on the next run updates the SAME incident (lastSeenAt moves, occurrences+1, firstSeenAt untouched) instead of creating a second one", () => {
     const existing: IncidentRecord[] = [{ key: "worker:apf-mail-ingest", level: "INCIDENT", text: "old text", firstSeenAt: "2026-09-10T10:00:00Z", lastSeenAt: "2026-09-10T10:00:00Z", occurrences: 1 }];
-    const changed = reconcileIncidents(existing, [finding("worker:apf-mail-ingest", "INCIDENT", "new text")], "2026-09-10T10:05:00Z");
+    const changed = reconcileIncidents(existing, [finding("worker:apf-mail-ingest", "INCIDENT", "new text")], "2026-09-10T10:05:00Z", []);
     expect(changed).toEqual([{ key: "worker:apf-mail-ingest", level: "INCIDENT", text: "new text", firstSeenAt: "2026-09-10T10:00:00Z", lastSeenAt: "2026-09-10T10:05:00Z", occurrences: 2 }]);
   });
 
   it("an open incident whose finding stopped appearing gets resolvedAt set — auto-resolved, not left open forever", () => {
     const existing: IncidentRecord[] = [{ key: "ohrada-backlog", level: "WARN", text: "6 instancí čeká", firstSeenAt: "2026-09-10T09:00:00Z", lastSeenAt: "2026-09-10T10:00:00Z", occurrences: 3 }];
-    const changed = reconcileIncidents(existing, [], "2026-09-10T10:05:00Z");
+    const changed = reconcileIncidents(existing, [], "2026-09-10T10:05:00Z", []);
     expect(changed).toEqual([{ key: "ohrada-backlog", level: "WARN", text: "6 instancí čeká", firstSeenAt: "2026-09-10T09:00:00Z", lastSeenAt: "2026-09-10T10:00:00Z", occurrences: 3, resolvedAt: "2026-09-10T10:05:00Z" }]);
   });
 
   it("already-resolved incidents are untouched history — reappearing with the same key opens a NEW incident, never reopens the old one", () => {
     const existing: IncidentRecord[] = [{ key: "worker:apf-mail-ingest", level: "INCIDENT", text: "old outage", firstSeenAt: "2026-09-01T00:00:00Z", lastSeenAt: "2026-09-01T00:10:00Z", occurrences: 2, resolvedAt: "2026-09-01T00:10:00Z" }];
-    const changed = reconcileIncidents(existing, [finding("worker:apf-mail-ingest")], "2026-09-10T10:00:00Z");
+    const changed = reconcileIncidents(existing, [finding("worker:apf-mail-ingest")], "2026-09-10T10:00:00Z", []);
     expect(changed).toEqual([{ key: "worker:apf-mail-ingest", level: "INCIDENT", text: "worker:apf-mail-ingest", firstSeenAt: "2026-09-10T10:00:00Z", lastSeenAt: "2026-09-10T10:00:00Z", occurrences: 1 }]);
   });
 
@@ -313,11 +320,31 @@ describe("reconcileIncidents() — Incident Store, first slice (HANDOFF 84 conti
       { key: "ohrada-backlog", level: "WARN", text: "1 instance čeká", firstSeenAt: "2026-09-10T09:00:00Z", lastSeenAt: "2026-09-10T09:00:00Z", occurrences: 1 },
       { key: "selftest-stale", level: "WARN", text: "self-test nikdy neproběhl", firstSeenAt: "2026-09-09T08:00:00Z", lastSeenAt: "2026-09-10T09:00:00Z", occurrences: 5 },
     ];
-    const changed = reconcileIncidents(existing, [finding("ohrada-backlog", "WARN"), finding("worker:apf-mail-ingest")], "2026-09-10T09:05:00Z");
+    const changed = reconcileIncidents(existing, [finding("ohrada-backlog", "WARN"), finding("worker:apf-mail-ingest")], "2026-09-10T09:05:00Z", []);
     expect(changed).toHaveLength(3);
     expect(changed.find((i) => i.key === "ohrada-backlog")).toMatchObject({ occurrences: 2, lastSeenAt: "2026-09-10T09:05:00Z", firstSeenAt: "2026-09-10T09:00:00Z" });
     expect(changed.find((i) => i.key === "worker:apf-mail-ingest")).toMatchObject({ occurrences: 1, firstSeenAt: "2026-09-10T09:05:00Z" });
     expect(changed.find((i) => i.key === "selftest-stale")).toMatchObject({ resolvedAt: "2026-09-10T09:05:00Z", occurrences: 5 });
+  });
+
+  it("MAJOR 5 (HANDOFF 93): a capability-scoped incident stays OPEN when its capability fell out of this run's known list (a transient capabilitiesOf() fetch failure), instead of falsely resolving", () => {
+    const existing: IncidentRecord[] = [{ key: "selftest-degraded:document.stamp", level: "WARN", text: "document.stamp: self-test 12/14", firstSeenAt: "2026-09-10T09:00:00Z", lastSeenAt: "2026-09-10T09:00:00Z", occurrences: 1 }];
+    // No finding for it this run (capabilitiesOf() failed, document.stamp isn't in knownCapabilities either) —
+    // the naive rule ("not seen this run -> resolved") would close it; it must stay untouched instead.
+    const changed = reconcileIncidents(existing, [], "2026-09-10T09:30:00Z", ["document.classify"]);
+    expect(changed).toEqual([]);
+  });
+
+  it("the same capability-scoped incident DOES resolve normally once its capability is genuinely back in the known list with no finding for it", () => {
+    const existing: IncidentRecord[] = [{ key: "selftest-degraded:document.stamp", level: "WARN", text: "document.stamp: self-test 12/14", firstSeenAt: "2026-09-10T09:00:00Z", lastSeenAt: "2026-09-10T09:00:00Z", occurrences: 1 }];
+    const changed = reconcileIncidents(existing, [], "2026-09-10T09:30:00Z", ["document.stamp"]);
+    expect(changed).toEqual([{ key: "selftest-degraded:document.stamp", level: "WARN", text: "document.stamp: self-test 12/14", firstSeenAt: "2026-09-10T09:00:00Z", lastSeenAt: "2026-09-10T09:00:00Z", occurrences: 1, resolvedAt: "2026-09-10T09:30:00Z" }]);
+  });
+
+  it("worker/global-scoped incidents (not capability-scoped) resolve as before regardless of knownCapabilities — they have no silent-absence failure mode to protect against", () => {
+    const existing: IncidentRecord[] = [{ key: "ohrada-backlog", level: "WARN", text: "1 instance čeká", firstSeenAt: "2026-09-10T09:00:00Z", lastSeenAt: "2026-09-10T09:00:00Z", occurrences: 1 }];
+    const changed = reconcileIncidents(existing, [], "2026-09-10T09:30:00Z", []);
+    expect(changed).toEqual([{ ...existing[0], resolvedAt: "2026-09-10T09:30:00Z" }]);
   });
 });
 

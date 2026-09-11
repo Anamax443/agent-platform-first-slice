@@ -147,16 +147,19 @@ const deployableInfo = async (fetcher: Fetcher, origin: string): Promise<{ ok: b
   }
 };
 
-/** A remote deployable's own /capabilities (its declared endpoint, docs/SEVERKA.md "Agent Registry") — never thrown,
- * an unreachable Worker just contributes zero rows to the Kravičky lifecycle table. */
-const capabilitiesOf = async (fetcher: Fetcher, origin: string): Promise<CapabilityRecord[]> => {
+/** A remote deployable's own /capabilities (its declared endpoint, docs/SEVERKA.md "Agent Registry") — never
+ * thrown. `ok: false` (HANDOFF 93, MAJOR 5 of the second external review) is distinct from "fetched fine, zero
+ * capabilities": a fetch failure here used to silently return [], the same shape as a real empty answer, which
+ * let a capability vanish from the model without anything actually saying so — buildFarmModel() uses `ok` to
+ * keep that from reading as "no longer a problem" to reconcileIncidents(). */
+const capabilitiesOf = async (fetcher: Fetcher, origin: string): Promise<{ ok: boolean; capabilities: CapabilityRecord[] }> => {
   try {
     const r = await fetcher.fetch(`${origin}/capabilities`);
-    if (!r.ok) return [];
+    if (!r.ok) return { ok: false, capabilities: [] };
     const body = (await r.json().catch(() => undefined)) as { capabilities?: CapabilityRecord[] } | undefined;
-    return body?.capabilities ?? [];
+    return body ? { ok: true, capabilities: body.capabilities ?? [] } : { ok: false, capabilities: [] };
   } catch {
-    return [];
+    return { ok: false, capabilities: [] };
   }
 };
 
@@ -311,7 +314,7 @@ async function reconcileAndPersistIncidents(env: Env, model: FarmModel, now: str
   try {
     await ensureD1Audit(env.AUDIT);
     const existing = await allIncidents(env);
-    const changed = reconcileIncidents(existing, computeWatchdog(model).findings, now);
+    const changed = reconcileIncidents(existing, computeWatchdog(model).findings, now, model.capabilities.map((c) => c.capability));
     if (changed.length > 0) {
       const stmt = env.AUDIT.prepare("INSERT OR REPLACE INTO audit (audit_id, at, kind, correlation_id, workflow_id, tenant_id, actor_id, capability, json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
       await env.AUDIT.batch(changed.map((i) => stmt.bind(watchdogIncidentAuditId(i.key), now, WATCHDOG_INCIDENT_KIND, null, null, null, "argos", null, JSON.stringify(i))));
@@ -1146,12 +1149,19 @@ async function buildFarmModel(env: Env, instanceLimit: number, instanceWindow: s
   // and redeploying (a human decision with its own commit), not a button on this page.
   const selfTestAgg = selfTestAggregates(selfTestSummary);
   const fixturesOf = (predicate: (f: SelfTestFixtureState) => boolean): SelfTestFixtureState[] => (selfTestSummary?.fixtures ?? []).filter(predicate);
-  const capabilities: CapabilityRow[] = [...gatewayCatalog(), ...documentHostCaps, ...emailExecutorCaps].map((c) => ({
+  const capabilities: CapabilityRow[] = [...gatewayCatalog(), ...documentHostCaps.capabilities, ...emailExecutorCaps.capabilities].map((c) => ({
     ...c,
     lifecycleStatus: installation.lifecycle.statusOf(c.module),
     selfTest: selfTestAgg.byCapability[c.capability],
     selfTestFixtures: fixturesOf((f) => f.capability === c.capability),
   }));
+  // MAJOR 5 (HANDOFF 93): which workers' /capabilities call failed this run — capabilitiesOf() no longer lets
+  // that look identical to "genuinely zero capabilities", so computeWatchdog() can say so instead of the
+  // affected capabilities just silently not being in the list above.
+  const capabilitiesUnavailableFrom = [
+    ...(documentHostCaps.ok ? [] : ["apf-document-host"]),
+    ...(emailExecutorCaps.ok ? [] : ["apf-email-executor"]),
+  ];
   const deployableName = (name: string): { name: string; selfTest: { passed: number; total: number } | undefined; selfTestFixtures: SelfTestFixtureState[] } => ({
     name,
     selfTest: selfTestAgg.byWorker[name],
@@ -1180,6 +1190,7 @@ async function buildFarmModel(env: Env, instanceLimit: number, instanceWindow: s
     selfTestAt: selfTestSummary?.updatedAt,
     now,
     alertHealth,
+    capabilitiesUnavailableFrom,
   };
 }
 
