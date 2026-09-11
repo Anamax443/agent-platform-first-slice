@@ -309,3 +309,26 @@ tedy zastaralá o celý dnešní produkční přírůstek, ne jen kosmeticky.
 
 **Co posudek nezměnil:** žádný kód dnes. Bod 5 rozšiřuje otevřenou otázku z Posudku 9 (bod 2), ne
 novou — obě čekají na společné rozhodnutí, ne na dvě oddělené.
+
+## Posudek 11 — externí oponentura nad `8de8e09`, doporučuje začít stavět krávy (11. 9. 2026)
+
+**Zdroj:** externí čtenář, reakce na `8de8e09` (Posudek 10 zalogován). Skóre: platform/security core
+9,3, připravenost na read-only COW 9,4, na validační COW 9,2, na dojičky 8,5, na ostrý BC write
+7,5, farma jako rozšiřitelná platforma ~9,0. Hlavní teze: **"teď už bych je dělal"** — read-only a
+validační krávy jsou připravené se stavět, jen write krávy (`bc.purchase-invoice.create`) mají
+počkat na dotažený policy enforcement.
+
+| # | Bod posudku | Dispozice | Poznámka |
+|---|---|---|---|
+| 1 | Router drží fail-closed pipeline (envelope, podpis, expirace, scope, capability/version, lifecycle, policy, input schema); neznámý/quarantined modul se nepustí | **P, ověřeno v kódu** | `src/platform/router.ts`: `validateContract("dispatch-envelope", ...)` → target resolution → `MODULE_QUARANTINED` check → `checkGrant()` → `validateInput()` před handlerem — pořadí odpovídá popisu |
+| 2 | Registry je read-only katalog, není druhá autorizační autorita — authorization zůstává v Routeru | **P, ověřeno v kódu** | `src/platform/registry.ts`'s vlastní hlavičkový komentář: *"Read-only introspection... never a second source of authorization — Router.route() alone decides what may execute"* — doslovná shoda |
+| 3 | `cz.company.verify`/`bc.vendors` správně odděluje vnější (ARES) a vnitřní (BC Vendor No.) autoritu | **P, přesně tak** | Napsáno v HANDOFF 113/SEVERKA vlastníkovým pokynem dnes, posudek to přesně reprodukuje |
+| 4 | `checkGrant()` kontroluje jen actor/scope/tenant, ne `approval`/`effectFieldValidators`/`isolation`/`rateLimit` — musí být vynuceno před ostrým BC zápisem | **P, ale NENÍ nové zjištění** | Ověřeno v `src/platform/policy.ts:46-51` — přesně tak. Ale tohle je **doslovně stejná mezera jako Posudek 7 MAJOR 3 / Posudek 8 P0-2**, jen znovu formulovaná — hodnotné jako nezávislé potvrzení priority, ne jako nový nález |
+| 5 | Lifecycle má jen `ACTIVE`/`QUARANTINED`, chybí `NEW/TESTING/CERTIFIED/DEGRADED` + automatický verification runner | **P, ale NENÍ nové zjištění** | Přesně to, co SEVERKA's vlastní `## Vrstvy` tabulka (Admission Gate řádek) už dlouho říká jako "Zbývá" — restatement, ne objev |
+| 6 | Navrhuje `cz.bank-account.verify` jako samostatnou 3. CZ-registry krávu vedle `cz.company.verify`/`cz.vat.verify` | **O, neodpovídá ověřenému API** | SEVERKA (řádky 101–105, ověřeno dnes) už zapsala, že zveřejněné bankovní účty (`zverejneneUcty`) jsou součástí **téhož** `getStatusNespolehlivySubjektRozsirenyV2` volání jako `cz.vat.verify` — MOJE daně nemá samostatný endpoint jen na účty. Rozdělit by znamenalo buď zdvojený dotaz na rate-limitovanou službu, nebo umělou vnitřní sub-capabilitu bez vlastního externího volání — proti principu jedné krávy = jedno smysluplné volání. Bankovní účet zůstává výstupní pole `cz.vat.verify`, ne vlastní kráva |
+| 7 | Návrh dojičky `invoice.aggregate`/`invoice.certify` — deterministická, bez LLM, kontroluje úplnost výsledků, shodu `valueHash`, žádný konflikt, výstup `READY/REVIEW/REJECT` | **Z, dobrý návrh k budoucímu rozhodnutí** | Konzistentní s dnes již zapsaným Import Gate/`valueHash` konceptem v SEVERKA — solidní konkrétní tvar první dojičky, nevyžaduje korekci, čeká na vlastníkovo "teď" |
+| 8 | Doporučuje začít stavět: `cz.company.verify`, `cz.vat.verify`, `bc.vendors`, `bc.customers` (+ opravený seznam bez bodu 6) a dojičku, write krávy až po dotaženém policy enforcement | **Z, shoduje se s dnešním doporučením** | Odpovídá tomu, co bylo dnes už nabídnuto k rozhodnutí (přechod do Plan Mode) — posudek jen nezávisle potvrzuje stejný závěr |
+
+**Co posudek nezměnil:** žádný kód dnes. Body 4–5 jsou restatement, ne nový vstup do pořadí. Bod 6
+je korigován (bankovní účet zůstává v `cz.vat.verify`, ne vlastní kráva). Zbytek souhlasí s tím, kam
+projekt dnes už míří.

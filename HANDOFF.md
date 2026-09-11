@@ -2,6 +2,29 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-11 (115) — Posudek 11 zalogován a ověřen — doporučuje začít stavět read-only/validační krávy
+
+Externí oponentura reagující na `8de8e09` (Posudek 10). Tři kódová tvrzení ověřena přímo v
+kódu: Router fail-closed pořadí (`router.ts`), Registry jako čistě read-only katalog bez
+autorizační autority (`registry.ts`'s vlastní komentář to doslova říká), a `checkGrant()` skutečně
+kontroluje jen actor/scope/tenant (`policy.ts:46-51`) — všechna tři přesná.
+
+Dva body ale **nejsou nová zjištění**, jen přesná restatement už zalogovaných mezer: `checkGrant()`
+gap = doslova Posudek 7 MAJOR 3 / Posudek 8 P0-2; chybějící lifecycle stavy (`NEW/TESTING/
+CERTIFIED/DEGRADED`) = to samé, co SEVERKA's vlastní `## Vrstvy` tabulka už dlouho říká.
+
+Jeden bod korigován: posudek navrhuje `cz.bank-account.verify` jako samostatnou 3. CZ-registry
+krávu. Ověřeno proti dnešnímu SEVERKA zápisu — zveřejněné bankovní účty jsou součástí **téhož**
+MOJE daně volání jako `cz.vat.verify` (`getStatusNespolehlivySubjektRozsirenyV2`), žádný
+samostatný endpoint na účty neexistuje. Rozdělit by znamenalo zdvojený dotaz na rate-limitovanou
+službu — bankovní účet zůstává výstupní pole `cz.vat.verify`, ne vlastní kráva.
+
+Zbytek (návrh dojičky `invoice.aggregate`/`invoice.certify`, doporučení začít stavět read-only
+krávy teď, write krávy až po dotaženém policy enforcement) se shoduje s tím, kam projekt dnes už
+míří — nezávislé potvrzení, ne nový vstup.
+
+Zapsáno do `docs/POSUDKY.md` (Posudek 11). Žádný kód dnes.
+
 ## 2026-09-11 (114) — Posudek 10 zalogován a ověřen — zastaralý vůči aktuálnímu main, ale přesný v tom, co posuzoval
 
 Externí oponentura reagující na `09e0835` (HANDOFF 102) jako na "nejnovější" commit. Než se
