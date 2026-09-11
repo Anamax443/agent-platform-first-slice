@@ -2,6 +2,33 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-10 (85) — Incident Store: watchdog nálezy dostaly identitu napříč běhy, ne jen čerstvý přepočet
+
+**Pokyn vlastníka:** "pokračuj" — čtvrtý krok z (82)'s oponentury, item 2 (Incident Store), hned po (84)'s
+watchdog verdiktu. Bez tohohle by "5 otevřených nálezů" vypadalo na každém načtení `/farm` jako 5 nových
+problémů, i když jde furt o ten samý — žádná historie, žádné "poprvé viděno", žádné automatické zavření, když
+problém zmizí.
+
+**Postaveno:** `WatchdogFinding` dostal stabilní `key` (nezávislý na měnícím se textu jako "17/18") —
+`worker:<name>`, `quarantined:<capability>`, `selftest-broken:<capability>`, `selftest-degraded:<capability>`,
+`selftest-stale`, `ohrada-backlog`. `reconcileIncidents()` (page.ts, čistá funkce) porovná dnešní nálezy s
+existujícím stavem: stejný klíč → stejný incident (`lastSeenAt` posunuto, `occurrences+1`, `firstSeenAt`
+beze změny); klíč, co zmizel → `resolvedAt` nastaveno (auto-resolved); nový klíč → nový incident. Vrací jen to,
+co se změnilo (ne celou historii) — stejné „merge" jako self-test-state.
+
+**Persistence:** `reconcileAndPersistIncidents()` (index.ts) — stejné D1 `audit` idiom jako self-test-state
+(`INSERT OR REPLACE`, `kind: "watchdog-incident"`), jen jeden řádek na incident klíč místo jednoho řádku na
+celou farmu (`audit_id = "watchdog-incident:<key>"`). Běží na každém `GET /farm` (žádný nový fetch — znovu
+použije `FarmModel`, co se stejně skládá pro render), **best-effort**: D1 chyba se zaloguje, nikdy nezhroutí
+stránku. Argos banner teď u opakovaného nálezu ukazuje "(poprvé HH:MM, N×)".
+
+**Vědomě mimo rozsah:** žádný cron, který by incidenty přepočítával nezávisle na tom, jestli někdo otevře
+`/farm` — stejná poctivost jako u manuálního self-testu dnes (scheduled bezpečné self-testy jsou další krok
+z oponentury, ne tenhle). Žádné alertování (Telegram/e-mail) — čeká na vlastníkovo rozhodnutí o kanálu.
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare`), **271/271 testů** (5 nových pro
+`reconcileIncidents()`), `arch`, `farm:check`.
+
 ## 2026-09-10 (84) — Argos dostal první skutečný watchdog verdikt (HEALTHY/DEGRADED/INCIDENT)
 
 **Pokyn vlastníka:** "pokračuj" — třetí krok podle pořadí z (82)'s oponentury. Bod 1 nálezu: "Argos dnes sám

@@ -4,7 +4,7 @@
 // page.ts has no Cloudflare-runtime imports (only src/platform types + bank.js/farm-theme.js, both plain strings),
 // so it is directly callable here — same reasoning as relay-audit.ts being split out of index.ts for testability.
 import { describe, expect, it } from "vitest";
-import { computeWatchdog, renderFarm, type CapabilityRow, type FarmModel } from "../deploy/cloudflare/apf-gateway/src/page.js";
+import { computeWatchdog, reconcileIncidents, renderFarm, type CapabilityRow, type FarmModel, type IncidentRecord, type WatchdogFinding } from "../deploy/cloudflare/apf-gateway/src/page.js";
 
 const model: FarmModel = {
   installation: "local-fakes",
@@ -242,6 +242,45 @@ describe("computeWatchdog() — Argos's own deterministic verdict (HANDOFF 83, o
     const neverRan: FarmModel = { ...model, selfTestAt: undefined, capabilities: [], deployables: model.deployables.map((d) => ({ ...d, body: { ...(d.body as Record<string, unknown>), wired: true } })), instances: [] };
     const snapshot = computeWatchdog(neverRan);
     expect(snapshot.level).toBe("DEGRADED");
-    expect(snapshot.findings).toEqual([{ level: "WARN", text: expect.stringContaining("self-test nikdy neproběhl") }]);
+    expect(snapshot.findings).toEqual([{ key: "selftest-stale", level: "WARN", text: expect.stringContaining("self-test nikdy neproběhl") }]);
+  });
+});
+
+describe("reconcileIncidents() — Incident Store, first slice (HANDOFF 84 continued, oponentura item 2)", () => {
+  const finding = (key: string, level: WatchdogFinding["level"] = "INCIDENT", text = key): WatchdogFinding => ({ key, level, text });
+
+  it("a brand new finding becomes a fresh incident: firstSeenAt = lastSeenAt = now, occurrences 1", () => {
+    const changed = reconcileIncidents([], [finding("worker:apf-mail-ingest")], "2026-09-10T10:00:00Z");
+    expect(changed).toEqual([{ key: "worker:apf-mail-ingest", level: "INCIDENT", text: "worker:apf-mail-ingest", firstSeenAt: "2026-09-10T10:00:00Z", lastSeenAt: "2026-09-10T10:00:00Z", occurrences: 1 }]);
+  });
+
+  it("the same finding on the next run updates the SAME incident (lastSeenAt moves, occurrences+1, firstSeenAt untouched) instead of creating a second one", () => {
+    const existing: IncidentRecord[] = [{ key: "worker:apf-mail-ingest", level: "INCIDENT", text: "old text", firstSeenAt: "2026-09-10T10:00:00Z", lastSeenAt: "2026-09-10T10:00:00Z", occurrences: 1 }];
+    const changed = reconcileIncidents(existing, [finding("worker:apf-mail-ingest", "INCIDENT", "new text")], "2026-09-10T10:05:00Z");
+    expect(changed).toEqual([{ key: "worker:apf-mail-ingest", level: "INCIDENT", text: "new text", firstSeenAt: "2026-09-10T10:00:00Z", lastSeenAt: "2026-09-10T10:05:00Z", occurrences: 2 }]);
+  });
+
+  it("an open incident whose finding stopped appearing gets resolvedAt set — auto-resolved, not left open forever", () => {
+    const existing: IncidentRecord[] = [{ key: "ohrada-backlog", level: "WARN", text: "6 instancí čeká", firstSeenAt: "2026-09-10T09:00:00Z", lastSeenAt: "2026-09-10T10:00:00Z", occurrences: 3 }];
+    const changed = reconcileIncidents(existing, [], "2026-09-10T10:05:00Z");
+    expect(changed).toEqual([{ key: "ohrada-backlog", level: "WARN", text: "6 instancí čeká", firstSeenAt: "2026-09-10T09:00:00Z", lastSeenAt: "2026-09-10T10:00:00Z", occurrences: 3, resolvedAt: "2026-09-10T10:05:00Z" }]);
+  });
+
+  it("already-resolved incidents are untouched history — reappearing with the same key opens a NEW incident, never reopens the old one", () => {
+    const existing: IncidentRecord[] = [{ key: "worker:apf-mail-ingest", level: "INCIDENT", text: "old outage", firstSeenAt: "2026-09-01T00:00:00Z", lastSeenAt: "2026-09-01T00:10:00Z", occurrences: 2, resolvedAt: "2026-09-01T00:10:00Z" }];
+    const changed = reconcileIncidents(existing, [finding("worker:apf-mail-ingest")], "2026-09-10T10:00:00Z");
+    expect(changed).toEqual([{ key: "worker:apf-mail-ingest", level: "INCIDENT", text: "worker:apf-mail-ingest", firstSeenAt: "2026-09-10T10:00:00Z", lastSeenAt: "2026-09-10T10:00:00Z", occurrences: 1 }]);
+  });
+
+  it("a mixed run (one incident continues, a second one is brand new, a third one just resolved) handles all three independently", () => {
+    const existing: IncidentRecord[] = [
+      { key: "ohrada-backlog", level: "WARN", text: "1 instance čeká", firstSeenAt: "2026-09-10T09:00:00Z", lastSeenAt: "2026-09-10T09:00:00Z", occurrences: 1 },
+      { key: "selftest-stale", level: "WARN", text: "self-test nikdy neproběhl", firstSeenAt: "2026-09-09T08:00:00Z", lastSeenAt: "2026-09-10T09:00:00Z", occurrences: 5 },
+    ];
+    const changed = reconcileIncidents(existing, [finding("ohrada-backlog", "WARN"), finding("worker:apf-mail-ingest")], "2026-09-10T09:05:00Z");
+    expect(changed).toHaveLength(3);
+    expect(changed.find((i) => i.key === "ohrada-backlog")).toMatchObject({ occurrences: 2, lastSeenAt: "2026-09-10T09:05:00Z", firstSeenAt: "2026-09-10T09:00:00Z" });
+    expect(changed.find((i) => i.key === "worker:apf-mail-ingest")).toMatchObject({ occurrences: 1, firstSeenAt: "2026-09-10T09:05:00Z" });
+    expect(changed.find((i) => i.key === "selftest-stale")).toMatchObject({ resolvedAt: "2026-09-10T09:05:00Z", occurrences: 5 });
   });
 });

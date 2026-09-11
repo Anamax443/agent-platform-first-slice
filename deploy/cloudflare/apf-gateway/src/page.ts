@@ -126,6 +126,9 @@ export interface FarmModel {
   /** When the self-test summary carried on deployables[].selfTest/capabilities[].selfTest was recorded —
    * undefined when self-test was never run on this farm yet. */
   selfTestAt?: string;
+  /** Currently-open watchdog incidents (index.ts reconcileAndPersistIncidents, D1 kind "watchdog-incident") —
+   * absent/empty is a valid state (a fresh farm, or the very first render before any run has persisted one). */
+  incidents?: IncidentRecord[];
 }
 
 export interface InstanceView {
@@ -315,6 +318,9 @@ const capabilityRow = (c: CapabilityRow): string => {
 
 export type WatchdogLevel = "HEALTHY" | "DEGRADED" | "INCIDENT";
 export interface WatchdogFinding {
+  /** Stable identity for the underlying problem, independent of the human-readable text (which carries mutable
+   * counts like "17/18") — what lets reconcileIncidents() recognize "still the same problem" across runs. */
+  key: string;
   level: "WARN" | "INCIDENT";
   text: string;
 }
@@ -335,34 +341,74 @@ export function computeWatchdog(m: FarmModel): WatchdogSnapshot {
   const findings: WatchdogFinding[] = [];
 
   for (const d of m.deployables) {
-    if (!workerReady(d)) findings.push({ level: "INCIDENT", text: `${d.name} neodpovídá nebo není zapojen (${workerStateLabel(d)})` });
+    if (!workerReady(d)) findings.push({ key: `worker:${d.name}`, level: "INCIDENT", text: `${d.name} neodpovídá nebo není zapojen (${workerStateLabel(d)})` });
   }
 
   for (const c of m.capabilities) {
-    if (c.lifecycleStatus === "QUARANTINED") findings.push({ level: "INCIDENT", text: `${c.capability} je v karanténě (Admission Gate)` });
+    if (c.lifecycleStatus === "QUARANTINED") findings.push({ key: `quarantined:${c.capability}`, level: "INCIDENT", text: `${c.capability} je v karanténě (Admission Gate)` });
     if (c.selfTest && c.selfTest.total > 0) {
-      if (c.selfTest.passed === 0) findings.push({ level: "INCIDENT", text: `${c.capability}: self-test 0/${c.selfTest.total} — capabilita vypadá úplně nefunkční` });
-      else if (c.selfTest.passed < c.selfTest.total) findings.push({ level: "WARN", text: `${c.capability}: self-test ${c.selfTest.passed}/${c.selfTest.total}, ${c.selfTest.total - c.selfTest.passed} kontrol selhává` });
+      if (c.selfTest.passed === 0) findings.push({ key: `selftest-broken:${c.capability}`, level: "INCIDENT", text: `${c.capability}: self-test 0/${c.selfTest.total} — capabilita vypadá úplně nefunkční` });
+      else if (c.selfTest.passed < c.selfTest.total)
+        findings.push({ key: `selftest-degraded:${c.capability}`, level: "WARN", text: `${c.capability}: self-test ${c.selfTest.passed}/${c.selfTest.total}, ${c.selfTest.total - c.selfTest.passed} kontrol selhává` });
     }
   }
 
-  if (!m.selfTestAt) findings.push({ level: "WARN", text: "self-test nikdy neproběhl na téhle farmě — Argos nemá žádný živý důkaz, že kapability doopravdy fungují" });
+  if (!m.selfTestAt) findings.push({ key: "selftest-stale", level: "WARN", text: "self-test nikdy neproběhl na téhle farmě — Argos nemá žádný živý důkaz, že kapability doopravdy fungují" });
 
   // Same filter and the same honest instanceLimit/instanceWindow window as the Ohrada tab (page.ts ohradaInstances)
   // — not a separate query, so this can miss an old open problem that fell out of the window (known limit, P1).
   const openProblems = m.instances.filter((i) => !i.purged && (i.status === "WAITING" || i.status === "FAILED" || i.status === "UNKNOWN_OUTCOME"));
-  if (openProblems.length > 0) findings.push({ level: "WARN", text: `${openProblems.length} ${openProblems.length === 1 ? "instance čeká" : "instancí čeká"} v Ohradě na člověka nebo skončila chybou` });
+  if (openProblems.length > 0) findings.push({ key: "ohrada-backlog", level: "WARN", text: `${openProblems.length} ${openProblems.length === 1 ? "instance čeká" : "instancí čeká"} v Ohradě na člověka nebo skončila chybou` });
 
   const level: WatchdogLevel = findings.some((f) => f.level === "INCIDENT") ? "INCIDENT" : findings.length > 0 ? "DEGRADED" : "HEALTHY";
   return { level, findings };
 }
 
-const watchdogFindingLine = (f: WatchdogFinding): string => `<li style="color:var(--${f.level === "INCIDENT" ? "crit" : "warn"})">${esc(f.text)}</li>`;
+/** One persisted incident (config/<installation>-independent, lives in D1 audit as kind "watchdog-incident") —
+ * gives a WatchdogFinding an identity across runs instead of it being recomputed from scratch every page load. */
+export interface IncidentRecord {
+  key: string;
+  level: "WARN" | "INCIDENT";
+  text: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  occurrences: number;
+  resolvedAt?: string;
+}
 
-/** The banner at the top of Argos's own tab — one verdict instead of reading every card. */
-const watchdogBanner = (snapshot: WatchdogSnapshot): string =>
+/**
+ * Turns this run's watchdog findings into incident state, given what was already known — Incident Store, first
+ * slice (oponentura item 2, HANDOFF 84 continued). A finding that keeps showing up updates the SAME incident
+ * (lastSeenAt, occurrences+1) instead of looking like a fresh problem on every page load; a finding that stops
+ * appearing closes its incident (resolvedAt) instead of leaving it open forever. Pure — no clock, no storage;
+ * the caller supplies `now` and persists the result (index.ts). Returns only the records that changed this run
+ * (new, updated or newly resolved) — already-resolved history is untouched, nothing to rewrite.
+ */
+export function reconcileIncidents(existing: IncidentRecord[], findings: WatchdogFinding[], now: string): IncidentRecord[] {
+  const openByKey = new Map(existing.filter((i) => !i.resolvedAt).map((i) => [i.key, i]));
+  const seenKeys = new Set<string>();
+  const upserted: IncidentRecord[] = findings.map((f) => {
+    seenKeys.add(f.key);
+    const prior = openByKey.get(f.key);
+    return prior
+      ? { ...prior, level: f.level, text: f.text, lastSeenAt: now, occurrences: prior.occurrences + 1 }
+      : { key: f.key, level: f.level, text: f.text, firstSeenAt: now, lastSeenAt: now, occurrences: 1 };
+  });
+  const resolved: IncidentRecord[] = [...openByKey.values()].filter((i) => !seenKeys.has(i.key)).map((i) => ({ ...i, resolvedAt: now }));
+  return [...upserted, ...resolved];
+}
+
+const watchdogFindingLine = (f: WatchdogFinding, incidents: IncidentRecord[]): string => {
+  const record = incidents.find((i) => i.key === f.key && !i.resolvedAt);
+  const age = record && record.occurrences > 1 ? ` <span class="dim">(poprvé ${shortAt(record.firstSeenAt)}, ${record.occurrences}×)</span>` : "";
+  return `<li style="color:var(--${f.level === "INCIDENT" ? "crit" : "warn"})">${esc(f.text)}${age}</li>`;
+};
+
+/** The banner at the top of Argos's own tab — one verdict instead of reading every card, plus (once an incident
+ * has been seen more than once) how long it's actually been going on. */
+const watchdogBanner = (snapshot: WatchdogSnapshot, incidents: IncidentRecord[]): string =>
   `<div class="p-toolbar">${stateBadge(snapshot.level)}<span class="meta">${snapshot.findings.length === 0 ? "žádné otevřené nálezy" : `${snapshot.findings.length} ${snapshot.findings.length === 1 ? "otevřený nález" : "otevřené nálezy"}`}</span></div>${
-    snapshot.findings.length ? `<ul style="margin:.25rem 0 1rem 1.25rem;padding:0">${snapshot.findings.map(watchdogFindingLine).join("")}</ul>` : ""
+    snapshot.findings.length ? `<ul style="margin:.25rem 0 1rem 1.25rem;padding:0">${snapshot.findings.map((f) => watchdogFindingLine(f, incidents)).join("")}</ul>` : ""
   }`;
 
 /**
@@ -595,7 +641,7 @@ export function renderFarm(m: FarmModel): string {
 
     <div id="view-argos" hidden>
       <div class="p-panehead">${ICONS.argos}<span>Argos hlídá — Kapability (Admission Gate)</span><span class="n">3 · kontrola · ${m.capabilities.length}, ${m.capabilities.filter((c) => c.lifecycleStatus === "QUARANTINED").length} v karanténě</span></div>
-      ${watchdogBanner(computeWatchdog(m))}
+      ${watchdogBanner(computeWatchdog(m), m.incidents ?? [])}
       <div class="p-toolbar"><span class="meta">Co každá kravička skutečně smí vykonat, seskupeno po modulu jako ohrada — riziko a izolace jsou vlastní tvrzení komponenty (descriptor), stav na kartě je to, co <b>Router doopravdy vynucuje</b> před každým dispatchem. Karanténa (config/&lt;instalace&gt;/lifecycle.json) se mění deploym, ne odsud — tahle stránka jen čte, nikdy nezapisuje</span></div>
       <div class="p-toolbar"><span class="meta">„self-test X/Y" na kartě = kolik vzorových případů té kapability naposledy skutečně prošlo proti reálnému běhu (ne jen že Worker odpověděl) — spusť ho na záložce Kravičky${m.selfTestAt ? `, naposledy ${shortAt(m.selfTestAt)}` : ""}</span></div>
       ${m.capabilities.length ? penGrid : '<div class="pen-empty">zatím žádné (vzdálení Workeři neodpověděli)</div>'}

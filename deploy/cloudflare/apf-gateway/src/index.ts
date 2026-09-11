@@ -26,7 +26,27 @@ import type { Instance } from "../../../../src/platform/journal.js";
 import { ReviewService, type Decision } from "../../../../src/platform/review.js";
 import type { MessageEnvelope, ResultEnvelope } from "../../../../src/platform/types.js";
 import { WORKFLOW_NAMES, workflowDef } from "../../../../src/platform/workflow.js";
-import { renderError, renderFarm, renderHome, renderInstance, renderSelfTest, type AuditLogRow, type CapabilityRow, type FarmInstanceRow, type FarmStats, type InboxItem, type InstanceView, type ModelsInfo, type SelfTestFixtureState, type SelfTestRow, type Wired } from "./page.js";
+import {
+  computeWatchdog,
+  reconcileIncidents,
+  renderError,
+  renderFarm,
+  renderHome,
+  renderInstance,
+  renderSelfTest,
+  type AuditLogRow,
+  type CapabilityRow,
+  type FarmInstanceRow,
+  type FarmModel,
+  type FarmStats,
+  type IncidentRecord,
+  type InboxItem,
+  type InstanceView,
+  type ModelsInfo,
+  type SelfTestFixtureState,
+  type SelfTestRow,
+  type Wired,
+} from "./page.js";
 import { describeModels, gatewayCatalog, wirePlatform, type Wiring } from "./platform-wiring.js";
 import { runSelfTest, SELF_TEST_WORKFLOW_ID } from "./self-test.js";
 import { D1_AUDIT_DDL, DDL, SqliteArtifacts, SqliteAudit, SqliteJournal, SqliteReviewTaskStore } from "./store.js";
@@ -187,6 +207,43 @@ async function latestSelfTestSummary(env: Env): Promise<SelfTestSummary | undefi
   await ensureD1Audit(env.AUDIT);
   const row = await env.AUDIT.prepare("SELECT json FROM audit WHERE audit_id = ?").bind(SELF_TEST_STATE_AUDIT_ID).first<{ json: string }>();
   return row ? (JSON.parse(row.json) as SelfTestSummary) : undefined;
+}
+
+const WATCHDOG_INCIDENT_KIND = "watchdog-incident";
+const watchdogIncidentAuditId = (key: string): string => `${WATCHDOG_INCIDENT_KIND}:${key}`;
+
+/** Every incident ever recorded (open and resolved) — same "one row per key, INSERT OR REPLACE" idiom as
+ * self-test-state, just one row per incident key instead of one row for the whole farm. */
+async function allIncidents(env: Env): Promise<IncidentRecord[]> {
+  await ensureD1Audit(env.AUDIT);
+  const rows = await env.AUDIT.prepare("SELECT json FROM audit WHERE kind = ?").bind(WATCHDOG_INCIDENT_KIND).all<{ json: string }>();
+  return (rows.results ?? []).map((r) => JSON.parse(r.json) as IncidentRecord);
+}
+
+/**
+ * Incident Store, first slice (oponentura item 2, HANDOFF 84 continued): turns this render's watchdog findings
+ * into persisted incident state — page.ts's reconcileIncidents() decides what changed, this just reads/writes
+ * it. Runs on every GET /farm (reuses the FarmModel already assembled for the page, no extra fetches); there is
+ * no cron reconciliation yet, so an incident's freshness is bounded by how often a human opens the page or runs
+ * self-test — same honesty as self-test itself being manual today (docs/SEVERKA.md, scheduled probes are a
+ * later step). Best-effort: a D1 hiccup here must never break the page it's reporting on.
+ */
+async function reconcileAndPersistIncidents(env: Env, model: FarmModel, now: string): Promise<IncidentRecord[]> {
+  try {
+    await ensureD1Audit(env.AUDIT);
+    const existing = await allIncidents(env);
+    const changed = reconcileIncidents(existing, computeWatchdog(model).findings, now);
+    if (changed.length > 0) {
+      const stmt = env.AUDIT.prepare("INSERT OR REPLACE INTO audit (audit_id, at, kind, correlation_id, workflow_id, tenant_id, actor_id, capability, json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+      await env.AUDIT.batch(changed.map((i) => stmt.bind(watchdogIncidentAuditId(i.key), now, WATCHDOG_INCIDENT_KIND, null, null, null, "argos", null, JSON.stringify(i))));
+    }
+    const byKey = new Map(existing.map((i) => [i.key, i]));
+    for (const i of changed) byKey.set(i.key, i);
+    return [...byKey.values()].filter((i) => !i.resolvedAt);
+  } catch (e) {
+    console.error(`[apf-gateway] reconcileAndPersistIncidents failed (non-fatal, /farm still renders): ${e instanceof Error ? e.message : String(e)}`);
+    return [];
+  }
 }
 
 /** byWorker/byCapability pass/total, derived from the merged fixture state — skipped fixtures never count
@@ -1056,30 +1113,33 @@ export default {
         selfTest: selfTestAgg.byWorker[name],
         selfTestFixtures: fixturesOf((f) => f.worker === name),
       });
-      return html(
-        renderFarm({
-          installation: INSTALLATION,
-          gitSha: env.GIT_SHA,
-          gatewaySigning: signingMode(env),
-          deployables: [
-            { ...deployableName("apf-gateway"), ok: true, status: 200, body: { isolation: "self", wired: wiredOf(env) } },
-            { ...deployableName("apf-document-host"), ...documentHost },
-            { ...deployableName("apf-email-executor"), ...emailExecutor },
-            { ...deployableName("apf-mail-ingest"), ...mailIngest },
-            { ...deployableName("apf-fakes"), ...fakes },
-          ],
-          capabilities,
-          instances,
-          instanceLimit,
-          instanceWindow,
-          auditLog: log,
-          inbox,
-          workflows: [...WORKFLOW_NAMES],
-          models: modelsOf(env),
-          stats,
-          selfTestAt: selfTestSummary?.updatedAt,
-        }),
-      );
+      const model: FarmModel = {
+        installation: INSTALLATION,
+        gitSha: env.GIT_SHA,
+        gatewaySigning: signingMode(env),
+        deployables: [
+          { ...deployableName("apf-gateway"), ok: true, status: 200, body: { isolation: "self", wired: wiredOf(env) } },
+          { ...deployableName("apf-document-host"), ...documentHost },
+          { ...deployableName("apf-email-executor"), ...emailExecutor },
+          { ...deployableName("apf-mail-ingest"), ...mailIngest },
+          { ...deployableName("apf-fakes"), ...fakes },
+        ],
+        capabilities,
+        instances,
+        instanceLimit,
+        instanceWindow,
+        auditLog: log,
+        inbox,
+        workflows: [...WORKFLOW_NAMES],
+        models: modelsOf(env),
+        stats,
+        selfTestAt: selfTestSummary?.updatedAt,
+      };
+      // Incident Store (HANDOFF 84 continued): reconcile this render's watchdog findings against persisted
+      // incident state before rendering, so the Argos banner can show "poprvé viděno / kolikrát" instead of
+      // findings looking freshly discovered on every page load.
+      model.incidents = await reconcileAndPersistIncidents(env, model, iso(new SystemClock().now()));
+      return html(renderFarm(model));
     }
 
     // Live self-test (owner's request 2026-09-08): a dedicated, fixed-name instance (SELF_TEST_WORKFLOW_ID, shape
