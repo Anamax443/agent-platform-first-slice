@@ -2,6 +2,25 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-11 (112) — SEVERKA: BC API v2.0 referenční zdroj (uložen, ne enumerovaný)
+
+Vlastník ukázal oficiální BC API v2.0 dokumentaci a `company` entitu (80+ navigačních zdrojů:
+customers, vendors, salesInvoices, purchaseInvoices, journals, generalLedgerEntries, ...). Otázka
+"z toho může být hodně kraviček, ne?" — odpověď: technicky ano, ale podle dnes už zavedené
+disciplíny (`invoice.extract` má jen normou dané 4 pole, ne vše co SEVERKA zmiňuje; `cow-catalog.json`
+nesmí tvrdit víc, než je skutečně na cestě) se z toho **neenumeruje seznam budoucích krav dopředu**
+— jen se ukládá jako referenční zdroj, ke kterému se sáhne, až konkrétní entita bude mít skutečného
+spotřebitele ve farmě. Jediná dnes identifikovaná: `customers` (pro dávkový audit zákazníků).
+
+Cestou také posouzen a zamítnut jako výchozí vzor generický "OData čtecí hack" (blog Josh Anglesea,
+konfigurovatelná AL tabulka/stránka pro libovolné pole) — jde proti principu úzkých jednoúčelových
+krav, navíc vyžaduje bespoke AL vývoj uvnitř BC tenanta; ponechán jako záložní technika pro
+nestandardní pole bez oficiálního API pokrytí.
+
+Zapsáno do `docs/SEVERKA.md` (krátký referenční odstavec, ne enumerace) a jako reference memory
+([[agent-platform-bc-api-reference]]) pro budoucí konverzace mimo repo kontext. Čistě dokumentační
+krok — žádný kód.
+
 ## 2026-09-11 (111) — SEVERKA: API research pro cz.company.verify/cz.vat.verify + dávkový provoz, fronta, capability-gap
 
 **API research (bezplatné, oficiální zdroje jen — vlastník explicitně odmítl platit třetím

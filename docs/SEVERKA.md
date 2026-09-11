@@ -121,6 +121,25 @@ registrům, jiná bezpečnostní a spolehlivostní kategorie než čtení textu 
 Žádný z těchto tří ověřovacích zdrojů (ARES, MOJE daně, budoucí ISIR) není JSON — REST/JSON,
 SOAP/XML a REST/XML jsou tři různé protokoly, tři různé adaptéry, ne jedna sdílená kostra.
 
+**Referenční zdroj pro budoucí BC krávy (11. 9. 2026):** oficiální, prvostranné BC API v2.0 —
+`https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/api-reference/v2.0/`,
+entity `company` (`.../resources/dynamics_company`) má přes 80 navigačních zdrojů (`customers`,
+`vendors`, `salesInvoices`, `purchaseInvoices`, `purchaseOrders`, `journals`,
+`generalLedgerEntries`, ...). Zapnuté defaultně pro BC online, žádná extra licence, MS APIs Terms
+of Use. **Vědomě zde neenumerujeme jako budoucí krávy** — stejný princip jako u
+`cow-catalog.json` (žádný seznam se nesmí tvářit hotověji, než je) — je to jen ukazatel, kam sáhnout,
+až se pro konkrétní entitu najde skutečný spotřebitel ve farmě. Ostré rozlišení až se bude stavět:
+**read-only entity** (nízké riziko, `sideEffects: none`, levné přidat) vs. **write-capable entity**
+(`salesInvoices`/`purchaseInvoices`/`journals`/platby — teritorium budoucího BC Executoru, plný
+Admission Gate + vyhrazený credential + COMPROMISED-ORCHESTRATOR test, ne příležitostné přidání).
+Jediná entita s dnes už identifikovaným spotřebitelem: `customers` (pro krávu "načti seznam
+zákazníků z BC" z `## Dávkové úlohy...` výše).
+
+Generický "obecný OData čtecí hack" (AL tabulka/stránka konfigurovatelná na libovolné pole,
+zdrojový blog Josh Anglesea, GitHub `JAng13sea/Blogs`) zvažován a zamítnut jako výchozí volba —
+jde proti principu úzkých jednoúčelových krav a navíc vyžaduje bespoke AL vývoj uvnitř BC tenanta;
+ponechán jako záložní technika pro nestandardní pole bez oficiálního pokrytí, ne jako vzor.
+
 ---
 
 ## Farmář jako honák, ne autorita — kompromitovaný orchestrátor musí zůstat neškodný (11. 9. 2026)
