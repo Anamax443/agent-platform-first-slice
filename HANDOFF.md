@@ -2,6 +2,27 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-11 (97) — MAJOR 1, bezpečnostní podmnožina: why/onFailure na 19 fixtures napříč 6 kapabilitami
+
+**Pokyn vlastníka:** "pokračuj" — MAJOR 1 z druhé oponentury, přes `AskUserQuestion` zúženo na bezpečnostní
+podmnožinu, ne všech ~69 fixtures (velký rozsah, jiná povaha práce než dnešní opravy).
+
+**Rozsah:** systematicky prohledány všechny fixture soubory (`document.archive/classify/stamp/validate`,
+`email.send`, `mail.ingest`) na bezpečnostně relevantní vzorce — AI identita mimo scope (`error-ai-actor`,
+5×), cross-tenant/confused deputy (`error-tenant-mismatch`/`error-cross-tenant`, 4×), injection (`injection-*`,
+5×, stejný F2 princip jako dřívější `document.classify` práce), netypovaný vstup (`error-free-text`, 4×),
+artefakt/hash tamper (`damaged-hash-mismatch`, 1×) a allowlist bypass u e-mailu (1×). **19 fixtures**, u
+každé `why` (co a proč se testuje) + `onFailure` (konkrétní další krok — u cross-tenant/AI-scope vždy
+explicitní "SEV1"/"okamžitá karanténa", ne obecná fráze).
+
+**Vědomě nedodělané:** zbylých ~50 canonical/boundary/routing-config fixtures (ty, co netestují bezpečnostní
+hranici, jen funkční správnost) zůstávají jen s `description` — mechanismus na ně funguje stejně (fallback),
+obsahové vyplnění je samostatný, menší prioritní krok.
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare`), **298/298 testů** (beze změny — čistě obsah
+fixture dat, žádná nová business logika), `arch`, `farm:check`. Živé ověření (self-test přes všechny
+kapability, kontrola že se nový text opravdu zobrazí) je záměrně samostatný krok po nasazení.
+
 ## 2026-09-11 (96) — MAJOR 7 živě ověřen: legitimní cesta i pokus o zfalšování, oba přesně podle návrhu
 
 **Návaznost na (95):** nasazeno (`gitSha d0cc252`), obě strany zvlášť ověřené na produkci, ne jen typecheck.

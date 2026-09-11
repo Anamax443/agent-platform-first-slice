@@ -23,6 +23,8 @@
     "id": "error-ai-actor",
     "kind": "error",
     "description": "The AI identity calls a write capability it holds no scope for (see document.stamp/error-ai-actor).",
+    "why": "AI identita smí jen document.classify — nikdy zápis. Kontroluje, že tahle hranice platí i pro document.archive, ne jen pro document.stamp.",
+    "onFailure": "AI model by mohl sám archivovat dokumenty bez lidského/servisního oprávnění — zkontrolovat, jestli scope AI identity nebyl omylem rozšířen při nějaké konfigurační změně.",
     "actor": "ai-doc-classifier",
     "artifact": { "tenantId": "tenant-42", "bytes": "INVOICE No. 31" },
     "payload": { "artifactId": "$artifactId", "sha256": "$sha256" }

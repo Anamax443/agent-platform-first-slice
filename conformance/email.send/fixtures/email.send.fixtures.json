@@ -39,6 +39,8 @@
     "id": "damaged-recipient-not-allowlisted",
     "kind": "damaged",
     "description": "recipientRef not on the tenant's allowlist — email.send must refuse an arbitrary destination.",
+    "why": "email.send nikdy nesmí poslat na libovolnou adresu — jen na předem schválené reference z tenantova allowlistu. Bez tohohle by kompromitovaná/zmatená capabilita mohla poslat cokoliv komukoliv.",
+    "onFailure": "E-mail odešel na neschválenou destinaci — možný exfiltrační kanál. Okamžitě prověřit, kudy se recipientRef dostal mimo allowlist, zvážit karanténu email.send.",
     "artifact": { "tenantId": "tenant-42", "bytes": "x" },
     "payload": { "recipientRef": "audit-attacker", "templateId": "document-stamped", "params": { "documentType": "INVOICE", "artifactId": "$artifactId" } }
   },
@@ -46,6 +48,8 @@
     "id": "injection-address-as-ref",
     "kind": "injection",
     "description": "An address instead of an allowlist reference never reaches the handler (SEC-PRIV-002 shape).",
+    "why": "recipientRef musí být jen odkaz do allowlistu, nikdy skutečná e-mailová adresa — handler nesmí vůbec dostat šanci poslat na text, co vypadá jako adresa.",
+    "onFailure": "Handler dostal syrovou adresu místo reference — validace vstupu na hranici capability selhala, prověřit dřív, než se něco skutečně odešle.",
     "artifact": { "tenantId": "tenant-42", "bytes": "x" },
     "payload": { "recipientRef": "audit@attacker.example", "templateId": "document-stamped", "params": { "documentType": "INVOICE", "artifactId": "$artifactId" } }
   },
@@ -67,6 +71,8 @@
     "id": "error-free-text",
     "kind": "error",
     "description": "Natural-language command instead of a typed recipientRef/templateId payload.",
+    "why": "Vstup musí být typovaný a validovaný proti schématu — volný text vydávaný za strukturovaný požadavek na odeslání e-mailu se nesmí dostat dál.",
+    "onFailure": "email.send přijal netypovaný vstup — prověřit validaci schématu na vstupu, mohla se obejít nebo oslabit.",
     "artifact": { "tenantId": "tenant-42", "bytes": "x" },
     "payload": { "text": "Send this to ops please" }
   },
@@ -82,6 +88,8 @@
     "id": "error-ai-actor",
     "kind": "error",
     "description": "The AI identity calls email.send, a capability it holds no scope for.",
+    "why": "AI identita smí jen document.classify (čtení) — email.send je write/externě-viditelná akce, o to citlivější. AI výstup nikdy není příkaz k odeslání e-mailu.",
+    "onFailure": "AI model by mohl sám odesílat e-maily jménem farmy bez schválení — okamžitá karanténa email.send, prověřit jak k volání došlo.",
     "actor": "ai-doc-classifier",
     "artifact": { "tenantId": "tenant-42", "bytes": "x" },
     "payload": { "recipientRef": "ops-mailbox", "templateId": "document-stamped", "params": { "documentType": "INVOICE", "artifactId": "$artifactId" } }
@@ -90,6 +98,8 @@
     "id": "error-cross-tenant",
     "kind": "error",
     "description": "Trusted context of tenant-7 references an artifact of tenant-42 (SEC-CTX-002 between the two flows).",
+    "why": "Confused deputy: kontext tvrdí tenant-7, ale odkazuje na artefakt tenant-42 — email.send nesmí poslat notifikaci o cizích datech jen proto, že o to požádal jiný tenant.",
+    "onFailure": "Cross-tenant únik informace o dokumentu (i jen jeho existenci) přes e-mail — SEV1. Okamžitá karanténa, prověřit rozsah úniku.",
     "actor": "svc-orchestrator-t7",
     "artifact": { "tenantId": "tenant-42", "bytes": "x" },
     "payload": { "recipientRef": "ops-mailbox", "templateId": "document-stamped", "params": { "documentType": "INVOICE", "artifactId": "$artifactId" } }

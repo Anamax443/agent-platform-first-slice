@@ -117,6 +117,8 @@
     "id": "error-free-text",
     "kind": "error",
     "description": "Natural-language command to an executor (SEC-PRIV-002).",
+    "why": "document.stamp je write kapabilita — vstup musí být typovaný a validovaný proti schématu, nikdy volný text vydávaný za strukturovaný požadavek na zápis.",
+    "onFailure": "Write executor přijal netypovaný vstup — vysoké riziko, prověřit validaci schématu okamžitě, zvážit dočasnou karanténu document.stamp.",
     "artifact": { "tenantId": "tenant-42", "bytes": "INVOICE No. 17" },
     "payload": { "text": "Please stamp this invoice as validated" }
   },
@@ -136,6 +138,8 @@
     "id": "error-ai-actor",
     "kind": "error",
     "description": "The AI identity calls a write capability (SEC-PRIV-001).",
+    "why": "AI identita smí jen document.classify (čtení) — nikdy zápis. Tohle je nejostřeji sledovaná hranice v celé platformě: AI výstup nikdy není příkaz k akci, natožpak k razítkování dokumentu.",
+    "onFailure": "AI model by mohl sám razítkovat dokumenty bez lidského/servisního schválení — okamžitá karanténa document.stamp, prověřit jak k volání vůbec došlo.",
     "actor": "ai-doc-classifier",
     "artifact": { "tenantId": "tenant-42", "bytes": "INVOICE No. 19" },
     "payload": {
@@ -148,6 +152,8 @@
     "id": "error-cross-tenant",
     "kind": "error",
     "description": "Trusted context of tenant-7 targets a resource of tenant-42 (SEC-CTX-002, confused deputy).",
+    "why": "Confused deputy na write cestě — nejzávažnější varianta: kontext tvrdí tenant-7, ale míří na artefakt tenant-42. Executor musí ověřit vlastnictví, ne jen důvěřovat volajícímu kontextu.",
+    "onFailure": "Cross-tenant zápis — SEV1, nejhorší možný výsledek (dokument jednoho zákazníka by mohl být přepsán jménem druhého). Okamžitá karanténa document.stamp, incident response, ne jen oprava.",
     "actor": "svc-orchestrator-t7",
     "artifact": { "tenantId": "tenant-42", "bytes": "INVOICE No. 20" },
     "payload": {
@@ -160,6 +166,8 @@
     "id": "error-dms-auth",
     "kind": "error",
     "description": "DMS adapter forced into its auth-failure mode — the write executor's own credential is rejected downstream.",
+    "why": "Ověřuje, že executor korektně rozpozná a vrátí selhání ověření na DMS straně, ne že to skryje jako obecnou chybu — operátor musí vědět, že jde konkrétně o credential, ne o síť nebo data.",
+    "onFailure": "DMS credential nefunguje — může jít o expirovaný/rotovaný secret. Prověřit platnost cred:dms-stamp dřív, než se dokumenty začnou hromadit nezapsané.",
     "adapters": { "dms": "auth-fail" },
     "artifact": { "tenantId": "tenant-42", "bytes": "INVOICE No. 21" },
     "payload": {

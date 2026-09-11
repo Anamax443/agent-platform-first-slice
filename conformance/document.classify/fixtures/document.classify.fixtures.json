@@ -52,6 +52,8 @@
     "id": "canonical-ai-actor",
     "kind": "canonical",
     "description": "The AI identity may call the read capability it holds a scope for (and nothing else, see document.stamp/error-ai-actor).",
+    "why": "AI identita má úzký scope jen na document.classify — test potvrzuje, že hranice funguje oběma směry: nejen 'nesmí zapisovat', ale i 'skutečně smí dělat to, co má'. Bez tohohle by scope mohl být příliš přísný a rozbít legitimní provoz.",
+    "onFailure": "AI identitě byl omylem odebraný scope, co legitimně potřebuje — zkontrolovat poslední změnu v config/<instalace>/profile.json identities.",
     "actor": "ai-doc-classifier",
     "artifact": { "tenantId": "tenant-42", "bytes": "INVOICE No. INV-2026-78\nTotal due: EUR 12.00" },
     "payload": { "artifactId": "$artifactId" }
@@ -114,6 +116,8 @@
     "id": "error-tenant-mismatch",
     "kind": "error",
     "description": "Artifact of tenant-7, trusted context of tenant-42.",
+    "why": "Confused deputy (SEC-CTX-002): artefakt patří jednomu tenantovi, ale volání přichází s důvěryhodným kontextem jiného. Capabilita nesmí zpracovat cizí data jen proto, že o ně někdo požádal — musí ověřit, že artefakt skutečně patří volajícímu tenantovi.",
+    "onFailure": "Cross-tenant únik dat — SEV1. Okamžitě prověřit, jestli šlo o chybu v kódu, nebo o aktivní pokus dostat se k datům jiného tenanta; zvážit karanténu capability, než se najde příčina.",
     "artifact": { "tenantId": "tenant-7", "bytes": "INVOICE No. 1" },
     "payload": { "artifactId": "$artifactId" }
   },
@@ -121,6 +125,8 @@
     "id": "error-free-text",
     "kind": "error",
     "description": "Natural-language command instead of the typed input (SEC-PRIV-002 shape).",
+    "why": "Vstup capability musí být typovaný a validovaný proti schématu, nikdy volný text vydávaný za strukturovaný požadavek — jinak by se dal payload snadno zaměnit za instrukci místo dat.",
+    "onFailure": "Capabilita přijala netypovaný vstup — prověřit validaci schématu na vstupu, mohla se obejít nebo oslabit při nedávné změně.",
     "payload": { "text": "please classify this invoice for me" }
   },
   {
