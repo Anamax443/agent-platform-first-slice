@@ -2,6 +2,15 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-11 (90) — Stav mezi kroky: čeká se na živé potvrzení prvního scheduled self-test tiku
+
+Všech 15 bodů oponentury (82) hotovo a nasazeno (HANDOFF 83–89), gitSha `3bd91d7` živě na `farm-bass443`.
+Poslední neuzavřená věc: (88)'s scheduled self-test cron (`*/30 * * * *`) zatím nemá živé potvrzení, že
+`controller.cron` větvení v `scheduled()` doopravdy vystřelí — Cloudflare neumožňuje vynutit produkční
+`scheduled()` přes HTTP, takže se to ověří samo na první skutečný tik po nasazení (dnes v 10:00 tvého
+času / 08:00 UTC). `wrangler tail` běží na pozadí a zachytí ho. Jinak nic rozdělaného — `git status` čistý,
+`origin/main` odpovídá lokálnímu `HEAD`.
+
 ## 2026-09-11 (89) — DEGRADED: Argosův živý nález na kartě, odděleně od formálního Admission Gate stavu
 
 **Pokyn vlastníka:** "pokračuj" — poslední bod z (82)'s oponentury. Přes `AskUserQuestion` rozhodnuto: DEGRADED
