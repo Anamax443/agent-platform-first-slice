@@ -2,6 +2,27 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-11 (114) — Posudek 10 zalogován a ověřen — zastaralý vůči aktuálnímu main, ale přesný v tom, co posuzoval
+
+Externí oponentura reagující na `09e0835` (HANDOFF 102) jako na "nejnovější" commit. Než se
+zalogovalo, ověřeno proti `git log`/`git show`: **`main` je od `09e0835` dál o 11 commitů**
+(HANDOFF 103–113 — Posudek 8/9, Argos acknowledge+resolve, `invoice.extract`, JSON Export
+rozhodnutí, ARES/MOJE daně API research, `bc.customers`/`bc.vendors`). Posudek o žádném z toho neví
+— jeho "aktuální stav" tabulka (Farmář+Argos ~9,0/10) je tedy zastaralá o celý dnešní přírůstek.
+
+Konkrétní citované commity (27e29b6/b26d06a/6a287a4 why/onFailure, d0cc252/d6591fd trusted
+telemetry) ověřeny — přesně odpovídají skutečnému obsahu. Posudkovo doporučení "zachovat"
+tři role/value-binding (`valueHash`/`ACCOUNT_VERIFICATION`) ověřeno jako **už existující v témže
+recenzovaném commitu** — čtenář přesně převyprávěl, co tam bylo, ne navrhl nové (hodnotné jako
+nezávislé potvrzení kvality, ne jako nový vstup).
+
+**Jeden reálně nový bod (5):** Argos by měl hlídat nejen komponenty, ale **invarianty** (System
+Health / Security Invariants / Business Integrity / Delivery-Effects) — v SEVERKA dnes není,
+fakticky zobecnění Posudku 9 bodu 2 (self-test potřebuje bezpečnostní/kvalitativní osu). Stejná
+otevřená mezera širší formulací — čeká na stejné vlastníkovo rozhodnutí, ne dvě oddělené.
+
+Zapsáno do `docs/POSUDKY.md` (Posudek 10). Žádný kód dnes — čeká na rozhodnutí.
+
 ## 2026-09-11 (113) — SEVERKA: bc.customers/bc.vendors potvrzeny jako skutečné krávy, ne jen reference
 
 Vlastník: "rozhodně pro ověření u faktury budeme potřebovat krávu zákazníci, dodavatelé... i teď

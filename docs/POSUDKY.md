@@ -283,3 +283,29 @@ zelenou barvou.
 
 **Co posudek nezměnil:** žádný kód dnes — čeká na vlastníkovo rozhodnutí, který z bodů 2–4 (pokud
 vůbec) je další krok, stejně jako Posudek 8's P0-1/P0-2.
+
+## Posudek 10 — externí oponentura nad `09e0835`, zastaralá vůči skutečnému `main` (11. 9. 2026)
+
+**Zdroj:** externí čtenář, reakce na `09e0835` (HANDOFF 102, "Farmář jako honák, ne autorita")
+jako na "nejnovější" commit. Skóre podle čtenáře: Farmář+Argos celkově **~9,0/10** (Farmář UI 9,2,
+vysvětlení kontrol 9,0, Argos detection 9,0, incident management 8,7, dead-man 8,2, alerting 8,5,
+authoritative backlog 9,2, trusted telemetry 8,4, Admission fail-closed 9,5, zero-trust COW model
+9,3 návrh, compromised-farmer protection 9,5 návrh/0 implementace).
+
+**Zásadní zjištění před zápisem dispozice:** posudek pracuje s `09e0835` jako aktuální hlavou, ale
+skutečný `main` je od té doby o **11 commitů dál** (`ee6e483`) — `invoice.extract` (109), rozhodnutí
+o JSON Export mezifázi místo BC Executoru (110), bezplatné API zdroje pro `cz.company.verify`/
+`cz.vat.verify` (111), BC API v2.0 reference (112), `bc.customers`/`bc.vendors` potvrzeny jako
+skutečné krávy (113). Posudek o žádném z těchto pěti kroků neví — jeho "aktuální stav" tabulka je
+tedy zastaralá o celý dnešní produkční přírůstek, ne jen kosmeticky.
+
+| # | Bod posudku | Dispozice | Poznámka |
+|---|---|---|---|
+| 1 | Tvrdí `09e0835` jako nejnovější commit, hodnotí "aktuální stav" k tomuto bodu | **Z, zastaralé** | Ověřeno `git log`: `09e0835` je HANDOFF 102, `main` je dnes u HANDOFF 113 (`ee6e483`). Není to chyba posudku samotného (dělal ho na tom, co viděl), ale jeho "current state" rámování se nesmí brát jako platné bez týhle výhrady |
+| 2 | `why`/`onFailure` na 19 (`27e29b6`) + 59 (`b26d06a`) fixtures, živě ověřeno (`6a287a4`) | **P, ověřeno přesně** | Všechny tři commity existují, obsah odpovídá popisu (`git show --stat` proti skutečným hashům) |
+| 3 | Trusted telemetry — `/audit` odmítá rozporný tenant claim, živě ověřeno legitimní i spoofing (`d0cc252`/`d6591fd`) | **P, ověřeno přesně** | Oba commity existují, obsah odpovídá popisu |
+| 4 | Tři role (Farmář/Krávy/Dojička), Import Gate čte ze skladu, value-binding (`valueHash`/`ACCOUNT_VERIFICATION`) — prezentováno jako doporučení k zachování | **PÚ, už existovalo v recenzovaném commitu** | `git show 09e0835:docs/SEVERKA.md` obsahuje `ACCOUNT_VERIFICATION`/`valueHash` sekci (řádky 176–185) **už v tom samém commitu, co posudek recenzuje** — čtenář přesně převyprávěl, co tam už bylo napsané, ne navrhl nové. Hodnotný jako nezávislé potvrzení kvality návrhu, ne jako nový vstup |
+| 5 | Argos by měl hlídat nejen komponenty, ale **invarianty** — nové rozdělení na System Health / Security Invariants / Business Integrity / Delivery-Effects | **PÚ, reálný a nový nápad** | V SEVERKA dnes není — a je to fakticky zobecnění Posudku 9 bodu 2 (self-test potřebuje bezpečnostní/kvalitativní osu navíc k PASS/FAIL), jen z jiného úhlu (invarianty napříč celou linkou, ne jen self-test jednotlivé capability). Stejná otevřená mezera, širší formulace — čeká na stejné vlastníkovo rozhodnutí jako Posudek 9 bod 2 |
+
+**Co posudek nezměnil:** žádný kód dnes. Bod 5 rozšiřuje otevřenou otázku z Posudku 9 (bod 2), ne
+novou — obě čekají na společné rozhodnutí, ne na dvě oddělené.
