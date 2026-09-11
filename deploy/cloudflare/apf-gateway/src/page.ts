@@ -336,9 +336,9 @@ const selfTestDrilldown = (fixtures: SelfTestFixtureState[] | undefined, capabil
 
 /** One card of the Admission Gate pen: capability, its risk/isolation claim, live lifecycle, and — separately —
  * Argos's own live health opinion on top of it (HANDOFF 89), when there's an open finding to show. */
-const capabilityRow = (c: CapabilityRow, watchdog: WatchdogSnapshot): string => {
+const capabilityRow = (c: CapabilityRow, watchdog: WatchdogSnapshot, incidents: IncidentRecord[]): string => {
   const iso = isolationLabel(c.isolationClass ?? "");
-  const argos = capabilityWatchdogLevel(c.capability, watchdog);
+  const argos = capabilityWatchdogLevel(c.capability, watchdog, incidents);
   const argosBadge = argos ? `<span title="Argosův živý nález, ne formální stav Admission Gate">Argos: ${stateBadge(argos)}</span>` : "";
   return `<div class="p-card${c.lifecycleStatus === "QUARANTINED" ? " st-crit-card" : ""}"><div class="p-card-head"><code>${esc(c.capability)}</code>/v${esc(c.version)}${c.usesLlm ? ' <small title="volá jazykový model">🤖</small>' : ""}${stateBadge(c.lifecycleStatus)}</div><div class="p-card-meta"><span>riziko ${riskBadge(c.riskClass)}</span><span${iso.title ? ` title="${esc(iso.title)}"` : ""}>izolace <b>${esc(iso.label || "—")}</b></span><span>${esc(c.sideEffects ?? "—")}</span></div><div class="p-card-meta">${selfTestBadge(c.selfTest)}${argosBadge}</div>${selfTestDrilldown(c.selfTestFixtures, c.capability)}</div>`;
 };
@@ -450,15 +450,21 @@ export function computeWatchdog(m: FarmModel): WatchdogSnapshot {
   return { level, findings };
 }
 
+/** True once a human has acknowledged the still-open incident behind this finding key (owner's request
+ * 2026-09-11, Argos tuning) — "known, accepted, not fixing today", not "resolved". A key with no incidents
+ * entry at all (first render before reconcileAndPersistIncidents() ever ran) is never acknowledged. */
+const isAcknowledgedFinding = (key: string, incidents: IncidentRecord[]): boolean => !!incidents.find((i) => i.key === key && !i.resolvedAt)?.acknowledgedAt;
+
 /** One capability's own live health, as Argos currently sees it — INCIDENT/DEGRADED/undefined (healthy), read
  * off the same findings computeWatchdog() already produced for that capability's keys (quarantined:/
- * selftest-broken:/selftest-degraded:). Deliberately NOT a LifecycleStatus: this is Argos's live opinion shown
- * next to the Admission Gate's own ACTIVE/QUARANTINED badge, never a replacement for it (HANDOFF 89). */
-const capabilityWatchdogLevel = (capability: string, watchdog: WatchdogSnapshot): "INCIDENT" | "DEGRADED" | undefined => {
+ * selftest-broken:/selftest-degraded:), excluding any the owner already acknowledged as known. Deliberately NOT
+ * a LifecycleStatus: this is Argos's live opinion shown next to the Admission Gate's own ACTIVE/QUARANTINED
+ * badge, never a replacement for it (HANDOFF 89). */
+const capabilityWatchdogLevel = (capability: string, watchdog: WatchdogSnapshot, incidents: IncidentRecord[]): "INCIDENT" | "DEGRADED" | undefined => {
   // Exact keys, matching computeWatchdog()'s own scheme precisely — not a loose endsWith(), which could
   // over-match if one capability name were ever a suffix of another.
   const ownKeys = new Set([`quarantined:${capability}`, `selftest-broken:${capability}`, `selftest-degraded:${capability}`]);
-  const own = watchdog.findings.filter((f) => ownKeys.has(f.key));
+  const own = watchdog.findings.filter((f) => ownKeys.has(f.key) && !isAcknowledgedFinding(f.key, incidents));
   if (own.some((f) => f.level === "INCIDENT")) return "INCIDENT";
   if (own.some((f) => f.level === "WARN")) return "DEGRADED";
   return undefined;
@@ -474,6 +480,15 @@ export interface IncidentRecord {
   lastSeenAt: string;
   occurrences: number;
   resolvedAt?: string;
+  /** Owner's own judgment call: "known, accepted, not fixing today" (e.g. the self-test harness's documented
+   * subrequest-depth-limit artifact, HANDOFF 55-60/101) — never set by computeWatchdog()/reconcileIncidents()
+   * itself, only by acknowledgeIncident() below, and only reachable through a human clicking the button on
+   * /farm. Purely a display concern (see effectiveWatchdogLevel): reconcileIncidents() keeps tracking
+   * occurrences/lastSeenAt on an acknowledged incident exactly as before, and reconcileIncidents() itself drops
+   * these two fields whenever a key is reopened after a prior resolution (upsert only spreads `...prior` for a
+   * STILL-open incident) — a genuinely new occurrence of an old key never inherits a stale acknowledgment. */
+  acknowledgedAt?: string;
+  acknowledgedBy?: string;
 }
 
 /** Argos's own alerting channel health (HANDOFF 92, D1 audit kind "argos-alert-health", one fixed row) — the
@@ -535,6 +550,18 @@ export function reconcileIncidents(existing: IncidentRecord[], findings: Watchdo
 }
 
 /**
+ * "Known, accepted, not fixing today" (owner's request 2026-09-11, Argos tuning) — a human on /farm marking one
+ * still-open incident as understood, so it stops demanding attention (effectiveWatchdogLevel below) without
+ * hiding it or touching occurrences/lastSeenAt tracking. No-op (returns `existing` unchanged) for a key that
+ * doesn't exist, is already resolved, or is already acknowledged — the caller (index.ts) doesn't need to
+ * special-case any of those before calling. Pure — index.ts supplies `now`/`by` (the Access identity) and
+ * persists only the one record this actually changes.
+ */
+export function acknowledgeIncident(existing: IncidentRecord[], key: string, by: string, now: string): IncidentRecord[] {
+  return existing.map((i) => (i.key === key && !i.resolvedAt && !i.acknowledgedAt ? { ...i, acknowledgedAt: now, acknowledgedBy: by } : i));
+}
+
+/**
  * Argos's own e-mail alert (oponentura bod 11, "hlídací pes potřebuje štěkat") — composed here, pure and
  * testable, so index.ts's job is only to actually call the send binding. `newlyOpened`/`newlyResolved` are the
  * subset of reconcileIncidents()'s output that's actually new information (an incident on its first occurrence,
@@ -566,18 +593,41 @@ export function composeIncidentAlert(newlyOpened: IncidentRecord[], newlyResolve
   return { subject, body: lines.join("\n") };
 }
 
+/** Display-only severity that treats an acknowledged finding as no longer demanding attention (owner's request
+ * 2026-09-11, Argos tuning — document.stamp/document.archive's documented, long-standing self-test-harness
+ * artifact, HANDOFF 55-60/101, was sitting at INCIDENT red for 7+ hours with no way to say "yes, known, not
+ * fixing today"). Never changes reconcileIncidents()/sendArgosAlerts() themselves — those keep tracking and
+ * alerting on raw truth; this only changes what a human sees as "still needs attention" on /farm. */
+export const effectiveWatchdogLevel = (snapshot: WatchdogSnapshot, incidents: IncidentRecord[]): WatchdogLevel => {
+  const active = snapshot.findings.filter((f) => !isAcknowledgedFinding(f.key, incidents));
+  return active.some((f) => f.level === "INCIDENT") ? "INCIDENT" : active.length > 0 ? "DEGRADED" : "HEALTHY";
+};
+
 const watchdogFindingLine = (f: WatchdogFinding, incidents: IncidentRecord[]): string => {
   const record = incidents.find((i) => i.key === f.key && !i.resolvedAt);
   const age = record && record.occurrences > 1 ? ` <span class="dim">(poprvé ${shortAt(record.firstSeenAt)}, ${record.occurrences}×)</span>` : "";
-  return `<li style="color:var(--${f.level === "INCIDENT" ? "crit" : "warn"})">${esc(f.text)}${age}</li>`;
+  if (record?.acknowledgedAt) {
+    const by = record.acknowledgedBy ? `${esc(record.acknowledgedBy)}, ` : "";
+    return `<li class="dim">${esc(f.text)}${age} — ✓ potvrzeno jako známé (${by}${shortAt(record.acknowledgedAt)})</li>`;
+  }
+  const ackForm = `<form method="post" action="/farm/incidents/acknowledge" style="display:inline"><input type="hidden" name="key" value="${esc(f.key)}"><button class="p-btn p-btn-sm" type="submit" title="Potvrdit jako známý/přijatý nález — zůstane vidět, přestane počítat do celkového stavu">potvrdit jako známé</button></form>`;
+  return `<li style="color:var(--${f.level === "INCIDENT" ? "crit" : "warn"})">${esc(f.text)}${age} ${ackForm}</li>`;
 };
 
 /** The banner at the top of Argos's own tab — one verdict instead of reading every card, plus (once an incident
  * has been seen more than once) how long it's actually been going on. */
-const watchdogBanner = (snapshot: WatchdogSnapshot, incidents: IncidentRecord[]): string =>
-  `<div class="p-toolbar">${stateBadge(snapshot.level)}<span class="meta">${snapshot.findings.length === 0 ? "žádné otevřené nálezy" : `${snapshot.findings.length} ${snapshot.findings.length === 1 ? "otevřený nález" : "otevřené nálezy"}`}</span></div>${
+const watchdogBanner = (snapshot: WatchdogSnapshot, incidents: IncidentRecord[]): string => {
+  const level = effectiveWatchdogLevel(snapshot, incidents);
+  const activeCount = snapshot.findings.filter((f) => !isAcknowledgedFinding(f.key, incidents)).length;
+  const ackCount = snapshot.findings.length - activeCount;
+  const summary =
+    snapshot.findings.length === 0
+      ? "žádné otevřené nálezy"
+      : `${activeCount} ${activeCount === 1 ? "otevřený nález" : "otevřené nálezy"}` + (ackCount > 0 ? `, ${ackCount} potvrzeno jako známé` : "");
+  return `<div class="p-toolbar">${stateBadge(level)}<span class="meta">${summary}</span></div>${
     snapshot.findings.length ? `<ul style="margin:.25rem 0 1rem 1.25rem;padding:0">${snapshot.findings.map((f) => watchdogFindingLine(f, incidents)).join("")}</ul>` : ""
   }`;
+};
 
 /**
  * Farmář na banku Interface-Par (Anamax443/Interface-Par, styl saas-modern, rozvržení side-nav — viz
@@ -593,6 +643,7 @@ export function renderFarm(m: FarmModel): string {
   // deliberately not a third LifecycleStatus value — Admission Gate's ACTIVE/QUARANTINED stays a human decision
   // with its own commit, this is Argos's live opinion on top of it, not a replacement for it).
   const watchdog = computeWatchdog(m);
+  const incidents = m.incidents ?? [];
 
   // Declared first: penHead() (built further down, inside an IIFE that runs immediately) reads ICONS too —
   // a const only hoists its binding, not its value, so anything that reads it before this line throws
@@ -654,7 +705,7 @@ export function renderFarm(m: FarmModel): string {
       (byModule.get(c.module) as CapabilityRow[]).push(c);
     }
     return [...byModule.entries()]
-      .map(([mod, caps]) => `<div class="pen"><div class="pen-label">${ICONS.kravicky}${esc(mod)}</div><div class="p-cardgrid">${caps.map((c) => capabilityRow(c, watchdog)).join("")}</div></div>`)
+      .map(([mod, caps]) => `<div class="pen"><div class="pen-label">${ICONS.kravicky}${esc(mod)}</div><div class="p-cardgrid">${caps.map((c) => capabilityRow(c, watchdog, incidents)).join("")}</div></div>`)
       .join("");
   })();
 
@@ -814,7 +865,7 @@ export function renderFarm(m: FarmModel): string {
 
     <div id="view-argos" hidden>
       <div class="p-panehead">${ICONS.argos}<span>Argos hlídá — Kapability (Admission Gate)</span><span class="n">3 · kontrola · ${m.capabilities.length}, ${m.capabilities.filter((c) => c.lifecycleStatus === "QUARANTINED").length} v karanténě</span></div>
-      ${watchdogBanner(watchdog, m.incidents ?? [])}
+      ${watchdogBanner(watchdog, incidents)}
       <div class="p-toolbar"><span class="meta">Co každá kravička skutečně smí vykonat, seskupeno po modulu jako ohrada — riziko a izolace jsou vlastní tvrzení komponenty (descriptor), stav na kartě je to, co <b>Router doopravdy vynucuje</b> před každým dispatchem. Karanténa (config/&lt;instalace&gt;/lifecycle.json) se mění deploym, ne odsud — tahle stránka jen čte, nikdy nezapisuje</span></div>
       <div class="p-toolbar"><span class="meta">„self-test X/Y" na kartě = kolik vzorových případů té kapability naposledy skutečně prošlo proti reálnému běhu (ne jen že Worker odpověděl) — spusť ho na záložce Kravičky${m.selfTestAt ? `, naposledy ${shortAt(m.selfTestAt)}` : ""}</span></div>
       ${m.capabilities.length ? penGrid : '<div class="pen-empty">zatím žádné (vzdálení Workeři neodpověděli)</div>'}

@@ -2,6 +2,35 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-11 (104) — Argos tuning: acknowledge/known-issue mechanismus, banner nesvítí navždy za odložený nález
+
+**Pokyn vlastníka:** "vyladit argose, farmáře, dojičky a potom začneme testovat jednotlivé krávy. nic
+neuspěchat" — první krok, ne naslepo MAJOR 6. Živý `/farm` teď ukázal konkrétní věc k doladění: watchdog
+banner **INCIDENT** (červená) kvůli `document.stamp`/`document.archive`'s dávno zdokumentovanému
+"subrequest depth limit" self-test artefaktu (HANDOFF 55–60, znovu potvrzeno 101) — otevřeno nepřetržitě
+od 06:36 dnes ráno (20× potvrzeno), nikdy se samo nevyřeší, Argos dosud neměl způsob, jak nález potvrdit
+jako známý/přijatý.
+
+**Postaveno (`page.ts`):** `IncidentRecord` dostal `acknowledgedAt`/`acknowledgedBy`. Nová
+`acknowledgeIncident(existing, key, by, now)` — čistá funkce, no-op pro neznámý klíč, už vyřešený nebo už
+potvrzený nález (idempotentní, druhé kliknutí nepřepíše kým/kdy). **`reconcileIncidents()` beze změny** —
+potvrzení se drží samo přes existující `...prior` spread na pokračujícím nálezu; nově otevřený nález (i
+reopen po vyřešení stejného klíče) ho nikdy nezdědí, protože ten branch spread nepoužívá. Nová
+`effectiveWatchdogLevel(snapshot, incidents)` — zobrazovací (ne rozhodovací) závažnost: potvrzené nálezy
+nepočítají do celkového INCIDENT/DEGRADED odznaku ani do kapabilitní karty (`capabilityWatchdogLevel`
+teď bere `incidents`), ale zůstávají v seznamu vidět (jen šedě, "✓ potvrzeno jako známé (kým, kdy)").
+**`reconcileIncidents()`/`sendArgosAlerts()` samy beze změny** — Argos dál trackuje a sám by upozornil na
+nový výskyt stejného klíče po jeho vyřešení; potvrzení mění jen to, co vidí člověk na `/farm`, ne co
+si Argos pamatuje.
+
+**`index.ts`:** nová `POST /farm/incidents/acknowledge` (form `key`, identita z `receivedFrom(request)`,
+stejná důvěra jako `decideReview`/`purge`) — no-op zápis do D1, pak redirect `/farm#argos`. Tlačítko
+"potvrdit jako známé" u každého ještě-nepotvrzeného nálezu v banneru.
+
+**Brány zelené:** typecheck (root i `deploy/cloudflare`), **308/308 testů** (10 nových —
+`acknowledgeIncident` no-op/idempotence, `reconcileIncidents` zachovává potvrzení na pokračujícím nálezu
+a zahazuje ho na reopenu, `effectiveWatchdogLevel` mix scénáře), `arch`, `farm:check`.
+
 ## 2026-09-11 (103) — Posudek 8 zapsán a ověřen v kódu: oba P0 nálezy jsou Posudek 7's MAJOR 2/3, ne nové
 
 **Kontext:** vlastník poslal externí oponenturu nad aktuálním `main` (reakce na dnešní SEVERKA 102).

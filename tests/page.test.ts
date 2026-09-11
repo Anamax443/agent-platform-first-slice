@@ -4,7 +4,20 @@
 // page.ts has no Cloudflare-runtime imports (only src/platform types + bank.js/farm-theme.js, both plain strings),
 // so it is directly callable here — same reasoning as relay-audit.ts being split out of index.ts for testability.
 import { describe, expect, it } from "vitest";
-import { auditClaimContradicts, composeIncidentAlert, computeWatchdog, reconcileIncidents, renderFarm, type CapabilityRow, type FarmModel, type IncidentRecord, type WatchdogFinding } from "../deploy/cloudflare/apf-gateway/src/page.js";
+import {
+  acknowledgeIncident,
+  auditClaimContradicts,
+  composeIncidentAlert,
+  computeWatchdog,
+  effectiveWatchdogLevel,
+  reconcileIncidents,
+  renderFarm,
+  type CapabilityRow,
+  type FarmModel,
+  type IncidentRecord,
+  type WatchdogFinding,
+  type WatchdogSnapshot,
+} from "../deploy/cloudflare/apf-gateway/src/page.js";
 
 const model: FarmModel = {
   installation: "local-fakes",
@@ -386,6 +399,75 @@ describe("reconcileIncidents() — Incident Store, first slice (HANDOFF 84 conti
     const existing: IncidentRecord[] = [{ key: "ohrada-backlog", level: "WARN", text: "1 instance čeká", firstSeenAt: "2026-09-10T09:00:00Z", lastSeenAt: "2026-09-10T09:00:00Z", occurrences: 1 }];
     const changed = reconcileIncidents(existing, [], "2026-09-10T09:30:00Z", []);
     expect(changed).toEqual([{ ...existing[0], resolvedAt: "2026-09-10T09:30:00Z" }]);
+  });
+
+  it("a reopened incident (same key, previously resolved) never inherits a stale acknowledgment — reconcileIncidents() only spreads ...prior for a STILL-open incident", () => {
+    const existing: IncidentRecord[] = [
+      { key: "selftest-degraded:document.archive", level: "WARN", text: "old", firstSeenAt: "2026-09-01T00:00:00Z", lastSeenAt: "2026-09-01T00:10:00Z", occurrences: 4, resolvedAt: "2026-09-01T00:10:00Z", acknowledgedAt: "2026-09-01T00:05:00Z", acknowledgedBy: "mtrnka@axima.cz" },
+    ];
+    const changed = reconcileIncidents(existing, [finding("selftest-degraded:document.archive", "WARN", "new")], "2026-09-10T10:00:00Z", ["document.archive"]);
+    expect(changed).toEqual([{ key: "selftest-degraded:document.archive", level: "WARN", text: "new", firstSeenAt: "2026-09-10T10:00:00Z", lastSeenAt: "2026-09-10T10:00:00Z", occurrences: 1 }]);
+  });
+
+  it("a continuing acknowledged incident keeps its acknowledgment across runs (spread ...prior)", () => {
+    const existing: IncidentRecord[] = [{ key: "selftest-degraded:document.stamp", level: "WARN", text: "12/14", firstSeenAt: "2026-09-10T06:00:00Z", lastSeenAt: "2026-09-10T09:00:00Z", occurrences: 6, acknowledgedAt: "2026-09-10T07:00:00Z", acknowledgedBy: "mtrnka@axima.cz" }];
+    const changed = reconcileIncidents(existing, [finding("selftest-degraded:document.stamp", "WARN", "12/14")], "2026-09-10T09:30:00Z", ["document.stamp"]);
+    expect(changed[0]).toMatchObject({ acknowledgedAt: "2026-09-10T07:00:00Z", acknowledgedBy: "mtrnka@axima.cz", occurrences: 7 });
+  });
+});
+
+describe("acknowledgeIncident() — 'known, accepted, not fixing today' (owner's request 2026-09-11, Argos tuning)", () => {
+  const openIncident: IncidentRecord = { key: "selftest-degraded:document.archive", level: "WARN", text: "2/4", firstSeenAt: "2026-09-11T06:00:00Z", lastSeenAt: "2026-09-11T13:00:00Z", occurrences: 20 };
+
+  it("marks an open, unacknowledged incident acknowledged, leaving every other field untouched", () => {
+    const updated = acknowledgeIncident([openIncident], "selftest-degraded:document.archive", "mtrnka@axima.cz", "2026-09-11T13:30:00Z");
+    expect(updated).toEqual([{ ...openIncident, acknowledgedAt: "2026-09-11T13:30:00Z", acknowledgedBy: "mtrnka@axima.cz" }]);
+  });
+
+  it("is a no-op for a key that doesn't exist", () => {
+    expect(acknowledgeIncident([openIncident], "no-such-key", "mtrnka@axima.cz", "2026-09-11T13:30:00Z")).toEqual([openIncident]);
+  });
+
+  it("is a no-op for an already-resolved incident — acknowledging closed history makes no sense", () => {
+    const resolved: IncidentRecord = { ...openIncident, resolvedAt: "2026-09-11T12:00:00Z" };
+    expect(acknowledgeIncident([resolved], "selftest-degraded:document.archive", "mtrnka@axima.cz", "2026-09-11T13:30:00Z")).toEqual([resolved]);
+  });
+
+  it("is a no-op (idempotent) for an already-acknowledged incident — a repeat click doesn't overwrite who/when", () => {
+    const acked: IncidentRecord = { ...openIncident, acknowledgedAt: "2026-09-11T13:00:00Z", acknowledgedBy: "first-click" };
+    expect(acknowledgeIncident([acked], "selftest-degraded:document.archive", "second-click", "2026-09-11T13:30:00Z")).toEqual([acked]);
+  });
+});
+
+describe("effectiveWatchdogLevel() — acknowledgment is a display concern, never changes what reconcileIncidents()/alerts see (HANDOFF 55-60/101 self-test-harness noise)", () => {
+  const snapshot = (findings: WatchdogFinding[]): WatchdogSnapshot => ({ level: findings.some((f) => f.level === "INCIDENT") ? "INCIDENT" : findings.length ? "DEGRADED" : "HEALTHY", findings });
+  const inc = (key: string, level: WatchdogFinding["level"], acknowledged: boolean): IncidentRecord => ({ key, level, text: key, firstSeenAt: "2026-09-11T06:00:00Z", lastSeenAt: "2026-09-11T13:00:00Z", occurrences: 20, ...(acknowledged ? { acknowledgedAt: "2026-09-11T13:00:00Z", acknowledgedBy: "mtrnka@axima.cz" } : {}) });
+
+  it("matches the raw snapshot level when nothing is acknowledged", () => {
+    const s = snapshot([{ key: "a", level: "INCIDENT", text: "a" }]);
+    expect(effectiveWatchdogLevel(s, [inc("a", "INCIDENT", false)])).toBe("INCIDENT");
+  });
+
+  it("drops to HEALTHY once the only open finding is acknowledged, even though the raw snapshot is still INCIDENT", () => {
+    const s = snapshot([{ key: "a", level: "INCIDENT", text: "a" }]);
+    expect(s.level).toBe("INCIDENT");
+    expect(effectiveWatchdogLevel(s, [inc("a", "INCIDENT", true)])).toBe("HEALTHY");
+  });
+
+  it("a mix (one acknowledged INCIDENT, one un-acknowledged WARN) settles at DEGRADED, not INCIDENT and not HEALTHY", () => {
+    const s = snapshot([
+      { key: "a", level: "INCIDENT", text: "a" },
+      { key: "b", level: "WARN", text: "b" },
+    ]);
+    expect(effectiveWatchdogLevel(s, [inc("a", "INCIDENT", true), inc("b", "WARN", false)])).toBe("DEGRADED");
+  });
+
+  it("a second, un-acknowledged INCIDENT still dominates even when the first one is acknowledged", () => {
+    const s = snapshot([
+      { key: "a", level: "INCIDENT", text: "a" },
+      { key: "b", level: "INCIDENT", text: "b" },
+    ]);
+    expect(effectiveWatchdogLevel(s, [inc("a", "INCIDENT", true), inc("b", "INCIDENT", false)])).toBe("INCIDENT");
   });
 });
 

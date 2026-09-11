@@ -27,6 +27,7 @@ import { ReviewService, type Decision } from "../../../../src/platform/review.js
 import type { MessageEnvelope, ResultEnvelope } from "../../../../src/platform/types.js";
 import { WORKFLOW_NAMES, workflowDef } from "../../../../src/platform/workflow.js";
 import {
+  acknowledgeIncident,
   auditClaimContradicts,
   composeIncidentAlert,
   computeWatchdog,
@@ -1330,6 +1331,28 @@ export default {
       const testIncident: IncidentRecord = { key: "test-alert", level: "WARN", text: "Testovací zpráva z /farm/test-alert — pokud tohle vidíš, doručení funguje.", firstSeenAt: now, lastSeenAt: now, occurrences: 1 };
       await sendArgosAlerts(env, [testIncident], [], now);
       return Response.json({ ok: true, mode: env.ARGOS_ALERT_MODE, to: installation.profile.channels.operatorAlertTo });
+    }
+
+    // "Known, accepted, not fixing today" (owner's request 2026-09-11, Argos tuning) — a human on /farm marking
+    // one still-open incident acknowledged so it stops holding the banner at INCIDENT/DEGRADED red without
+    // resolving it or touching occurrences/lastSeenAt (page.ts's acknowledgeIncident()/effectiveWatchdogLevel()).
+    // `by` is the same Cloudflare Access header identity every other /farm action already trusts (decideReview,
+    // purge) — no new authorization concept.
+    if (url.pathname === "/farm/incidents/acknowledge" && request.method === "POST") {
+      const form = await request.formData().catch(() => new FormData());
+      const key = String(form.get("key") ?? "");
+      const now = iso(new SystemClock().now());
+      await ensureD1Audit(env.AUDIT);
+      const existing = await allIncidents(env);
+      const updated = acknowledgeIncident(existing, key, receivedFrom(request), now).find((i) => i.key === key);
+      // Only persist when acknowledgeIncident() actually changed something — an unknown/resolved/already-
+      // acknowledged key is a silent no-op here too, same contract as the pure function itself.
+      if (updated?.acknowledgedAt) {
+        await env.AUDIT.prepare("INSERT OR REPLACE INTO audit (audit_id, at, kind, correlation_id, workflow_id, tenant_id, actor_id, capability, json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+          .bind(watchdogIncidentAuditId(key), now, WATCHDOG_INCIDENT_KIND, null, null, null, "argos", null, JSON.stringify(updated))
+          .run();
+      }
+      return Response.redirect(new URL("/farm#argos", url).toString(), 303);
     }
 
     // Upload straight into the R2 inbox from the Farmář page (owner's request, 2026-09-07: "potřebuji to u
