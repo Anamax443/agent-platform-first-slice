@@ -2,6 +2,43 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-12 (119) — SEVERKA: Žlab/Konev/Mlékárna/Průsvitná stáj/Ponocný formalizovány (nejlepší dostupná interpretace, neověřeno přímo s vlastníkem)
+
+Vlastník sdílel do konverzace externí srovnání farmy proti Copilot Studio/Agent 365, Salesforce
+Agentforce a LangGraphu, vzniklé v jiné diskuzi mimo tenhle repo. Ta debata poprvé pojmenovala pět
+konceptů, které do teď v repu vůbec nebyly: **Žlab**, **Konev**, **Mlékárna**, **Průsvitná stáj**,
+**Ponocný**. Zdrojová debata samotná (kde vznikly definice) tomuhle repu/asistentovi k dispozici
+nebyla — jen zprostředkovaný text, ze kterého se daly odvodit funkční role:
+
+- **Žlab** — immutable, signed, hash-chained (`parent hash`) úložiště, kam krávy zapisují
+  `Evidence` (formalizováno HANDOFF 117/Posudek 12) — formální jméno pro dosavadní generický
+  „sklad" v `### Import Gate` diagramu.
+- **Konev** — kryptograficky zapečetěný výstup dojičky (`CertifiedBusinessObject`); jakmile je
+  zapečetěný, nikdo (ani Farmář, ani Mlékárna) nesmí jeho obsah změnit, jen přijmout celý nebo
+  odmítnout celý.
+- **Mlékárna** — zobecněné jméno pro to, co je dnes konkrétně `BC Executor`: úzce oprávněný, hloupý
+  write executor, co přijme zapečetěný Konev a zapíše ho do cílového systému. Generalizace stejná
+  jako u `DRY_RUN` principu ((118) níže) — BC Executor je první instance, ne jediná možná.
+- **Průsvitná stáj** — pozorovatelný/krokovatelný/přehratelný běh workflow instance pro člověka
+  (`STEP`/`BREAKPOINT`/`REPLAY`), inspirované LangGraphovou inspekcí stavu, ale s invariantem, že
+  pozorovací kanál nikdy nesmí obejít Router/ExecutorHost rozhodovací řetěz.
+- **Ponocný** — pojmenovaný enforcement arm párovaný s Argosem: kde Argos detekuje
+  (`HEALTHY`/`DEGRADED`/`INCIDENT`, dnes reálně nasazeno a živě ověřeno), Ponocný by měl automaticky
+  jednat (quarantine/capability kill switch/tenant kill switch/emergency `READ_ONLY`) — dnešní
+  `LifecycleRegistry`'s `QUARANTINED` je jediný kus týhle reakce, co existuje, a je ruční.
+
+Zapsáno do `docs/SEVERKA.md`: `### Tři role, ne dvě` rozšířeno na plnou linku Žlab→Dojička→Konev→
+Mlékárna (s diagramem), `### Import Gate` diagram přejmenován (sklad→Žlab, BC Executor→Mlékárna),
+`### Kontrola musí být svázaná s konkrétní hodnotou` doplněna o vazbu Evidence↔Žlab, `## Vrstvy`
+dostala dva nové řádky (Průsvitná stáj, Argos+Ponocný), `## Positioning` dostalo novou podsekci
+`### Srovnání s enterprise konkurencí` (Copilot Studio/Agent 365/Agentforce/LangGraph, konceptuální
+skóre výslovně odlišené od kódem ověřených posudků).
+
+**Důležitá výhrada, zapsaná i přímo v SEVERKA u `### Tři role, ne dvě`:** tahle formalizace je
+nejlepší dostupná interpretace zprostředkovaného kontextu, **ne přímé zadání ověřené s vlastníkem v
+týhle konverzaci** — pokud byl záměr jiný, sekce se má přepsat, ne brát jako hotové rozhodnutí.
+Čistě dokumentační krok, žádný kód dnes.
+
 ## 2026-09-12 (118) — SEVERKA: DRY_RUN zobecněn na všechny write capability, ne jen na BC Executor
 
 Vlastník zpřesnil: `### BC Executor musí být „hloupý"`'s JSON Export + Invoice Generator (11. 9.

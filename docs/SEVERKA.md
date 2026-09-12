@@ -33,6 +33,8 @@ se přepisuje orchestrátor.
 | **Policy Engine + risk scoring** | částečně — `policy.ts` (`policyFor(installation.policies, capability, "1")`) existuje per-capability | rozšířit o rizikovou úroveň požadavku (nízké/střední/vysoké → auto/potvrzení/nikdy) | střední — navazuje na existující Human Review, není nová vrstva vedle ní |
 | **Execution Engine** | existuje (`Router`, `ExecutorHost`, retry/review/journal) | — | **Opraveno 8. 9. 2026 (`b5b8be8`/`f29eb6f`), tenhle řádek byl zastaralý.** Hlubší identita `tenantId + handlerId + idempotencyKey` + fingerprint (`sha256(canonicalize(payload))`) → `IDEMPOTENCY_CONFLICT` je univerzální (`src/platform/executor-host.ts`, každý `ExecutorHost`). Durable effect ledger (`IdempotencyLedger` Durable Object, atomická `reserveOrGet`/`resolve`/`release`) ale zatím jen na `apf-document-host` — `apf-email-executor`'s `/dispatch` staví `ExecutorHost` bez `idempotency` volby, tedy s výchozím `InMemoryIdempotencyStore`, který se zahazuje s každým požadavkem (fresh `ExecutorHost` per `/dispatch`, žádná deduplikace napříč požadavky). Pro `SEND_MODE: "sandbox"` neškodí; **před `"live"` stojí za zvážení, jestli `email.send` (IRREVERSIBLE) nemá dostat stejnou durable ledger jako `document.stamp`, ne jen composite klíč** — otevřené, nezařazené do pořadí |
 | **Human Review** | rozhodovací cesta existuje a je živě ověřená; časové expirace nasazené, alarm mechanismus živě ověřen | — | **Opraveno 8. 9. 2026 (`6dea224`, HANDOFF 50–52) a 9. 9. 2026 (`165fe38`, HANDOFF 66–67).** `SqliteReviewTaskStore` (Durable Object SQLite) drží úkoly durabilně, `POST /workflow/:id/review/decide` → `decideReview()` je nasazený a živě ověřený (`WAITING(REVIEW)` → decide → dokončená instance). WF-REV-003 (`orchestrator.applyReviewExpiries()`, `EXPIRE_TO_FAILED`/`EXPIRE_TO_CANCELLED`/`ESCALATE`/`CREATE_NEW_REVIEW`) je nasazené: každá `WorkflowInstance` si sama nastaví `ctx.storage.setAlarm()` na deadline vlastního otevřeného review úkolu (`rearmReviewAlarm()`). **Živě ověřeno (HANDOFF 67):** dočasnou izolovanou diagnostikou (mimo real journal/reviewStore) potvrzeno, že CF Durable Object alarm na `farm-bass443` skutečně vystřelí přesně v čas — kód pak vrácen, `git diff` prázdný. **Zbývá:** živé potvrzení celé byznys transakce (skutečný review úkol, co přirozeně expiruje a projde `applyReviewExpiries()`) — ověřená je zatím jen infrastrukturní vrstva (alarm → hook), ne plný běh přes reálnou `WorkflowDef` |
+| **Průsvitná stáj (execution transparency)** | chybí jako pojmenovaný koncept, koncept zapsán 12. 9. 2026 | Pozorovatelný, krokovatelný a přehratelný běh workflow instance pro člověka — `STEP`/`BREAKPOINT`/`REPLAY` nad existujícím journalem (`Instance`/`StepRecord`, viz `### Execution Engine`). Inspirace: LangGraph umí durable execution + inspekci/modifikaci stavu velmi dobře; **rozdíl, který chceme zachovat:** člověk smí *pozorovat* a *řídit průchod* (kdy krok proběhne, kdy se zastavit), ale pozorovací kanál sám nesmí být cestou, jak obejít tenant/policy/integrity pravidla — `STEP`/`REPLAY` nikdy nesmí obejít `Router`/`ExecutorHost`'s rozhodovací řetěz, jen ho zpomalit/zviditelnit. Journal (`Instance`/`StepRecord`) už dnes nese potřebná data pro replay čtení; chybí UI a samotný `STEP`/`BREAKPOINT` řídicí mechanismus | **střední, pokud se udělá špatně** — debug/observability kanál, který by uměl obejít policy, by byl přesně ten typ zadních vrátek, co `### Zero-trust model` má bránit. Implementace zatím 0 % |
+| **Argos (watchdog) + Ponocný (enforcement)** | Argos existuje a je nasazený (HANDOFF 92–106): self-test rotace přes D1, banner `HEALTHY`/`DEGRADED`/`INCIDENT`, acknowledge/known-issue mechanismus, e-mail alerting živě ověřený až do schránky. **Ponocný jako pojmenovaný, oddělený mechanismus chybí** — dnešní reakce na incident je z větší části ruční (vlastník čte banner, rozhoduje) | Rozdělení rolí (zpřesněno 12. 9. 2026): **Argos detekuje** (self-test, invarianty, HEALTHY/DEGRADED/INCIDENT) — tohle už je hotové. **Ponocný by měl jednat** — automaticky spustit `quarantine`/`capability kill switch`/`tenant kill switch`/emergency `READ_ONLY` na základě toho, co Argos nahlásí, bez čekání na ruční zásah. Dnešní `LifecycleRegistry`'s `QUARANTINED` (`### Admission Gate (module lifecycle)` výš) je jediný kus týhle reakce, co už existuje — je ruční (`config/<installation>/lifecycle.json`), ne automatický na živý signál | **nízké dnes** (jediný operátor čte banner sám) — **roste s každým dalším tenantem/COW**, protože ruční reakce se neškáluje; automatický Ponocný je předpoklad pro to, aby `### Blast radius / karanténa` (Zero-trust model) fungovalo i když se nikdo zrovna nedívá na dashboard |
 | **Tenant Layer** | koncepčně navrženo, nasazení záměrně single-tenant | `farm-bass443` je `CLOUD_SINGLE_TENANT` (viz `NAVRHOVY-LIST-farma.md`); `tenant-7` je jen protistrana bezpečnostních testů, ne živý zákazník. Foundation nese `tenants: string[]` + policy semantiku, ale skutečné tenant resolution (`TenantConfig { tenantId, assistant.displayName, orchestration.actorId }` místo jediného globálního `roles.orchestrator`) je budoucí capability, ne dnešní bug. **Vlastníkův nápad 2026-09-09:** zadavatel požadavku (dnes: "Zadání požadavku" na `/farm`) by se měl na začátku identifikovat — token vázaný na e-mail, ověřovací e-mail (magic-link styl), ne jen spoléhat na jediné CF Access přihlášení vlastníka. Navazuje přímo na MAJOR 2 (Posudek 7: Access identita se dnes jen věří z hlavičky, kryptograficky se neověřuje) — stejná mezera, dva úhly pohledu. **Formalizováno 12. 9. 2026 jako samostatná vrstva `Office`, viz řádek níže** | nízké dnes (nic naostro na tom neběží) — vysoké, jakmile přibude druhý reálný tenant nebo veřejné zadávání požadavků a nikdo tenant/requester resolution nedodělal předem |
 | **Office (tenant/identity/access)** | chybí, koncept zapsán 12. 9. 2026 | Recepce + matrika farmy — kde vzniká tenant a jeho lidé, ne kde se rozhoduje o business datech. Tři oddělené věci: **(1) Tenant** — `tenantId`, název, stav `ACTIVE`/`SUSPENDED`/`CLOSED` (smluvní/licenční, ne bezpečnostní expirace). **(2) Uživatelé a role** — e-mail identita, role (`admin`/`accountant`/`reviewer`/...), vazba na tenant; Office samo **neověřuje** heslo/e-mail/MFA — deleguje na skutečný identity provider (Cloudflare Access, Entra ID, Google) a jen mapuje jeho kryptograficky ověřenou identitu na `tenantId`+role (`ověřená identita X patří tenantovi Y, má role Z`). **(3) Tokeny** — session token (krátká expirace, desítky minut až hodiny, refresh přes IdP), service/connector token (vlastní expirace/rotace, žádné věčné tokeny), oba nesou `issuedAt`/`expiresAt`/`notBefore`/`revokedAt`/`tokenId`/`tenantId`/`actorId`/`scopes`; Office musí umět token okamžitě revokovat, ne jen čekat na expiraci. `tenantId` samo nikdy není token — je to trvalá identita organizace, token je jen dočasné oprávnění jednat jejím jménem. **MFA:** konfigurovatelné per tenant (`OPTIONAL`/`REQUIRED`/`REQUIRED_FOR_PRIVILEGED`), plus **step-up MFA** na kritické operace (např. schválení zápisu do BC nad limit) — Office samo MFA neimplementuje, jen čte úroveň autentizace, kterou dosvědčí IdP, a zapisuje ji do audit historie rozhodnutí. Přímo navazuje na `accessJwtVerified: false` (Posudek 7 MAJOR 2 / Posudek 8 P0-1 / Posudek 12 bod 7) — Office je architektonické místo, kam ta oprava patří, ne řešení samo o sobě | **vysoké, jakmile přibude druhý lidský uživatel nebo tenant** — dnešní jediný vlastnický účet za Cloudflare Access mezeru zakrývá; bez Office nemá multi-tenant provoz, kde stojí tenant/role resolution, a `TrustedContext` by dál stál na perimeter trust, ne na kryptograficky ověřené identitě |
 | **Connector Layer** | 1 z N hotový | `document-host` běží na farmě; `apf-mail-ingest` a `apf-email-executor` jsou na farmě doslova skeleton (`501 NOT_WIRED`, `email()` handler dělá `setReject`) | dokončení = zároveň první reálný **event-driven** case (mail přijde → spustí workflow), ne samostatná vzdálená vrstva |
@@ -78,6 +80,54 @@ tam, kde deterministické zpracování nestačí.* Až přibude Agent Registry, 
 nerozhoduje jen „kdo to umí", ale „kdo to umí bezpečně, dostatečně kvalitně a nejlevněji"
 (levný model pro většinu, silný model jen na nejasné případy, confidence-based eskalace na
 human review — ne „pošli všechno nejdražšímu modelu").
+
+### Srovnání s enterprise konkurencí — Copilot Studio/Agent 365, Salesforce Agentforce, LangGraph (12. 9. 2026)
+
+Vlastníkovo srovnání **koncepce** (ne dnešního kódu) proti tomu, kam se v roce 2026 posouvají
+enterprise agentní platformy. Důležitá výhrada hned na začátku: **nesrovnává se rozsah produktu.**
+Microsoft a Salesforce mají obrovský ekosystém, IAM, SLA, globální infrastrukturu, roky vývoje —
+farma nemá a v dohledné době mít nebude. Srovnává se **architektonická koncepce bezpečného
+vykonávání agentních business procesů**, kde je pozice farmy nezvykle silná.
+
+**Co to potvrzuje:** Microsoft Agent 365 funguje jako centrální control plane s identitou agentů v
+Entra, nad kterou lze aplikovat Conditional Access/RBAC/ABAC — tedy **autorizace vynucovaná identity
+systémem, ne instrukcí v promptu**. To je přesně `## Positioning`'s `AI navrhuje → deterministická
+vrstva autorizuje → úzký COW vykonává` — farma tedy nejde exotickou cestou, jde stejným směrem jako
+enterprise lídr, jen vlastní implementací.
+
+**Kde je farma koncepčně nadstandardní:** typický agentní framework pracuje hlavně se stavem
+(`Agent A → state → Agent B → state → tool`) — výstup předchozího kroku se bere jako fakticky
+pravdivý vstup dalšího. Řetěz `Kráva → Žlab (immutable evidence) → Dojička → Konev
+(kryptograficky zapečetěný CertifiedBusinessObject) → Mlékárna` (`### Tři role, ne dvě` výš) jde
+dál: výstup není automaticky pravda, je to **tvrzení s původem, hashem a důkazem**. Stejně
+`COMPROMISED-ORCHESTRATOR`/composition attack suite (`### Nový povinný test...`, `### Composition
+attack suite` výš) řeší explicitně to, co shared-responsibility modely (Salesforce Agentforce) nechávají
+na zákazníkovi doladit: architektonickou cestu, jak zabránit „AI mistake → účetní zápis" i když je
+Farmář nebo jednotlivá kráva kompromitovaná.
+
+**Co si vzít z LangGraphu:** durable execution + inspekce/modifikace stavu za běhu je silná stránka
+LangGraphu. `Průsvitná stáj` (`## Vrstvy` výš) je farmin ekvivalent — se zásadním rozdílem, který
+se má zachovat: pozorovací/řídicí kanál (`STEP`/`BREAKPOINT`/`REPLAY`) nikdy nesmí být cestou, jak
+obejít tenant/policy/integrity pravidla, jen cestou, jak proces zpomalit a zviditelnit.
+
+**Co velcí mají a farma ne:** Entra, Conditional Access, Purview, Sentinel, DLP, CMK, regionální
+data residency, síťové řízení, ALM, governance, obrovský connector ekosystém — roky budované
+identity/data/security infrastruktury. **Farma dnes má architektonický návrh a postupně vznikající
+implementaci, ne hotovou platformu.** Správná formulace není „farma je bezpečnější než Microsoft
+Agent 365" — je to „koncepce farmy je na úrovni moderních enterprise agent-security principů a v
+několika konkrétních oblastech (evidence/provenance, DRY_RUN jako povinnost, kompozice více
+agentů) jde ještě tvrdším směrem".
+
+**Vnější signál, který tohle podporuje:** průzkum Harnessu (2026) uvádí mezeru mezi důvěrou firem
+v zabezpečení agentů a tím, co skutečně dokážou ověřit, včetně nízkého rozšíření deployment gates a
+kill switchů. Farma na tohle nezávisle došla stejným směrem — `Admission Gate → CertificationRecord
+→ Argos → quarantine → capability/tenant kill switch → emergency READ_ONLY → Ponocný` (`## Vrstvy`
+výš) — signál, že se řeší správný problém, ne že je řešení už hotové.
+
+**Metodologická poznámka:** číselné skóre v tomhle srovnání je vlastníkovo konceptuální hodnocení
+(kam farma míří po naplnění dnešních invariantů), ne měření dnešního kódu — na rozdíl od
+`docs/POSUDKY.md`'s posudků, který se drží disciplíny „ověřeno v kódu, ne převzato z tvrzení",
+tohle je vědomě dopředu hledící srovnání a mělo by se tak i číst.
 
 ---
 
@@ -165,31 +215,55 @@ jako u zbytku dokumentu: cílový obraz, ne rozhodnuté zadání. Rozšiřuje a 
 `### Zero-trust model`'s „AI výstup nikdy není příkaz" o třetí roli a o to, co přesně smí orchestrátor
 (Farmář) dělat s daty, která mezi COW předává.
 
-### Tři role, ne dvě
+### Tři role, ne dvě — a plná linka Žlab → Dojička → Konev → Mlékárna (pojmenování zpřesněno 12. 9. 2026)
 
 - **Farmář** (orchestrátor) — jen hrubé rozpoznání záměru a routing. „Tohle vypadá jako faktura, cíl:
   připravit k importu do BC." Nic víc. Nečte a neskládá business data, jen rozhoduje, která COW má
   přijít na řadu.
 - **Krávy** (COW) — jednoúčelové, úzké. Každá dělá jeden konkrétní úkon (přečti dokument do MD,
   vytáhni pole faktury, ověř IČO proti ARES, ověř DIČ, ověř bankovní účet, ověř součty/DPH/data).
+- **Žlab** — formální jméno pro to, co je výš i níž popsané jako „sklad": **immutable, signed**
+  úložiště, kam krávy odkládají `Evidence` (viz `### Kontrola musí být svázaná s konkrétní hodnotou`
+  níže) — append-only, hash-chained (`parent hash` na předchozí záznam), nikdy se v něm nic
+  nepřepisuje ani nemaže. Farmář do Žlabu smí jen *ukazovat* (odkazem na artefakt), nikdy do něj
+  psát business hodnotu vlastní rukou (`### Hlavní invariant` níže). Dojička čte výhradně ze Žlabu,
+  nikdy z tvrzení Farmáře.
 - **Dojičky** — nová role vedle COW. Na rozdíl od COW (jednoúčelová) je dojička **jednoduchá
-  kumulativní**: deterministicky sesbírá výsledky víc krav (extrahovaná data, PASS/FAIL, evidence) do
-  jednoho dalšího balíku/stavu podle pevného kontraktu. Nic nevymýšlí, nic neopravuje, nic
-  nepřepisuje — jen skládá.
+  kumulativní**: deterministicky sesbírá evidenci víc krav ze Žlabu do jednoho dalšího balíku/stavu
+  podle pevného kontraktu. Nic nevymýšlí, nic neopravuje, nic nepřepisuje — jen skládá.
+- **Konev** — zapečetěný (kryptograficky podepsaný) výstup dojičky: `CertifiedBusinessObject`.
+  Obsahuje výsledná business data + odkazy na všechnu evidenci ze Žlabu, ze které vznikla, plus
+  podpis nad tím vším. Jakmile je Konev zapečetěný, žádná další komponenta (ani Farmář, ani
+  Mlékárna) nesmí jeho obsah změnit — jen ho buď přijme celý, nebo odmítne celý.
+- **Mlékárna** — obecné jméno pro to, co je dnes konkrétně `BC Executor`: úzce oprávněný, „hloupý"
+  write executor, který přijme zapečetěný Konev, ověří pečeť/fingerprint a zapíše ho do cílového
+  systému (BC, ale stejně tak budoucí jiný systém) — nikdy nečte a nezpracovává nic mimo Konev
+  samotný. Generalizace stejná jako u `### DRY_RUN jako obecný princip`: BC Executor je první
+  konkrétní Mlékárna, ne jediná možná.
 
 ```
 faktura → Farmář (rozpozná: "faktura, cíl BC import")
         → Kráva: Document Reader (MD)
         → Kráva: Invoice Extractor (pole faktury)
         → Krávy: ARES / VAT / Bank Account / Math validation (paralelně, jednoúčelově)
-        → Dojička: složí Invoice Package (Extraction/ARES/VAT/Účet/Math/Duplicita → Overall)
-        → Import Gate (deterministický, viz níže)
-        → Kráva: BC Import COW (zapíše, nebo NE)
+        → [ZAPIŠOU EVIDENCI DO ŽLABU — immutable, signed, hash-chained]
+        → Dojička: čte ze Žlabu, složí Invoice Package (Extraction/ARES/VAT/Účet/Math/Duplicita
+          → Overall) → zapečetí jako Konev (CertifiedBusinessObject)
+        → Import Gate (deterministický, viz níže) — poslední kontrola před předáním Konve dál
+        → Mlékárna (konkrétně: BC Import COW) — přijme Konev, zapíše, nebo NE
 ```
 
 Tenhle vzorec je konkrétní instance `## Připravované doménové COW`'s řetězu `invoice.extract →
 cz.company.verify → cz.vat.verify` — dojička je chybějící dílek mezi „samostatné capabilities" a
 „jeden agent, co dělá všechno", co ta sekce výslovně zakazuje.
+
+**Poznámka k pojmenování:** Žlab/Konev/Mlékárna vznikly ve vlastníkově diskuzi mimo tenhle repo
+(12. 9. 2026) a jsou tu zapsané podle nejlepšího porozumění kontextu, který se sem dostal
+zprostředkovaně — **ne z přímého zadání v týhle konverzaci**. Sémantika (immutable evidence store →
+deterministický skladač → zapečetěný podepsaný výstup → úzce oprávněný zapisovač) je vnitřně
+konzistentní se vším, co SEVERKA už dřív řešila pod jmény „sklad"/`CertifiedInvoice`/BC Executor —
+formálně tohle jen dává těm už existujícím konceptům jména. Pokud vlastníkův záměr byl jiný, tahle
+sekce se má přepsat, ne brát jako hotové rozhodnutí.
 
 ### Hlavní invariant: farmář nesmí nosit hodnoty
 
@@ -221,18 +295,20 @@ false` + žádná business-value property v `properties`). Stejně dojička: jej
 → decision`. Schema-level zákaz je silnější důkaz než code review, že farmář/dojička nemůže nosit
 hodnoty ani omylem, natož úmyslně.
 
-### Import Gate — deterministický, čte ze skladu, ne od Farmáře
+### Import Gate — deterministický, čte ze Žlabu, ne od Farmáře
 
 ```
 FARMÁŘ → "import INVOICE-4711"
             ↓
       IMPORT GATE (deterministický, žádné AI)
-            ↓ načte ZE SKLADU (ne od Farmáře)
+            ↓ načte ZE ŽLABU — immutable, signed (ne od Farmáře)
    IČO, ÚČET, ČÁSTKA + evidence každé kontroly
             ↓
    všechny důkazy patří INVOICE-4711 a sedí na AKTUÁLNÍ obsah?
             ↓ ANO
-        BC EXECUTOR → Business Central
+      zapečetí jako KONEV (CertifiedBusinessObject)
+            ↓
+   MLÉKÁRNA (konkrétně: BC Executor) → Business Central
 ```
 
 Finální balík pro BC skládá **Import Gate**, ne Farmář — přesně stejný princip jako dojička
@@ -300,6 +376,13 @@ aktuálnímu poli a evidence automaticky přestává platit (stejný mechanismus
 porovnání). `expiresAt` řeší stárnutí evidence (viz composition attack suite níže — "evidence je
 stará 30 dní, dojička ji přesto použije"). Implementace zatím 0 %, kandidát pro rozšíření
 `module-descriptor.v1.schema.json` společně s formalizací Dojičky/Kráva typu výš.
+
+**Úložiště pro `Evidence` je Žlab** (`### Tři role, ne dvě` výš) — append-only, hash-chained
+(každý záznam nese `parent hash` na předchozí záznam ve stejném řetězu, ne jen svůj vlastní hash),
+podepsaný v okamžiku zápisu. „Immutable" znamená doslova: žádná komponenta, včetně Farmáře, nemá
+oprávnění existující `Evidence` záznam ve Žlabu přepsat nebo smazat — jen přidat nový. To je
+mechanismus, který dělá `VALUE_CHANGED_AFTER_VERIFICATION` detekovatelným navždy, ne jen dokud
+někdo záznam nepřepíše.
 
 ### Composition attack suite — útoky na skládání výsledků víc krav, ne na jednu COW (Posudek 12 bod 12, 12. 9. 2026)
 
