@@ -120,9 +120,14 @@ function fixture(opts: { policy: Policy; reviewTasks?: HostOptions["reviewTasks"
   };
   router.register(component);
 
+  // approvalBoundTo:["workflowId"] (policy.ts checkApproval) reads the envelope-level `workflowId`
+  // (message-envelope.v1.schema.json), not a payload field — mirrored here so tests can keep writing
+  // it as a natural part of the command payload without a second fixture argument.
   const msg = (payload: Record<string, unknown>): MessageEnvelope => ({
     messageId: newId("msg"),
     correlationId: newId("cor"),
+    idempotencyKey: newId("key"),
+    ...(typeof payload.workflowId === "string" ? { workflowId: payload.workflowId } : {}),
     type: "command",
     capability: CAP,
     capabilityVersion: "1",
@@ -141,7 +146,6 @@ describe("SEC-SEM-001 runtime layer — effect-field validators (FOUNDATION-core
   it("a field carrying validation.status:passed from the named validator succeeds", async () => {
     const f = fixture({ policy });
     const r = await f.dispatch({ bankAccount: { value: "CZ0000000000000000000000", validation: { status: "passed", provider: "cz.vat.verify", at: iso(f.clock.now()) } } });
-    console.log("DEBUG result:", JSON.stringify(r, null, 2));
     expect(r.status).toBe("SUCCEEDED");
   });
 

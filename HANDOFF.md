@@ -2,6 +2,37 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-12 (116) — Policy Enforcement v2 checkpoint dotažen do zelena (14/15 → 15/15)
+
+Navazuje na `fc76849` (checkpoint "new tests not yet green", 11. 9. 2026 večer, ponechaný na
+vlastníkovu explicitní žádost — implementace hotová, jen `tests/policy.test.ts` nebyl zelený).
+Commit message už měl root cause přesně diagnostikovaný: syntetická `msg()` v testovací fixture
+nenastavovala `idempotencyKey`, ale `message-envelope.v1.schema.json` ho pro `type: "command"`
+vyžaduje bezpodmínečně — všech 14 dispatchů v souboru proto padalo na `SCHEMA_VALIDATION_FAILED`
+ještě před tím, než se vůbec dostaly k nové `checkEffectFieldValidators()`/`checkApproval()` logice
+(3 testy izolačního cross-checku dispatch nevolají, ty byly zelené od začátku).
+
+**Druhá, dosud nepopsaná chyba nalezena při opravě:** test "a command carrying an approvalId that
+resolves to a DECIDED APPROVE task... succeeds" vkládal `workflowId` do `payload`, ale
+`checkApproval()`'s `approvalBoundTo: ["workflowId"]` porovnává `message.workflowId` —
+envelope-level pole z `message-envelope.v1.schema.json` ("Durable workflow instance"), ne pole
+uvnitř payloadu. Fixture `msg()` builder žádnou cestu, jak nastavit envelope-level `workflowId`,
+neměla. Opraveno mirror-em `payload.workflowId` → envelope `workflowId` uvnitř `msg()` — test těla
+zůstala beze změny. (Test na *nesouhlasící* `workflowId` procházel už předtím, ale z nesprávného
+důvodu — `message.workflowId` bylo `undefined`, což se lišilo od `"wf-1"` stejně jako by se lišilo
+`"wf-2"`; po opravě prochází ze správného důvodu.)
+
+Oprava jen v `tests/policy.test.ts` (2 místa: `idempotencyKey`/`workflowId` v `msg()`, odstraněn
+zapomenutý `console.log("DEBUG result:", ...)`). Žádná změna v `policy.ts`/`executor-host.ts`/
+`review.ts`/`router.ts` — implementace ze checkpointu byla od začátku správná, chyba byla čistě
+v testovací fixture. **348/348 testů, `typecheck`, `arch`, `farm:check` zelené.** Nenasazeno
+(žádná farm konfigurace dnes deklaruje `approval.required: true` ani neprázdné
+`effectFieldValidators` — beze změny chování na živé farmě).
+
+**Zbývá rozhodnout (Milan):** vlastník dnes nezávisle zopakoval kritickou reflexi nad Posudkem 11
+(vlastní protioponentura + koncept "Office" pro tenant/identity/access) — zapsáno do
+`docs/POSUDKY.md` (Posudek 12) a `docs/SEVERKA.md` samostatně, viz další záznam.
+
 ## 2026-09-11 (115) — Posudek 11 zalogován a ověřen — doporučuje začít stavět read-only/validační krávy
 
 Externí oponentura reagující na `8de8e09` (Posudek 10). Tři kódová tvrzení ověřena přímo v
