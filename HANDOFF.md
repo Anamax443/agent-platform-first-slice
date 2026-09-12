@@ -2,6 +2,17 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-12 (120) — SEVERKA: zdroje pro srovnání s enterprise konkurencí doplněny
+
+Vlastník poslal stejné srovnání jako v (119), tentokrát s reálnými URL zdroji (Microsoft Learn
+Copilot Studio security/governance a multitenant preview, TechCommunity blog o authorization/
+identity governance v AI agentech, LangGraph overview, Salesforce Agentforce shared-responsibility
+help článek, ITPro/Harness průzkum o agent security gaps). Doplněno jako `**Zdroje**` odstavec na
+konec `### Srovnání s enterprise konkurencí` v `docs/SEVERKA.md` — stejná disciplína jako
+`cz.company.verify`/`cz.vat.verify` sekce (přesně citované zdroje, ne jen tvrzení). CI markdown
+link check běží s `--offline` (jen lokální odkazy), takže se na týhle změně nerozbije. Žádný obsah
+srovnání samotného se neměnil, jen doplněny odkazy. Čistě dokumentační krok, žádný kód dnes.
+
 ## 2026-09-12 (119) — SEVERKA: Žlab/Konev/Mlékárna/Průsvitná stáj/Ponocný formalizovány (nejlepší dostupná interpretace, neověřeno přímo s vlastníkem)
 
 Vlastník sdílel do konverzace externí srovnání farmy proti Copilot Studio/Agent 365, Salesforce

@@ -129,6 +129,14 @@ výš) — signál, že se řeší správný problém, ne že je řešení už h
 `docs/POSUDKY.md`'s posudků, který se drží disciplíny „ověřeno v kódu, ne převzato z tvrzení",
 tohle je vědomě dopředu hledící srovnání a mělo by se tak i číst.
 
+**Zdroje (vlastníkovo srovnání, 12. 9. 2026):**
+[Copilot Studio security/governance](https://learn.microsoft.com/en-us/microsoft-copilot-studio/security-and-governance) ·
+[Copilot Studio multitenant mode (preview)](https://learn.microsoft.com/en-us/microsoft-copilot-studio/multi-tenant-overview) ·
+[Microsoft: Authorization and Identity Governance Inside AI Agents](https://techcommunity.microsoft.com/blog/microsoft-security-blog/authorization-and-identity-governance-inside-ai-agents/4496977) ·
+[LangGraph overview](https://docs.langchain.com/oss/python/langgraph/overview) ·
+[Agentforce Security and the Shared Responsibility Model](https://help.salesforce.com/s/articleView?id=005315874&language=en_US&type=1) ·
+[ITPro: agent security/governance practices survey (Harness)](https://www.itpro.com/software/development/agents-have-hit-the-mainstream-in-software-engineering-but-security-and-governance-practices-arent-evolving-fast-enough).
+
 ---
 
 ## Připravované doménové COW (invoice.extract → cz.company.verify → cz.vat.verify → cz.insolvency.check)
