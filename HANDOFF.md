@@ -2,6 +2,23 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-12 (118) — SEVERKA: DRY_RUN zobecněn na všechny write capability, ne jen na BC Executor
+
+Vlastník zpřesnil: `### BC Executor musí být „hloupý"`'s JSON Export + Invoice Generator (11. 9.
+2026) není BC-specifická výjimka, ale **první instance obecného principu** — každá write capabilita
+od `riskClass` R2 (`external-write`) výš má mít vlastní `DRY_RUN` mód (projde celým rozhodovacím
+řetězem — schema/policy/effect-field validators/approval/idempotency — ale místo skutečného side
+effectu zapíše zamýšlený efekt do inertního výstupu a nesmí mít přístup ke skutečnému write
+credentialu vůbec), než dostane přístup k `ACTIVE`.
+
+Zapsáno do `docs/SEVERKA.md`: nová podsekce `### DRY_RUN jako obecný princip pro write capability,
+ne jen pro BC` (pod `### Risk profily řídí povinné testy`), odkaz z `### BC Executor musí být
+„hloupý"` že jde o první instanci principu, `dryRunSupported` přidán jako kandidát do `### COW
+technický pas`, `## Pořadí` bod 10 přeformulován z "BC write nejdřív DRY_RUN" na "write capability
+obecně nejdřív DRY_RUN, BC je první instance".
+
+Čistě dokumentační krok, žádný kód dnes.
+
 ## 2026-09-12 (117) — Posudek 12 zalogován (vlastníkova protioponentura), Office koncept, SEVERKA přepsáno podle nového pořadí
 
 Vlastník sám (ne externí čtenář) prošel `5af3f26` (Posudek 11) i aktuální jádro kriticky podruhé:

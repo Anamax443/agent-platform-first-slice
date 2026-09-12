@@ -357,6 +357,10 @@ originálem = živé ověření, že řetěz nic needitoval a nic nevynechal, be
 Až řetěz projde touhle kontrolou, JSON Export se nahradí skutečným BC Executorem beze změny zbytku
 řetězu (Import Gate/fingerprint/farmář-bez-přístupu zůstává stejné, mění se jen poslední krok).
 
+**Tohle je první instance obecného principu, ne BC-specifická výjimka — viz `### DRY_RUN jako
+obecný princip pro write capability` níže** (zpřesnění vlastníka 12. 9. 2026): každá budoucí write
+capabilita (ne jen BC) má mít stejný `DRY_RUN` mód, než dostane skutečný credential.
+
 ### Nový povinný test pro Admission Gate: COMPROMISED-ORCHESTRATOR / CONFUSED-DEPUTY
 
 Doplňuje `### Admission Gate`'s seznam testů a `### Zero-trust model`'s adversarial test suite o
@@ -543,6 +547,42 @@ idempotency + reconciliation + human approval + amount limity + kompletní audit
 COW nemůže napsat nižší riziko, než jaké capabilita fakticky má — platforma ho odvodí ze
 `sideEffect`/`capability` deklarace, ne z tvrzení.
 
+### DRY_RUN jako obecný princip pro write capability, ne jen pro BC (12. 9. 2026)
+
+`### BC Executor musí být „hloupý"` výš popisuje konkrétní řešení pro jeden write executor: dokud
+řetěz není ověřený, BC Executor se nahradí **JSON Export** (zapíše zamýšlený efekt jako neškodný
+JSON, žádný reálný credential/side effect) + **Invoice Generator** (deterministicky z JSONu
+sestaví levnou, ne-věrnou náhledovou fakturu, kterou člověk porovná s originálem). Vlastník
+12. 9. 2026 zpřesnil: **tohle není BC-specifická výjimka, je to první instance obecného principu**,
+který má platit pro **každou** write capability, ne jen pro BC Executor.
+
+Zobecněný tvar:
+
+```
+DRY_RUN mode (povinná vlastnost každé write capability od R2 výš)
+  ↓ projde CELÝM rozhodovacím řetězem (schema, policy, effect-field validators,
+    approval, idempotency check) přesně jako live
+  ↓ ale místo skutečného side effectu:
+     - zapíše zamýšlený efekt do inertního výstupu (JSON export — obecný sink,
+       ne BC-specifický formát)
+     - vydá vlastní credential ani nespotřebuje — write executor v DRY_RUN
+       módu nesmí mít přístup ke skutečnému write credentialu vůbec, ne že
+       ho jen nepoužije
+  ↓ volitelný human-verifiable preview (Invoice Generator je jeden konkrétní
+    příklad pro fakturační doménu — jiná write capabilita může mít jiný
+    formát náhledu, princip "levné, deterministické, bez AI, jen pro
+    kontrolu" zůstává stejný)
+```
+
+**Důsledky pro Admission Gate:** capabilita s `riskClass` R2 (`external-write`) a výš nesmí projít
+do `ACTIVE`, dokud nemá funkční `DRY_RUN` mód — stejná disciplína jako u ostatních povinných testů
+podle risk profilu (`### Risk profily řídí povinné testy` výš). Kandidát pro rozšíření
+`module-descriptor.v1.schema.json` (`### COW technický pas` výš): `dryRunSupported: boolean` +
+referenci na sink, kam DRY_RUN zapisuje. Přechod z `DRY_RUN` na `live` u konkrétní capability je
+pak jen výměna posledního kroku (skutečný Executor místo JSON Export sinku), beze změny zbytku
+řetězu — přesně jak to `### BC Executor musí být „hloupý"` už popisuje pro BC samotné, teď jako
+obecné pravidlo, ne jednorázové řešení.
+
 ### Multi-tenant izolace: shared compute, isolated context/data/credentials/policy/audit
 
 Princip: **sdílená výpočetní infrastruktura, ale každý požadavek nese od vstupu po výstup
@@ -643,8 +683,12 @@ nepřeřazoval** — zapsány zvlášť pod čarou, ne zapomenuté.
 9. **Compromised-farmer / composition attack suite** (Posudek 12 bod 12, viz `### Composition
    attack suite` výše) — testuje skládání víc krav dohromady (cizí-tenant evidence, zastaralá
    evidence, konfliktní fakta, nereagující kráva), ne jednotlivou COW.
-10. **BC write, nejdřív `DRY_RUN`, pak live** — BC Executor zůstává „hloupý" (viz `### BC Executor
-    musí být hloupý` výše), zapíná se až po uzavření bodů 1–9, ne dřív.
+10. **Write capability obecně nejdřív `DRY_RUN`, pak live** — zpřesněno vlastníkem 12. 9. 2026:
+    `DRY_RUN` mód (viz `### DRY_RUN jako obecný princip pro write capability` výše) je požadavek
+    na **každou** write capabilitu od `riskClass` R2 výš, ne jen na BC Executor. BC je první
+    konkrétní instance (JSON Export + Invoice Generator, viz `### BC Executor musí být „hloupý"`
+    výše) a zapíná se až po uzavření bodů 1–9, ne dřív — ale princip samotný patří do Admission
+    Gate obecně, ne jen do BC řetězu.
 
 **`cz.insolvency.check`** zůstává mimo číslované pořadí — zdroj zatím neurčen (placený `isir.info`
 vlastník odmítl, hledá se oficiální bezplatná `isir.justice.cz` alternativa); vloženo do pořadí až
