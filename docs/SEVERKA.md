@@ -33,7 +33,8 @@ se přepisuje orchestrátor.
 | **Policy Engine + risk scoring** | částečně — `policy.ts` (`policyFor(installation.policies, capability, "1")`) existuje per-capability | rozšířit o rizikovou úroveň požadavku (nízké/střední/vysoké → auto/potvrzení/nikdy) | střední — navazuje na existující Human Review, není nová vrstva vedle ní |
 | **Execution Engine** | existuje (`Router`, `ExecutorHost`, retry/review/journal) | — | **Opraveno 8. 9. 2026 (`b5b8be8`/`f29eb6f`), tenhle řádek byl zastaralý.** Hlubší identita `tenantId + handlerId + idempotencyKey` + fingerprint (`sha256(canonicalize(payload))`) → `IDEMPOTENCY_CONFLICT` je univerzální (`src/platform/executor-host.ts`, každý `ExecutorHost`). Durable effect ledger (`IdempotencyLedger` Durable Object, atomická `reserveOrGet`/`resolve`/`release`) ale zatím jen na `apf-document-host` — `apf-email-executor`'s `/dispatch` staví `ExecutorHost` bez `idempotency` volby, tedy s výchozím `InMemoryIdempotencyStore`, který se zahazuje s každým požadavkem (fresh `ExecutorHost` per `/dispatch`, žádná deduplikace napříč požadavky). Pro `SEND_MODE: "sandbox"` neškodí; **před `"live"` stojí za zvážení, jestli `email.send` (IRREVERSIBLE) nemá dostat stejnou durable ledger jako `document.stamp`, ne jen composite klíč** — otevřené, nezařazené do pořadí |
 | **Human Review** | rozhodovací cesta existuje a je živě ověřená; časové expirace nasazené, alarm mechanismus živě ověřen | — | **Opraveno 8. 9. 2026 (`6dea224`, HANDOFF 50–52) a 9. 9. 2026 (`165fe38`, HANDOFF 66–67).** `SqliteReviewTaskStore` (Durable Object SQLite) drží úkoly durabilně, `POST /workflow/:id/review/decide` → `decideReview()` je nasazený a živě ověřený (`WAITING(REVIEW)` → decide → dokončená instance). WF-REV-003 (`orchestrator.applyReviewExpiries()`, `EXPIRE_TO_FAILED`/`EXPIRE_TO_CANCELLED`/`ESCALATE`/`CREATE_NEW_REVIEW`) je nasazené: každá `WorkflowInstance` si sama nastaví `ctx.storage.setAlarm()` na deadline vlastního otevřeného review úkolu (`rearmReviewAlarm()`). **Živě ověřeno (HANDOFF 67):** dočasnou izolovanou diagnostikou (mimo real journal/reviewStore) potvrzeno, že CF Durable Object alarm na `farm-bass443` skutečně vystřelí přesně v čas — kód pak vrácen, `git diff` prázdný. **Zbývá:** živé potvrzení celé byznys transakce (skutečný review úkol, co přirozeně expiruje a projde `applyReviewExpiries()`) — ověřená je zatím jen infrastrukturní vrstva (alarm → hook), ne plný běh přes reálnou `WorkflowDef` |
-| **Tenant Layer** | koncepčně navrženo, nasazení záměrně single-tenant | `farm-bass443` je `CLOUD_SINGLE_TENANT` (viz `NAVRHOVY-LIST-farma.md`); `tenant-7` je jen protistrana bezpečnostních testů, ne živý zákazník. Foundation nese `tenants: string[]` + policy semantiku, ale skutečné tenant resolution (`TenantConfig { tenantId, assistant.displayName, orchestration.actorId }` místo jediného globálního `roles.orchestrator`) je budoucí capability, ne dnešní bug. **Vlastníkův nápad 2026-09-09:** zadavatel požadavku (dnes: "Zadání požadavku" na `/farm`) by se měl na začátku identifikovat — token vázaný na e-mail, ověřovací e-mail (magic-link styl), ne jen spoléhat na jediné CF Access přihlášení vlastníka. Navazuje přímo na MAJOR 2 (Posudek 7: Access identita se dnes jen věří z hlavičky, kryptograficky se neověřuje) — stejná mezera, dva úhly pohledu | nízké dnes (nic naostro na tom neběží) — vysoké, jakmile přibude druhý reálný tenant nebo veřejné zadávání požadavků a nikdo tenant/requester resolution nedodělal předem |
+| **Tenant Layer** | koncepčně navrženo, nasazení záměrně single-tenant | `farm-bass443` je `CLOUD_SINGLE_TENANT` (viz `NAVRHOVY-LIST-farma.md`); `tenant-7` je jen protistrana bezpečnostních testů, ne živý zákazník. Foundation nese `tenants: string[]` + policy semantiku, ale skutečné tenant resolution (`TenantConfig { tenantId, assistant.displayName, orchestration.actorId }` místo jediného globálního `roles.orchestrator`) je budoucí capability, ne dnešní bug. **Vlastníkův nápad 2026-09-09:** zadavatel požadavku (dnes: "Zadání požadavku" na `/farm`) by se měl na začátku identifikovat — token vázaný na e-mail, ověřovací e-mail (magic-link styl), ne jen spoléhat na jediné CF Access přihlášení vlastníka. Navazuje přímo na MAJOR 2 (Posudek 7: Access identita se dnes jen věří z hlavičky, kryptograficky se neověřuje) — stejná mezera, dva úhly pohledu. **Formalizováno 12. 9. 2026 jako samostatná vrstva `Office`, viz řádek níže** | nízké dnes (nic naostro na tom neběží) — vysoké, jakmile přibude druhý reálný tenant nebo veřejné zadávání požadavků a nikdo tenant/requester resolution nedodělal předem |
+| **Office (tenant/identity/access)** | chybí, koncept zapsán 12. 9. 2026 | Recepce + matrika farmy — kde vzniká tenant a jeho lidé, ne kde se rozhoduje o business datech. Tři oddělené věci: **(1) Tenant** — `tenantId`, název, stav `ACTIVE`/`SUSPENDED`/`CLOSED` (smluvní/licenční, ne bezpečnostní expirace). **(2) Uživatelé a role** — e-mail identita, role (`admin`/`accountant`/`reviewer`/...), vazba na tenant; Office samo **neověřuje** heslo/e-mail/MFA — deleguje na skutečný identity provider (Cloudflare Access, Entra ID, Google) a jen mapuje jeho kryptograficky ověřenou identitu na `tenantId`+role (`ověřená identita X patří tenantovi Y, má role Z`). **(3) Tokeny** — session token (krátká expirace, desítky minut až hodiny, refresh přes IdP), service/connector token (vlastní expirace/rotace, žádné věčné tokeny), oba nesou `issuedAt`/`expiresAt`/`notBefore`/`revokedAt`/`tokenId`/`tenantId`/`actorId`/`scopes`; Office musí umět token okamžitě revokovat, ne jen čekat na expiraci. `tenantId` samo nikdy není token — je to trvalá identita organizace, token je jen dočasné oprávnění jednat jejím jménem. **MFA:** konfigurovatelné per tenant (`OPTIONAL`/`REQUIRED`/`REQUIRED_FOR_PRIVILEGED`), plus **step-up MFA** na kritické operace (např. schválení zápisu do BC nad limit) — Office samo MFA neimplementuje, jen čte úroveň autentizace, kterou dosvědčí IdP, a zapisuje ji do audit historie rozhodnutí. Přímo navazuje na `accessJwtVerified: false` (Posudek 7 MAJOR 2 / Posudek 8 P0-1 / Posudek 12 bod 7) — Office je architektonické místo, kam ta oprava patří, ne řešení samo o sobě | **vysoké, jakmile přibude druhý lidský uživatel nebo tenant** — dnešní jediný vlastnický účet za Cloudflare Access mezeru zakrývá; bez Office nemá multi-tenant provoz, kde stojí tenant/role resolution, a `TrustedContext` by dál stál na perimeter trust, ne na kryptograficky ověřené identitě |
 | **Connector Layer** | 1 z N hotový | `document-host` běží na farmě; `apf-mail-ingest` a `apf-email-executor` jsou na farmě doslova skeleton (`501 NOT_WIRED`, `email()` handler dělá `setReject`) | dokončení = zároveň první reálný **event-driven** case (mail přijde → spustí workflow), ne samostatná vzdálená vrstva |
 | **Audit provenance (COW zero-trust)** | nalezeno externím posudkem 9. 9. 2026 (`docs/POSUDKY.md` Posudek 7, MAJOR 5), ověřeno v kódu, neopraveno | `POST /audit` (`apf-gateway/src/index.ts`) zapíše skoro celý `Partial<AuditRecord>` z requestu (jen `auditId`/`at` přepíše); `RelayAudit.append()` (`apf-document-host`/`apf-email-executor`) posílá kompletní záznam přes service binding, nic ho neváže na skutečný podepsaný dispatch. Audit musí být důvěryhodnější než komponenta, kterou audituje — dnes to platí jen proto, že žádný Worker v účtu není třetí strana | **nízké dnes** (jediné volající Workery jsou first-slice vlastní kód) — **vysoké před první třetí-stranovou COW** (Capability Marketplace), protože kompromitovaná COW by mohla vyrábět libovolné falešné audit záznamy pro cizí tenant/actor/capability. Řešení pravděpodobně: vázat `/audit` zápis na stejný Ed25519 dispatch podpis jako capability volání, ne na holou service-binding důvěru |
 | **Event-driven provoz** | rozpracováno (`apf-mail-ingest` k tomu existuje) | „něco se stalo" spouští workflow samo, ne jen dotaz uživatele | — |
@@ -210,6 +211,16 @@ Platformа sama vytáhne hodnotu ze skladu a předá ji kravě. Stejně tak Farm
 nebo měnit autoritativní business data ani získat oprávnění k jejich zápisu.* BC credential nemá
 Farmář nikdy — jen BC Executor COW.
 
+**Vynutit schématem, ne jen dokumentací (Posudek 12 bod 10, 12. 9. 2026):** dnešní invariant je
+zapsaný slovy tady v SEVERKA, ne vynucený strojově. Cílový stav: Farmářovo vlastní input/output
+schéma (stejná disciplína jako `module-descriptor.v1.schema.json` u COW) nesmí vůbec **dovolit**
+pole jako `amount`/`bankAccount`/`ico`/`vatId`/`supplier` na výstupu — ne aplikační kontrola, která
+by taková pole vyhodila, ale schema, kde ta pole strukturálně neexistují (`additionalProperties:
+false` + žádná business-value property v `properties`). Stejně dojička: její API nesmí nabízet
+`setAmount()`/`setBankAccount()` ani nic, co by hodnotu mohlo přepsat — jen `compose(evidence[])
+→ decision`. Schema-level zákaz je silnější důkaz než code review, že farmář/dojička nemůže nosit
+hodnoty ani omylem, natož úmyslně.
+
 ### Import Gate — deterministický, čte ze skladu, ne od Farmáře
 
 ```
@@ -263,6 +274,60 @@ verifikační evidenci, ne jen na audit záznam samotný.
 ekvivalent `valueHash` výš, jen explicitně jako graf, ne jen jako pár hodnot. **Dojička/Kráva jako
 skutečný platformní typ** (ne jen role popsaná textem tady) je taky z Posudku 8 — kandidát pro
 budoucí rozšíření `module-descriptor.v1.schema.json`, ne dnešní stav.
+
+**Formalizace jako platformní primitivum `Evidence` (Posudek 12 bod 11, 12. 9. 2026):** místo že
+by dojička četla samotné `field: PASS` nebo samotný `valueHash`, každá validační kráva vrací
+strukturovaný záznam:
+
+```
+Evidence
+  evidenceId
+  tenantId
+  capability     (např. cz.vat.verify)
+  provider       (kdo evidenci vydal)
+  inputField     (které pole faktury ověřuje)
+  inputValueHash (= valueHash výš, hash ověřované hodnoty)
+  result         (PASS | FAIL | ...)
+  observedAt
+  expiresAt?
+  buildHash      (jaký build krávy evidenci vyrobil — váže se na CertificationRecord výš)
+```
+
+Dojička pak nečte "VAT = PASS", ale "VAT PASS pro hash 91ab…, od `cz.vat.verify`, build 83cd…" —
+pokud farmář nebo kdokoli jiný mezitím změní vstupní hodnotu, `inputValueHash` už neodpovídá
+aktuálnímu poli a evidence automaticky přestává platit (stejný mechanismus jako
+`VALUE_CHANGED_AFTER_VERIFICATION` výš, jen jako explicitní typované pole, ne implicitní
+porovnání). `expiresAt` řeší stárnutí evidence (viz composition attack suite níže — "evidence je
+stará 30 dní, dojička ji přesto použije"). Implementace zatím 0 %, kandidát pro rozšíření
+`module-descriptor.v1.schema.json` společně s formalizací Dojičky/Kráva typu výš.
+
+### Composition attack suite — útoky na skládání výsledků víc krav, ne na jednu COW (Posudek 12 bod 12, 12. 9. 2026)
+
+`### Zero-trust model`'s `Adversarial test suite` (níže) řeší útoky na **jednu** COW (cross-tenant,
+credential escape, replay, forged context...). Jakmile začne existovat víc krav skládaných
+dojičkou, vzniká nová třída rizika na **rozhraní mezi nimi**, kterou žádný z dnešních testů
+nepokrývá:
+
+- Kráva A vrátí výsledek pro fakturu X, ale farmář (chybou nebo úmyslně) ho použije pro fakturu Y.
+- ARES evidence platí pro staré IČO, zatímco extrakce mezitím vytvořila nové (dokument se
+  přeparsoval, IČO se opravilo).
+- VAT evidence patří tenantovi A, dojička počítá výsledek pro tenanta B.
+- Kráva je po certifikaci upgradovaná (nový `buildHash`), ale stará `CertificationRecord`/evidence
+  je pořád považovaná za platnou.
+- Evidence je stará 30 dní (za hranicí rozumné platnosti), dojička ji přesto použije, protože
+  `expiresAt` nikdo nekontroluje.
+- Dvě krávy vrátí vzájemně konfliktní fakta o stejném poli (např. dvě různá ARES volání s
+  rozdílným výsledkem kvůli mezičasové změně u zdroje).
+- Jedna kráva vůbec neodpoví (timeout/výpadek) a Planner/dojička se přesto pokusí dokončit import,
+  jako by chybějící evidence znamenala PASS.
+
+Tyhle scénáře patří do Verification Contractu jako nová testovací kategorie (pracovní název:
+`COMPOSITION`), doplňující `### Nový povinný test pro Admission Gate: COMPROMISED-ORCHESTRATOR /
+CONFUSED-DEPUTY` výš — ten řeší kompromitovaného farmáře, tahle sada řeší **poctivého** farmáře a
+poctivé krávy, které přesto composition-level chybou/útokem skončí se špatným výsledkem. Žádný
+z těchto scénářů není dnes implementovaný jako test — čeká na vlastníkovo rozhodnutí, kdy na řadu
+přijde (Posudek 12 řadí za `cz.company.verify`/`cz.vat.verify`/`bc.vendors`/první dojičku, před
+ostrým BC write).
 
 ### BC Executor musí být „hloupý" — žádné AI, žádná interpretace
 
@@ -446,6 +511,29 @@ verify` např. proti ARES/Finanční správě, dřív než se capabilita aktivuj
 capabilita se přestane používat samo, ne až uživateli něco pokazí) — to je nad rámec dnešního
 statického `wired: true/false`.
 
+**`CertificationRecord` — `ACTIVE` vázané na konkrétní build, ne na ruční rozhodnutí (Posudek 12,
+12. 9. 2026):** dnešní self-test infrastruktura (D1, historie per capabilita, HEALTHY badge s
+rozpisem) je dobrý základ, ale sama o sobě není certifikace — neváže výsledek na to, jaký kód
+skutečně běží. Chybějící vazba:
+
+```
+CertificationRecord
+  gitSha / buildHash
+  module
+  capability
+  riskProfile
+  requiredTests   (odvozeno z riskClass, viz "Risk profily řídí povinné testy" výše)
+  actualResults
+  = PASS | FAIL
+```
+
+Pravidlo: `Lifecycle` smí modul/capabilitu přepnout do `ACTIVE` jen když `CertificationRecord.PASS
+&& certifiedBuildHash == runningBuildHash` — ne ruční allow-list zápis (dnešní stav,
+`config/<installation>/lifecycle.json`), a ne jen "self-test dřív prošel na nějakém buildu". Bez
+téhle vazby může běžet kód, který se od certifikace změnil, a lifecycle o tom neví. Přímo doplňuje
+`NEW/TESTING/CERTIFIED/DEGRADED` stavy výš (`## Vrstvy`, Admission Gate řádek) o mechanismus,
+který o přechodu do `CERTIFIED`/`ACTIVE` rozhoduje — implementace zatím 0 %.
+
 ### Risk profily řídí povinné testy, ne autor COW
 
 `riskClass` v dnešním descriptoru (`LOW`/`MEDIUM` v repu) by se rozšířil na explicitní úroveň
@@ -518,34 +606,69 @@ control plane ani farmy jako celku.*
 
 ## Pořadí (co je skutečně příští, ne všech vrstev najednou)
 
-1. **Durable Review + skutečná decision cesta** — `ReviewService` na farmě dnes nemá vůbec žádnou
-   cestu k rozhodnutí (viz tabulka výše, zpřesněno 8. 9. 2026), ne jen „nepřežije evikci". To je
-   existující runtime chyba, ne aspirace. Řeší se dřív než cokoli nového.
-2. **Durable idempotency/effect ledger** pro write executory — `tenantId + handlerId +
-   requestFingerprint` (Posudek 5/6), než přibude druhý typ write COW.
-3. **Dokončit `mail.ingest`/`email.send` skeleton** — druhý reálný typ COW, důkaz že
-   `document-host` nebyl jednorázová výjimka; zároveň první event-driven case.
-4. **Agent Registry** — zatím čistě deterministický katalog capabilities (formalizace
-   `descriptor.json` + `router.register()`), žádné AI v rozhodování.
-5. **`invoice.extract`** — první krok hotový (11. 9. 2026, HANDOFF 109): komponenta, wiring, conformance
-   (12 fixtures) a testy lokálně zelené, **nenasazeno**. Pole podle normy (VC §5): `companyId`,
-   `bankAccount`, `totalWithVat`, `invoiceNumber`; DIČ/měna/položky vědomě mimo rozsah v1. Deterministická
-   cross-check validace (classify→validate vzor pro tenhle řetěz), dojička, Import Gate a BC Executor
-   ještě nejsou postavené.
-6. **`cz.company.verify`** — API zdroj ověřen 11. 9. 2026 (ARES, bezplatné, viz
+**Přepsáno 12. 9. 2026 podle vlastníkova pořadí (Posudek 12, `docs/POSUDKY.md`)** — starší verze
+tohoto seznamu (Review/idempotency/mail.ingest/Registry) je z 9. 9. 2026; body 1 (Durable Review),
+4 (Agent Registry) a 5 (`invoice.extract`) jsou od té doby hotové (viz `## Vrstvy` a HANDOFF), proto
+teď mimo aktivní pořadí. Dvě položky staré verze **zůstávají otevřené, ale vlastník je dnes
+nepřeřazoval** — zapsány zvlášť pod čarou, ne zapomenuté.
+
+1. **Policy Enforcement v2** — `checkGrant()` dřív vynucoval jen actor/scope/tenant; `approval`/
+   `effectFieldValidators`/`isolation` byly deklarované, ne vynucené (Posudek 7 MAJOR 3 / Posudek 8
+   P0-2 / Posudek 11 bod 4). **Hotovo 12. 9. 2026** (checkpoint `fc76849` z 11. 9. dotažen do
+   zelena, HANDOFF 116, 348/348 testů) — `checkEffectFieldValidators()`/`checkApproval()` v
+   `ExecutorHost` (FOUNDATION-core §3.3 kroky 5–6) + isolation cross-check při `Router.register()`.
+   `rateLimit` (na `Grant`) zůstává deklarované, nevynucené — nezařazeno samostatně, nízká priorita
+   dokud žádná reálná policy `rateLimit` nenastavuje.
+2. **Evidence/Provenance Contract** — formální `Evidence{evidenceId, tenantId, capability,
+   provider, inputField, inputValueHash, result, observedAt, expiresAt?, buildHash}` (Posudek 12
+   bod 11, viz `### Kontrola musí být svázaná s konkrétní hodnotou` výše). Formalizuje už zapsaný
+   `valueHash`/provenance-graph princip do konkrétního schématu, který dojička skutečně čte.
+   Nepostaveno.
+3. **Build-bound `CertificationRecord`** — `Lifecycle` smí přepnout na `ACTIVE` jen když
+   `CertificationRecord.PASS && certifiedBuildHash == runningBuildHash` (Posudek 12 bod 6, viz
+   `### Admission Gate` výše). Nepostaveno.
+4. **Lifecycle `NEW → TESTING → CERTIFIED → ACTIVE → DEGRADED → QUARANTINED`** — dnes jen
+   `ACTIVE`/`QUARANTINED` (Posudek 8/9/10/11/12 nezávisle opakovaně potvrzují stejnou mezeru).
+   Stojí na bodu 3 (CertificationRecord řídí přechod do `ACTIVE`). Nepostaveno.
+5. **`cz.company.verify`** — API zdroj ověřen 11. 9. 2026 (ARES, bezplatné, viz
    `## Připravované doménové COW` výše), zatím nepostaveno.
-7. **`cz.vat.verify`** — API zdroj ověřen 11. 9. 2026 (MOJE daně SOAP, bezplatné, zveřejněné účty
+6. **`cz.vat.verify`** — API zdroj ověřen 11. 9. 2026 (MOJE daně SOAP, bezplatné, zveřejněné účty
    = zdroj pro Import Gate ACCOUNT_VERIFICATION), zatím nepostaveno.
-7b. **`cz.insolvency.check`** — zdroj zatím neurčen (placený `isir.info` vlastník odmítl, hledá se
-   oficiální bezplatná `isir.justice.cz` alternativa) — vloženo do pořadí až po nalezení zdroje.
-8. **Planner jako generátor `WorkflowDef`** (nikdy přímý executor) — teprve teď plánuje nad
-   reálnou farmou (`document.*`, `mail.ingest`, `email.send`, `invoice.extract`, `cz.*.verify`),
-   ne nad dvěma umělými capabilities — proto až poslední, ne proto, že by byl málo důležitý.
+7. **`bc.vendors`** — vnitřní protějšek k `cz.company.verify` (existující Vendor No. v BC, ne jen
+   vnější potvrzení, že IČO existuje — HANDOFF 113), nepostaveno.
+8. **První deterministická dojička — `invoice.verification.aggregate`** (Posudek 11 bod 7 / Posudek
+   12 bod 9): žádné AI, kontroluje úplnost, shodu evidence's `inputValueHash`, žádný konflikt,
+   žádnou expirovanou evidenci → `READY`/`REVIEW`/`REJECT`. Stojí na bodech 2 (Evidence) a 5–7
+   (aspoň některé krávy, co má co skládat).
+9. **Compromised-farmer / composition attack suite** (Posudek 12 bod 12, viz `### Composition
+   attack suite` výše) — testuje skládání víc krav dohromady (cizí-tenant evidence, zastaralá
+   evidence, konfliktní fakta, nereagující kráva), ne jednotlivou COW.
+10. **BC write, nejdřív `DRY_RUN`, pak live** — BC Executor zůstává „hloupý" (viz `### BC Executor
+    musí být hloupý` výše), zapíná se až po uzavření bodů 1–9, ne dřív.
+
+**`cz.insolvency.check`** zůstává mimo číslované pořadí — zdroj zatím neurčen (placený `isir.info`
+vlastník odmítl, hledá se oficiální bezplatná `isir.justice.cz` alternativa); vloženo do pořadí až
+po nalezení zdroje.
+
+**Planner jako generátor `WorkflowDef`** (nikdy přímý executor) zůstává až za vším výše — plánuje
+až nad reálnou, dotaženou farmou, ne nad rozestavěnou; proto poslední, ne proto, že by byl málo
+důležitý.
 
 Tenant resolution zůstává mimo tohle pořadí — dnes to není bug (`CLOUD_SINGLE_TENANT`), je to
-budoucí capability; řešit se má, až bude existovat druhý reálný tenant, ne preventivně.
+budoucí capability; řešit se má, až bude existovat druhý reálný tenant, ne preventivně. **Office**
+(`## Vrstvy` výše) je architektonické místo, kam tahle capabilita i `accessJwtVerified` oprava
+patří, ale vlastník ji dnes do číslovaného pořadí nezařadil — čeká na rozhodnutí, kdy na ni dojde.
+
+**Dvě položky staré verze pořadí, dosud otevřené, dnes nepřeřazené:** durable idempotency/effect
+ledger na `apf-email-executor` (`document-host` má durable `IdempotencyLedger`, email executor
+pořád staví `ExecutorHost` bez `idempotency` volby na `/dispatch` — viz `## Vrstvy`, Execution
+Engine řádek); dokončení `mail.ingest`/`email.send` skeleton (druhý reálný typ COW, první
+event-driven case — viz `## Vrstvy`, Connector Layer řádek). Nejsou v rozporu s pořadím výš, jen o
+nich Posudek 12 nemluvil — zůstávají v seznamu, aby se neztratily.
 
 **Why:** foundation je zmrazený přesně kvůli deterministické, auditovatelné povaze platformy
 (4 kola oponentury, 80 nálezů). Každá nová vrstva, která zavádí nedeterminismus (Planner,
-Memory), musí zůstat *uvnitř* stejné fail-closed brány, ne vedle ní. A vrstvy, co dnes reálně
-můžou ztratit stav (Review, idempotency), mají přednost před vrstvami, co teprve mají přibýt.
+Memory), musí zůstat *uvnitř* stejné fail-closed brány, ne vedle ní. Dnešní přeřazení (Posudek 12)
+řadí policy/evidence/certifikaci před další krávy proto, že bez nich by dojička četla důkazy, které
+nic nezaručují — přesně ten typ mezery, co čtyři kola oponentury (Posudek 7/8/9/10/11) opakovaně
+pojmenovávala jako prioritu, teprve dnes s konkrétním pořadím pro zbytek řetězu.

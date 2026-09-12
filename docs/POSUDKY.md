@@ -332,3 +332,62 @@ počkat na dotažený policy enforcement.
 **Co posudek nezměnil:** žádný kód dnes. Body 4–5 jsou restatement, ne nový vstup do pořadí. Bod 6
 je korigován (bankovní účet zůstává v `cz.vat.verify`, ne vlastní kráva). Zbytek souhlasí s tím, kam
 projekt dnes už míří.
+
+## Posudek 12 — vlastníkova protioponentura nad Posudkem 11, s konceptem Office (12. 9. 2026)
+
+**Zdroj:** vlastník (Milan) sám, ne externí čtenář — druhé, kritičtější kolo nad `5af3f26`
+(Posudek 11 zalogován) a nad aktuálním jádrem po `fc76849` (Policy Enforcement v2 checkpoint).
+Vlastní skóre: platform core 9,4, Router/security boundary 9,5, ExecutorHost 9,4, idempotence/
+replay 9,3, tenant isolation primitives 9,3, Registry/discovery 9,0, lifecycle/kill switch 8,5,
+audit/observability 8,8, **Policy enforcement 6,5**, Admission/certifikace 7,0, připravenost na
+read-only COW 9,4, na write COW 7,5, **celkově 9,0/10**. Hlavní teze: Posudek 11 je v hlavním
+směru správný, ale spíš potvrzovací než útočný (sám přiznává, že 2 z jeho 8 bodů jsou restatement) —
+projekt je připraven na první read-only/validační krávu, ale ne na "sériovou homologaci krav".
+
+| # | Bod | Dispozice | Poznámka |
+|---|---|---|---|
+| 1 | Router pořadí (envelope → binding → podpis → expirace → scope → provider/verze → lifecycle → policy → payload schema → handler) je fail-closed, neznámý/quarantined modul neprojde | **Z, potvrzeno** | Totéž co Posudek 11 bod 1, nezávisle znovu potvrzeno |
+| 2 | ExecutorHost je dnes kvalitní: idempotency `tenantId+handlerId+idempotencyKey` + SHA-256 fingerprint payloadu → `IDEMPOTENCY_CONFLICT`/`IDEMPOTENCY_IN_FLIGHT`; `resourceTenant()` má 4 explicitní stavy (`FOUND`/`GLOBAL_RESOURCE`/`NOT_FOUND`/`UNRESOLVED`), fail-closed | **Z, potvrzeno** | `executor-host.ts` (`dedupKey`, fingerprint) — beze změny od Posudku 5/6 (W19/W20) |
+| 3 | Policy enforcement je největší strukturální dluh: `checkGrant()` dřív kontroloval jen actor/scope/tenant, zatímco `approval`/`effectFieldValidators`/`isolation`/`rateLimit` byly jen deklarované, nikdy vynucené — navrhuje samostatný Policy Evaluation engine (grant → approval → effect validators → isolation → rate limits → risk controls → tenant constraints → `ALLOW`/`DENY`/`REVIEW`) jako P0 před ostrým BC zápisem | **P, mezitím už rozestavěno a dnes dotaženo do zelena** | Totožná mezera jako Posudek 7 MAJOR 3 / Posudek 8 P0-2 / Posudek 11 bod 4. Mezi Posudkem 11 a touhle reflexí vlastník sám tenhle engine začal stavět (`fc76849`, 11. 9. večer) jako `checkEffectFieldValidators()`/`checkApproval()` v `executor-host.ts` — FOUNDATION-core §3.3 kroky 5–6, norma's vlastní umístění do executoru, ne nový Router-level engine (ověřeno proti zmrazené normě před návrhem). Checkpoint měl 14/15 testů červených ("fix understood, not yet applied"); dotaženo dnes do 15/15 + 348/348 celkem (HANDOFF 116) — root cause byla chybějící `idempotencyKey` v testovací fixture, ne chyba v samotné logice. **`approval`/`effectFieldValidators`/`isolation` (registrační cross-check) jsou tedy dnes reálně vynucené, ne jen deklarované.** `rateLimit` a explicitní třetí výsledek `REVIEW` (na rozdíl od binárního povolit/zamítnout) zůstávají nepokryté — dnešní `checkApproval()` řeší schvalování jako podmínku úspěchu (`APPROVAL_REQUIRED`/`APPROVAL_MISMATCH`), funkčně rovnocenné, jen jinak pojmenované než Milanův `REVIEW` návratový stav |
+| 4 | Registry správně jen katalog, ne autorita; rozlišuje "kráva tvrdí, že umí X" vs. "platforma ověřila, že build prošel testy A–N" — druhé není kompletní | **Z, potvrzuje známou mezeru** | `registry.ts` beze změny (Posudek 11 bod 2); druhá polovina patří k bodu 6 níže |
+| 5 | Lifecycle příliš hrubý (jen `ACTIVE`/`QUARANTINED`); navrhuje `NEW → TESTING → CERTIFIED → ACTIVE → DEGRADED → QUARANTINED`, `ACTIVE` nesmí být ručně udělené bez certifikační evidence | **Z, potvrzuje už zapsanou mezeru** | `SEVERKA.md` Admission Gate řádek to dlouho říká jako "Zbývá" (Posudek 8/9/10/11 nezávisle potvrdily); dnešní přínos je konkrétní vazba na bod 6 |
+| 6 | Self-test infrastruktura (D1, historie per capabilita) je dobrý základ, ale není plná certifikace — chybí `CertificationRecord{gitSha/buildHash, module, capability, riskProfile, requiredTests, actualResults}`; `ACTIVE` smí platit jen když `CertificationRecord.PASS && certifiedBuildHash == runningBuildHash` | **P, přijato jako konkrétní tvar bodu 5** | Nové oproti dřívějším posudkům — dřív šlo jen o "chybí `NEW/TESTING/CERTIFIED`", dnes konkrétní vazba na buildHash. Zapsáno do `docs/SEVERKA.md` Admission Gate sekce, implementace zatím 0 % |
+| 7 | `accessJwtVerified: false` je P0 před druhou lidskou identitou/tenantem, ne katastrofa, dokud je vlastník jediný uživatel | **Z, potvrzuje známou mezeru** | Totožné s Posudek 7 MAJOR 2 / Posudek 8 P0-1 — beze změny, čeká na druhou identitu jako spouštěč; navazuje na koncept Office (viz níže) |
+| 8 | Souhlasí s korekcí Posudku 11 — žádná samostatná `bank-account` kráva, bankovní účet zůstává pole `cz.vat.verify` | **Z, potvrzeno beze změny** | Přesně Posudek 11 bod 6 |
+| 9 | První dojička by měla být `invoice.verification.aggregate` — jednoduchá, deterministická, bez LLM: kontroluje úplnost, shodu `valueHash`, žádný konflikt, žádnou expirovanou evidenci → `READY/REVIEW/REJECT` | **P, konkretizuje už zapsaný návrh** | Shoduje se s Posudek 11 bod 7 a se SEVERKA `Dojičky`/Import Gate sekcí; jméno `invoice.verification.aggregate` přijato jako pracovní název |
+| 10 | Farmář/dojička kontrakty by měly být vynucené schématem, ne jen dokumentované — farmářovo I/O schéma nesmí vůbec připustit `amount`/`bankAccount`/`ICO`/`VAT`/`supplier` jako výstup; dojička nesmí mít API `setAmount()`/`setBankAccount()` | **P, konkretizuje existující princip** | `SEVERKA.md`'s `### Hlavní invariant: farmář nesmí nosit hodnoty` to už říká slovně; tohle je návrh, jak to vynutit strojově (schema-level zákaz polí) — zapsáno tamtéž jako implementační poznámka |
+| 11 | Nová platformní primitiva `Evidence{evidenceId, tenantId, capability, provider, inputField, inputValueHash, result, observedAt, expiresAt?, buildHash}` — dojička nečte holé `PASS`, ale "`PASS` pro hash X, od providera Y, build Z" | **P, formalizuje existující myšlenku** | `SEVERKA.md`'s `### Kontrola musí být svázaná s konkrétní hodnotou` (`valueHash`/provenance graph, Posudek 8) to už řeší koncepčně; Milanův konkrétní schema tvar přijat a zapsán tamtéž jako explicitní pole |
+| 12 | Composition je nové těžiště rizika, ne jednotlivé krávy — konkrétní scénáře: evidence pro fakturu X použita pro Y, zastaralá ARES evidence, evidence patřící jinému tenantovi, platná certifikace po upgradu COW, expirovaná evidence pořád použitá, dvě krávy vrátí konfliktní fakta, nereagující kráva a Planner přesto dokončí import | **P, nová sada testů** | Žádný z těchto scénářů dnes není v `### Adversarial test suite` (Zero-trust model) — ta řeší útoky na jednu COW (cross-tenant, credential escape, replay...), ne kompozici napříč víc kravami. Zapsáno jako nová podsekce SEVERKA |
+
+**Verdikt vlastníka:** Posudek 11 8,5/10 jako oponentura — přesný, ale spíš potvrzovací než útočný
+(2 z 8 bodů restatement, jak Posudek 11 sám přiznává v `Co posudek nezměnil`). Projekt 9,0/10.
+Vlastní citace: *"Už se nebojím jednotlivých krav tolik jako dřív. Teď se začínám víc bát toho, jak
+budeme bezpečně skládat výsledky mnoha krav dohromady."* — těžiště rizika se přesouvá z jednotlivé
+COW na řetěz evidence → dojička → certified business object → write executor.
+
+**Vlastníkovo pořadí příštích kroků** (nahrazuje `SEVERKA.md`'s starší `## Pořadí`, viz tamní
+přepis): Policy Enforcement v2 (**dotaženo dnes, HANDOFF 116**) → Evidence/Provenance Contract →
+build-bound CertificationRecord → Lifecycle `NEW→TESTING→CERTIFIED→ACTIVE` → `cz.company.verify` →
+`cz.vat.verify` → `bc.vendors` → první deterministická dojička (`invoice.verification.aggregate`) →
+compromised-farmer/composition attack suite → až pak BC write `DRY_RUN` → live. Planner zůstává až
+za tím vším.
+
+### Vedlejší téma: Office (tenant/identity/access) — nový blok farmy
+
+Stejná diskuze otevřela samostatný koncept, dosud v SEVERKA nepojmenovaný: **Office** = recepce +
+matrika farmy — kde vzniká tenant, uživatelé, role a napojení na identity providera. Tři oddělené
+věci s různou expirací (tenant jako stav ACTIVE/SUSPENDED/CLOSED, session token s krátkou
+expirací, service/connector token s vlastní rotací) a konfigurovatelné MFA
+(`OPTIONAL`/`REQUIRED`/`REQUIRED_FOR_PRIVILEGED`, plus step-up MFA na kritické operace). Office
+samo neověřuje heslo/e-mail — deleguje na skutečný identity provider (Cloudflare Access/Entra
+ID/Google) a jen mapuje ověřenou identitu na `tenantId`+role. Zapsáno jako nová vrstva do
+`docs/SEVERKA.md` (viz `## Vrstvy`, řádek Office) — **cílový obraz, ne rozhodnuté zadání**, stejná
+výhrada jako u zbytku SEVERKA; přímo navazuje na bod 7 výše a na `SEVERKA.md`'s starší Tenant
+Layer poznámku z 2026-09-09.
+
+### Co posudek nezměnil
+
+Kód dnes změněn jen v bodě 3 — dokončení už rozjetého checkpointu (`fc76849` → HANDOFF 116), časová
+shoda s touhle reflexí, ne reakce na ni. Zbytek (body 2, 4–12, Office) je dokumentační: zapsáno do
+`docs/SEVERKA.md`, čeká na vlastníkovo rozhodnutí o pořadí implementace bodů 4 (Evidence),
+6 (CertificationRecord), 5 (Lifecycle stavy) a Office samotného.

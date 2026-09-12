@@ -2,6 +2,46 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-12 (117) — Posudek 12 zalogován (vlastníkova protioponentura), Office koncept, SEVERKA přepsáno podle nového pořadí
+
+Vlastník sám (ne externí čtenář) prošel `5af3f26` (Posudek 11) i aktuální jádro kriticky podruhé:
+vlastní skóre 9,0/10 celkově, Posudek 11 hodnocen 8,5/10 jako oponentura ("přesný, ale spíš
+potvrzovací než útočný"). 12 bodů, z toho tři věcně nové oproti dosavadním posudkům: (6) build-bound
+`CertificationRecord` jako konkrétní mechanismus pro `Lifecycle`'s `ACTIVE` přechod, (11) formální
+`Evidence{evidenceId, tenantId, capability, provider, inputField, inputValueHash, result,
+observedAt, expiresAt?, buildHash}` primitivum místo holého `field: PASS`, (12) composition attack
+suite — útoky na **skládání** výsledků víc krav dojičkou (cizí-tenant evidence, zastaralá evidence,
+konfliktní fakta, nereagující kráva), ne na jednotlivou COW. Bod 3 (Policy enforcement jako P0)
+se mezitím sám vyřešil — checkpoint `fc76849` na přesně tohle téma byl už rozestavěný a dnes
+dotažen do zelena (viz záznam (116) níže, časová shoda, ne reakce na tuhle reflexi).
+
+Zapsáno do `docs/POSUDKY.md` (Posudek 12) — plná tabulka 12 bodů s dispozicí.
+
+**Vedlejší téma stejné diskuze: Office.** Nový architektonický blok — recepce/matrika farmy, kde
+vzniká tenant, uživatelé, role a napojení na identity providera (Access/Entra ID/Google, Office
+samo neověřuje heslo/MFA). Tři oddělené expirace (tenant jako licenční stav, session token
+krátkodobý, service token s vlastní rotací) + konfigurovatelné MFA
+(`OPTIONAL`/`REQUIRED`/`REQUIRED_FOR_PRIVILEGED`, step-up na kritické operace). Přímo navazuje na
+`accessJwtVerified: false` (Posudek 7 MAJOR 2 / Posudek 8 P0-1) — Office je místo, kam ta oprava
+architektonicky patří.
+
+**`docs/SEVERKA.md` přepsáno na několika místech** (živý dokument, přepis ne append):
+nová vrstva `Office` v `## Vrstvy` (s odkazem z `Tenant Layer` řádku); `CertificationRecord` schéma
+doplněno do `### Admission Gate`; formální `Evidence` schéma doplněno do `### Kontrola musí být
+svázaná s konkrétní hodnotou`; nová podsekce `### Composition attack suite` pod Zero-trust model;
+`### Hlavní invariant: farmář nesmí nosit hodnoty` doplněn o návrh schema-level vynucení (farmářovo
+I/O schéma nesmí business pole vůbec připustit, dojička nesmí mít `setAmount()`/`setBankAccount()`
+API). **`## Pořadí` kompletně přepsáno** na vlastníkovo dnešní pořadí: Policy Enforcement v2
+(hotovo) → Evidence/Provenance Contract → build-bound CertificationRecord → Lifecycle stavy →
+`cz.company.verify` → `cz.vat.verify` → `bc.vendors` → `invoice.verification.aggregate` (první
+dojička) → composition attack suite → BC write `DRY_RUN`→live; Planner zůstává poslední. Dvě
+položky staré verze pořadí (durable idempotency na `apf-email-executor`, dokončení
+`mail.ingest`/`email.send` skeleton) zůstávají otevřené, dnes nepřeřazené — zapsány pod čarou, ne
+ztracené.
+
+Čistě dokumentační krok, žádný kód dnes (kód viz (116) níže, samostatná, dřívější položka stejného
+dne).
+
 ## 2026-09-12 (116) — Policy Enforcement v2 checkpoint dotažen do zelena (14/15 → 15/15)
 
 Navazuje na `fc76849` (checkpoint "new tests not yet green", 11. 9. 2026 večer, ponechaný na
@@ -31,7 +71,7 @@ v testovací fixture. **348/348 testů, `typecheck`, `arch`, `farm:check` zelen�
 
 **Zbývá rozhodnout (Milan):** vlastník dnes nezávisle zopakoval kritickou reflexi nad Posudkem 11
 (vlastní protioponentura + koncept "Office" pro tenant/identity/access) — zapsáno do
-`docs/POSUDKY.md` (Posudek 12) a `docs/SEVERKA.md` samostatně, viz další záznam.
+`docs/POSUDKY.md` (Posudek 12) a `docs/SEVERKA.md`, viz HANDOFF (117) výše.
 
 ## 2026-09-11 (115) — Posudek 11 zalogován a ověřen — doporučuje začít stavět read-only/validační krávy
 
