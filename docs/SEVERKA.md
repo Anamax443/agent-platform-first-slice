@@ -658,7 +658,10 @@ Pravidlo: `Lifecycle` smí modul/capabilitu přepnout do `ACTIVE` jen když `Cer
 `config/<installation>/lifecycle.json`), a ne jen "self-test dřív prošel na nějakém buildu". Bez
 téhle vazby může běžet kód, který se od certifikace změnil, a lifecycle o tom neví. Přímo doplňuje
 `NEW/TESTING/CERTIFIED/DEGRADED` stavy výš (`## Vrstvy`, Admission Gate řádek) o mechanismus,
-který o přechodu do `CERTIFIED`/`ACTIVE` rozhoduje — implementace zatím 0 %.
+který o přechodu do `CERTIFIED`/`ACTIVE` rozhoduje. **Implementováno jako testovaný primitiv
+13. 9. 2026** (`src/platform/certification.ts`'s `CertificationRegistry`/`deriveLifecycleStatus()`,
+HANDOFF 126) — zatím samostatně, nezapojeno do `LifecycleRegistry`/`Router.route()` na skutečné
+farmě (viz `## Pořadí` bod 4 níže pro důvod, proč to čeká na vlastníkovo rozhodnutí).
 
 ### Risk profily řídí povinné testy, ne autor COW
 
@@ -791,10 +794,22 @@ nepřeřazoval** — zapsány zvlášť pod čarou, ne zapomenuté.
    zatím nepostaveny, bod 5–6 níže).
 3. **Build-bound `CertificationRecord`** — `Lifecycle` smí přepnout na `ACTIVE` jen když
    `CertificationRecord.PASS && certifiedBuildHash == runningBuildHash` (Posudek 12 bod 6, viz
-   `### Admission Gate` výše). Nepostaveno.
-4. **Lifecycle `NEW → TESTING → CERTIFIED → ACTIVE → DEGRADED → QUARANTINED`** — dnes jen
-   `ACTIVE`/`QUARANTINED` (Posudek 8/9/10/11/12 nezávisle opakovaně potvrzují stejnou mezeru).
-   Stojí na bodu 3 (CertificationRecord řídí přechod do `ACTIVE`). Nepostaveno.
+   `### Admission Gate` výše). **Hotovo jako testovaný primitiv 13. 9. 2026** (HANDOFF 126):
+   `src/platform/certification.ts`'s `CertificationRegistry` — `certify()` odvozuje `decision`
+   samo (chybějící `actualResults` pro požadovaný test = FAIL, ne tichý PASS), `canActivate()`
+   kontroluje přesně `(module, buildHash)` dvojici, nikdy nepřenáší certifikaci na jiný build
+   téhož modulu. `tests/certification.test.ts`, 8 testů (CERT-001..008).
+4. **Lifecycle `NEW → TESTING → CERTIFIED → ACTIVE → DEGRADED → QUARANTINED`** — dnes
+   `LifecycleRegistry` pořád jen `ACTIVE`/`QUARANTINED` (Posudek 8/9/10/11/12 nezávisle opakovaně
+   potvrzují stejnou mezeru). **Odvozovací funkce hotová 13. 9. 2026** (`deriveLifecycleStatus()`
+   v `certification.ts`, HANDOFF 126) — čistá funkce z `CertificationRecord` + `admitted`/
+   `degraded`/`quarantined` signálů na plný stavový slovník (`quarantined` vždy vyhraje,
+   chybějící certifikace → `NEW`, `FAIL` → `QUARANTINED`, `PASS` bez `admitted` → `CERTIFIED`,
+   `PASS`+`admitted` → `ACTIVE`/`DEGRADED` podle `degraded`). **Zatím nezapojeno do
+   `LifecycleRegistry`/`Router.route()`** — živé nasazení by změnilo fail-closed chování
+   dispatchu na skutečné farmě a čeká na vlastníkovo rozhodnutí o `DEGRADED`'s dispatch
+   sémantice (pouští provoz se sníženou důvěrou, nebo taky fail-closed jako `QUARANTINED`?),
+   ne na dnešní rozhodnutí.
 5. **`cz.company.verify`** — API zdroj ověřen 11. 9. 2026 (ARES, bezplatné, viz
    `## Připravované doménové COW` výše), zatím nepostaveno.
 6. **`cz.vat.verify`** — API zdroj ověřen 11. 9. 2026 (MOJE daně SOAP, bezplatné, zveřejněné účty

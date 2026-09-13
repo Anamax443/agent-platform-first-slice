@@ -2,6 +2,40 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-13 (126) — CertificationRecord implementován: build-bound certifikace + odvozovací funkce plného lifecycle slovníku
+
+Reakce na Posudek 14's pořadí zbylých below-9 překážek — první z trojice (build-bound
+`CertificationRecord` → skutečné krávy zapisující do Žlabu → compromised-farmer end-to-end test),
+zvolena jako "up to you" volba, protože je čistě interní logika (na rozdíl od ARES/MOJE daně
+integrace, kde by stálo za to nejdřív probrat návrh s vlastníkem) a nesahá do živého dispatchu.
+
+Nová `src/platform/certification.ts`:
+
+- `CertificationRegistry` — `certify()` je jediná zapisovací cesta; `decision` (`PASS`/`FAIL`) se
+  **odvozuje samo**, ne důvěřuje volajícímu: chybějící `actualResults` pro požadovaný test =
+  `FAIL`, stejné pravidlo jako `policy.ts`'s `checkEffectFieldValidators()` u evidence polí.
+  `canActivate(module, buildHash)` kontroluje přesně tuhle dvojici — certifikace `v1.7` nikdy
+  neplatí pro `v1.8` téhož modulu (Milanův vlastní příklad: "v1.8 NEW, nikoliv v1.8 ACTIVE, protože
+  moduleName je ACTIVE"). Žádná update/delete metoda (CERT-008 reflexí).
+- `deriveLifecycleStatus()` — čistá funkce z `CertificationRecord | undefined` + `admitted`/
+  `degraded`/`quarantined` na plný `NEW`/`TESTING`/`CERTIFIED`/`ACTIVE`/`DEGRADED`/`QUARANTINED`
+  slovník (`TESTING` vědomě nesledováno jako uložený stav — je to, co se děje *před* `certify()`,
+  tranzientní). `quarantined` vždy vyhraje (fail-closed), chybějící certifikace → `NEW`, `FAIL` →
+  `QUARANTINED`, `PASS` bez `admitted` → `CERTIFIED`, `PASS`+`admitted` → `ACTIVE`/`DEGRADED`.
+
+**`tests/certification.test.ts`, 8 testů (CERT-001..008), všechny zelené na první běh** (jeden
+drobný fix cestou — reflexní test zapomněl na privátní `key()` helper metodu, TS `private` je jen
+compile-time).
+
+**Vědomě nezapojeno do `LifecycleRegistry`/`Router.route()`** — na rozdíl od Žlab/Dojička/Konev,
+který nic živého neovlivňuje, tohle by změnilo fail-closed chování dispatchu na skutečné farmě
+(`farm-bass443`). Čeká na vlastníkovo rozhodnutí o `DEGRADED`'s dispatch sémantice (pouští provoz
+se sníženou důvěrou, nebo taky fail-closed jako `QUARANTINED`?), ne na dnešní technické rozhodnutí.
+
+Zapsáno do `docs/SEVERKA.md`: `### Admission Gate` odstavec a `## Pořadí` body 3–4 přepsány z
+"Nepostaveno" na hotový testovaný primitiv, s explicitní výhradou o nezapojení do živého Routeru.
+380/380 testů (372+8), typecheck, arch, farm:check zelené.
+
 ## 2026-09-13 (125) — Konev implementován: BusinessObjectSealer, zapečetěný CertifiedBusinessObject nad Dojičkou
 
 Reakce na Posudek 14 (`docs/POSUDKY.md`), vlastníkovo explicitní doporučení "jediný následující
