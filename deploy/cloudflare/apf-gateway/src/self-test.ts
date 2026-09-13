@@ -72,13 +72,31 @@ export const SELF_TEST_WORKFLOW_ID = "wf-selftest";
 // doesn't care which Worker actually serves a capability. Safe to exercise live today: the DMS/archive they write
 // to is still the apf-fakes twin, not a real production system (docs/NAVRHOVY-LIST-farma.md, celek D) — revisit
 // once a real DMS is wired, the same way a real payment/ERP write would never belong in an on-demand self-test.
+// document.stamp runs against the REAL apf-fakes DMS twin and the REAL system clock here (unlike the Node
+// conformance suite's FakeDmsAdapter/ClockFixture) — canonical-invoice-stamp's dmsRef and
+// canonical-default-stamptext's clock-derived stampText are therefore never byte-identical to the golden
+// recorded from the deterministic Node fixtures, on any run, by design (HANDOFF 95/96/101, first diagnosed
+// 55-60). Overriding just those two fields to a "$prefix:" check (still confirms the right shape/document
+// type, just not the exact volatile value) — the shared golden file and tests/harness/index.ts's own
+// subsetDiff stay untouched, so the Node suite keeps checking both fields exactly.
+function withPayloadOverride(golden: Golden, overrides: Record<string, unknown>): Golden {
+  return { ...golden, payload: { ...(golden.payload as Record<string, unknown>), ...overrides } };
+}
+
+const stampGoldenBase = stampGolden as Record<string, Golden>;
+const stampGoldenLive: Record<string, Golden> = {
+  ...stampGoldenBase,
+  "canonical-invoice-stamp": withPayloadOverride(stampGoldenBase["canonical-invoice-stamp"] as Golden, { dmsRef: "$prefix:dms-" }),
+  "canonical-default-stamptext": withPayloadOverride(stampGoldenBase["canonical-default-stamptext"] as Golden, { stampText: "$prefix:STAMPED INVOICE " }),
+};
+
 const SUITES: { capability: string; worker: string; fixtures: Fixture[]; golden: Record<string, Golden> }[] = [
   { capability: "document.classify", worker: "apf-gateway", fixtures: classifyFixtures as Fixture[], golden: classifyGolden as Record<string, Golden> },
   { capability: "document.validate", worker: "apf-gateway", fixtures: validateFixtures as Fixture[], golden: validateGolden as Record<string, Golden> },
   // First capability of the invoice→verify→BC chain (SEVERKA.md ## Pořadí, VC §5's worked example) — in-process
   // on the gateway like classify/validate (no side effects, no credential to isolate).
   { capability: "invoice.extract", worker: "apf-gateway", fixtures: extractFixtures as Fixture[], golden: extractGolden as Record<string, Golden> },
-  { capability: "document.stamp", worker: "apf-document-host", fixtures: stampFixtures as Fixture[], golden: stampGolden as Record<string, Golden> },
+  { capability: "document.stamp", worker: "apf-document-host", fixtures: stampFixtures as Fixture[], golden: stampGoldenLive },
   { capability: "document.archive", worker: "apf-document-host", fixtures: archiveFixtures as Fixture[], golden: archiveGolden as Record<string, Golden> },
   // SEVERKA.md item 3, second real write-type: mail.ingest runs in-process on the gateway (no credential to
   // isolate), email.send is a genuine remote dispatch to apf-email-executor (PRINCIPAL, SEND_MODE=sandbox here —
@@ -116,6 +134,8 @@ export interface SelfTestRow {
   diff: string[];
 }
 
+const LIVE_PREFIX_SENTINEL = "$prefix:";
+
 function subsetDiff(actual: unknown, expected: unknown, path = "$"): string[] {
   if (Array.isArray(expected)) {
     if (!Array.isArray(actual)) return [`${path}: expected array`];
@@ -125,6 +145,15 @@ function subsetDiff(actual: unknown, expected: unknown, path = "$"): string[] {
   if (expected && typeof expected === "object") {
     if (!actual || typeof actual !== "object") return [`${path}: expected object, got ${JSON.stringify(actual)}`];
     return Object.entries(expected as Record<string, unknown>).flatMap(([k, v]) => subsetDiff((actual as Record<string, unknown>)[k], v, `${path}.${k}`));
+  }
+  // Live-only escape hatch (not present in tests/harness/index.ts's copy of this function, deliberately — the
+  // Node conformance suite's fake DMS/fixed clock ARE deterministic and should keep matching exactly): a golden
+  // value of "$prefix:X" only checks that actual is a string starting with X. Used below for the handful of
+  // document.stamp fields real production dependencies make different every run (dmsRef, clock-derived
+  // stampText) — see LIVE_STAMP_GOLDEN and HANDOFF 55-60/95/96/101.
+  if (typeof expected === "string" && expected.startsWith(LIVE_PREFIX_SENTINEL)) {
+    const prefix = expected.slice(LIVE_PREFIX_SENTINEL.length);
+    return typeof actual === "string" && actual.startsWith(prefix) ? [] : [`${path}: ${JSON.stringify(actual)} does not start with ${JSON.stringify(prefix)}`];
   }
   return Object.is(actual, expected) ? [] : [`${path}: ${JSON.stringify(actual)} != ${JSON.stringify(expected)}`];
 }

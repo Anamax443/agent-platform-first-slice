@@ -52,7 +52,7 @@ import {
   type Wired,
 } from "./page.js";
 import { describeModels, gatewayCatalog, wirePlatform, type Wiring } from "./platform-wiring.js";
-import { runSelfTest, selfTestCapabilityForTick, SELF_TEST_WORKFLOW_ID } from "./self-test.js";
+import { runSelfTest, selfTestCapabilityForTick, SELF_TEST_CAPABILITIES, SELF_TEST_WORKFLOW_ID } from "./self-test.js";
 import { D1_AUDIT_DDL, DDL, SqliteArtifacts, SqliteAudit, SqliteJournal, SqliteReviewTaskStore } from "./store.js";
 import { visuallyStamp } from "./visual-stamp.js";
 
@@ -1307,15 +1307,40 @@ export default {
     // wf-... so apf-document-host's artifact fetch-back resolves to it too) so it never pollutes "Poslední instance"
     // (recentInstances() excludes it explicitly) or clashes with a real document's workflowId; purgeable like any
     // instance at /workflow/wf-selftest/purge if its artifact store grows.
-    if (url.pathname === "/farm/self-test" && request.method === "POST") {
+    if (url.pathname === "/farm/self-test" && (request.method === "POST" || request.method === "GET")) {
       // Owner's request 2026-09-09: "chci vidět kontroly a i si je být schopen individuálně vyvolat" — an
       // Argos capability card or a Kravičky worker card can each post their own narrower run instead of
-      // always the full 72-fixture suite.
+      // always the full suite. A single suite never gets near the subrequest-depth limit below (HANDOFF
+      // 55-60: the phenomenon disappears when document.archive runs first/alone) — unaffected by the chaining.
       const only = { capability: url.searchParams.get("capability") ?? undefined, worker: url.searchParams.get("worker") ?? undefined };
+      if (only.capability || only.worker) {
+        if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
+        const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(SELF_TEST_WORKFLOW_ID));
+        const rows = (await stub.selfTest(only)) as SelfTestRow[];
+        await recordSelfTestSummary(env, rows);
+        return html(renderSelfTest(rows));
+      }
+
+      // Full run across every capability, one at a time, each as its OWN top-level request (HANDOFF 55-60,
+      // reconfirmed 2026-09-13 against today's SUITES order). Cloudflare's subrequest-depth counter
+      // accumulates across an entire incoming request's whole call graph, not just how deep the Worker's own
+      // code nests calls — looping over all of SUITES inside one stub.selfTest() call (the old behaviour)
+      // reliably threw "Subrequest depth limit exceeded" once the cumulative cross-Worker dispatches reached
+      // document.archive (document.stamp's ~16 fixtures, each with its own gateway<->document-host fetch-back,
+      // run immediately before it). A 303 redirect makes the BROWSER issue the next capability as a genuinely
+      // new request — resetting that budget the same way a lone capability run (above) or the 30-min scheduled
+      // tick (selfTestCapabilityForTick) never accumulates it in the first place.
+      const chainParam = url.searchParams.get("chain");
+      const idx = chainParam ? Number(chainParam) : 0;
+      if (!Number.isInteger(idx) || idx < 0 || idx >= SELF_TEST_CAPABILITIES.length) return new Response("invalid chain index", { status: 400 });
+      if (idx === 0 && request.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
       const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(SELF_TEST_WORKFLOW_ID));
-      const rows = (await stub.selfTest(only.capability || only.worker ? only : undefined)) as SelfTestRow[];
+      const rows = (await stub.selfTest({ capability: SELF_TEST_CAPABILITIES[idx] })) as SelfTestRow[];
       await recordSelfTestSummary(env, rows);
-      return html(renderSelfTest(rows));
+      const next = idx + 1;
+      if (next < SELF_TEST_CAPABILITIES.length) return Response.redirect(new URL(`/farm/self-test?chain=${next}`, url).toString(), 303);
+      const summary = await latestSelfTestSummary(env);
+      return html(renderSelfTest(summary?.fixtures ?? rows));
     }
 
     // Manual verification for the Argos alert wiring (HANDOFF 85) — "never deploy untested" for a real external

@@ -2,6 +2,53 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-13 (140) — self-test: dva dřív odložené nálezy (55-60/95/96/101) skutečně opraveny, ne jen znovu zdokumentovány
+
+**Pokyn vlastníka:** vlastník vložil živý self-test výpis `apf-document-host` (4 FAILED: `canonical-
+invoice-stamp`, `canonical-default-stamptext`, `canonical-archive`, plus `damaged-hash-mismatch` u
+archive — `error-unknown-outcome` je ve skutečnosti `SKIPPED, ok:true`, ne FAILED, jak vlastníkovo
+shrnutí naznačovalo) a přes `AskUserQuestion` zvolil "udělat odložený reálný fix teď" místo jen
+znovu zalogovat known-issue stav.
+
+**Diagnóza (potvrzeno, ne jen zopakováno):** `npm test` 419/419 zelené před i po — žádná regrese v
+executor kódu, oba nálezy jsou o tom, jak `self-test.ts` porovnává živý běh s golden souborem
+zaznamenaným z Node fake adaptérů:
+- `canonical-invoice-stamp`/`canonical-default-stamptext`: golden má `dmsRef: "dms-1"` a fixní
+  `stampText` s `2026-09-06T08:00:00.000Z` (`conformance/document.stamp/golden/…json`) — živý běh
+  proti skutečnému `apf-fakes` DMS twinu a skutečným hodinám nutně vrací jiný `dmsRef`/timestamp.
+- `canonical-archive`/`damaged-hash-mismatch`: `RESOURCE_TENANT_UNRESOLVED`/`FAILED` bez payloadu —
+  přesně vzorec z HANDOFF (55)-(60): Cloudflare "Subrequest depth limit exceeded", `document.archive`
+  běží po `document.stamp`'s ~16 fixturách (každá s vlastním gateway↔document-host fetch-back) v
+  jednom `stub.selfTest()` volání, teď o krok hlouběji než při (101) díky mezitím přidanému
+  `invoice.extract` v `SUITES`.
+
+**Fix 1 (golden tolerance, jen live cesta):** [self-test.ts](deploy/cloudflare/apf-gateway/src/self-test.ts)
+dostal vlastní `$prefix:` sentinel v jeho (už dřív záměrně duplikované, ne importované) kopii
+`subsetDiff()` + `stampGoldenLive` override jen pro `dmsRef`/`stampText` u těchhle dvou fixtures.
+Sdílený `conformance/document.stamp/golden/*.json` a `tests/harness/index.ts`'s `subsetDiff()`
+beze změny — Node sada dál kontroluje obě pole přesně (fake DMS/`ClockFixture` jsou deterministické,
+žádný důvod tam toleranci slabit).
+
+**Fix 2 (subrequest depth, na `/farm/self-test`):** [index.ts](deploy/cloudflare/apf-gateway/src/index.ts)
+— běh přes všechny kapability (žádný `?capability=`/`?worker=`) se teď řetězí přes `303` redirecty
+(`?chain=N`), kapabilita po kapabilitě, každá jako **vlastní top-level request** místo jednoho
+`stub.selfTest()` volání se všemi sadami uvnitř — Cloudflare-ho depth counter se váže na celý
+požadavek, ne na to, jak si Worker strukturuje vlastní `await`y, takže reset vyžaduje opravdu nový
+příchozí request (přesně proč jednotlivá kapabilita nebo scheduled tick nikdy nepadaly). Jednotlivé
+`?capability=`/`?worker=` volání (Kravičky/Stáj karty) beze změny. Poslední článek řetězu čte
+`latestSelfTestSummary()` (merged stav) místo jen svých vlastních `rows`, takže finální report
+ukáže všech ~7 sad, ne jen poslední.
+
+**Vědomě NEudělané:** živé ověření na produkci (nasazení + `POST /farm/self-test` naostro) je
+záměrně samostatný krok po nasazení, stejná disciplína jako (96)/(101)/(139) — subrequest-depth
+jev se z definice nedá ověřit lokálně (Vitest/Node fakes na něj nikdy nenarazí). Brány zelené:
+typecheck, **419/419 testů** (beze změny — obě opravy jsou mimo cestu, co Node testy pokrývají),
+arch, farm:check.
+
+**Vedlejší nález, nezařešený teď:** `invoice.extract` (6/12) a `email.send` (4/13) vypadají dnešní
+den výrazně hůř než `document.stamp`/`document.archive` a nemají `acknowledgedAt` na rozdíl od
+nich — nový, nepotvrzený jev, samostatné prošetření až vlastník řekne.
+
 ## 2026-09-13 (139) — apf-gateway: vizuální jazyk dema (ai-farma-web) přenesen do CSS, žádná HTML/data změna
 
 HANDOFF (138)'s barevná paleta pořád nestačila — vlastník po dalším screenshotu (živý
