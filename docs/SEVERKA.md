@@ -817,14 +817,26 @@ nepřeřazoval** — zapsány zvlášť pod čarou, ne zapomenuté.
 7. **`bc.vendors`** — vnitřní protějšek k `cz.company.verify` (existující Vendor No. v BC, ne jen
    vnější potvrzení, že IČO existuje — HANDOFF 113), nepostaveno.
 8. **První deterministická dojička** (Posudek 11 bod 7 / Posudek 12 bod 9). **Hotovo jako testovaný
-   primitiv 13. 9. 2026** (HANDOFF 121): `src/platform/aggregator.ts`'s `EvidenceAggregator` — bez
-   LLM, bez credentialu, bez zápisové cesty do Žlabu (jen čte); kontroluje úplnost požadované
-   evidence, integritu/lineage přes `EvidenceLedger`, tenant, expiraci a shodu `inputValueHash`/
-   `result` → `READY`/`REVIEW`/`REJECT` s typovanými `findings` (`missing`/`expired`/
-   `tenant_mismatch`/`integrity_failed`/`lineage_broken`/`conflict`). `tests/dojicka.test.ts`, 9
-   testů (DOJ-001..009). **Zatím nenapojeno na skutečnou capabilitu** — `cz.company.verify`/
+   primitiv 13. 9. 2026** (HANDOFF 121, opraveno HANDOFF 127): `src/platform/aggregator.ts`'s
+   `EvidenceAggregator` — bez LLM, bez credentialu, bez zápisové cesty do Žlabu (jen čte); kontroluje
+   úplnost požadované evidence (a že jde o **přijatelný** `result`, ne jen o shodu producenta —
+   Posudek 15 P0-1, viz níže), integritu/lineage přes `EvidenceLedger`, tenant, `workflowId`,
+   expiraci, shodu `inputValueHash` napříč evidencí **a** vazbu na autoritativní `fieldHashes`
+   aktuálně certifikovaného objektu (Posudek 15 P0-2) → `READY`/`REVIEW`/`REJECT` s typovanými
+   `findings` (`missing`/`expired`/`tenant_mismatch`/`workflow_mismatch`/`integrity_failed`/
+   `lineage_broken`/`conflict`/`rejected`/`not_bound`). `tests/dojicka.test.ts`, 15 testů
+   (DOJ-001..012). **Zatím nenapojeno na skutečnou capabilitu** — `cz.company.verify`/
    `cz.vat.verify`/`bc.vendors` (body 5–7) jsou první krávy, co by do Žlabu měly reálně zapisovat;
    dojička sama je hotová a čeká na ně, ne naopak.
+
+   **Posudek 15 (13. 9. 2026), dva P0 nálezy z nepřátelského adversarial review, opraveny ve stejný
+   den:** (1) `required` kontrola dřív ověřovala jen shodu `producerId`, ne `result` — jediná
+   evidence s `result: "FAIL"` požadavek splnila a `READY` mohlo vzniknout i s explicitním selháním;
+   opraveno `RequiredEvidence.acceptableResults` (default `["PASS"]`) + nový `FindingKind: "rejected"`.
+   (2) `aggregate()` nedostávalo autoritativní aktuální hodnotu certifikovaného objektu — interně
+   konzistentní evidence z **jiné** faktury/workflow stejného tenanta by prošla; opraveno povinným
+   (ne optional) `fieldHashes: Record<string,string>` porovnaným s `Evidence.inputValueHash` a
+   volitelným `workflowId` porovnaným s `Evidence.workflowId`, když ho evidence deklaruje.
 8b. **Konev** (Posudek 14 bod 6, 13. 9. 2026 — "nejvyšší priorita projektu"). **Hotovo jako testovaný
    primitiv 13. 9. 2026** (HANDOFF 125): `src/platform/konev.ts`'s `BusinessObjectSealer` —
    `seal()` přijme jen `decision: "READY"` (strukturálně), znovu ověří evidenci proti Žlabu při

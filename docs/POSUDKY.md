@@ -461,3 +461,42 @@ Kód dnes: `src/platform/konev.ts` + `tests/konev.test.ts` (bod 6, na vlastníko
 žádost "jediný následující commit"). `## Pořadí` pořadí bodů beze změny — Konev byl už zapsaný
 jako bod 8b, jen "nepostaveno" → "hotovo". Bod 5 (Konev vs. `checkEffectFieldValidators()`) je nové
 architektonické pravidlo, ne oprava dnešního kódu — žádná reálná policy dnes na tomhle nestojí.
+
+## Posudek 15 — nepřátelský adversarial review nad Žlab/Dojička/ExecutorHost/Router, 2 potvrzené P0 (13. 9. 2026)
+
+**Zdroj:** vlastník (Milan), tentokrát výslovně "jako nepřátelský code review", ne kontrola shody se
+SEVERKA. Skóre: implementovaný projekt **8,9/10** (pokles z 9,25 — ne proto, že by se projekt
+zhoršil, ale proto, že nové vrstvy (Žlab/Dojička) teď poprvé daly co kontrolovat), security core
+samotný 9,4, cílová architektura 9,6–9,7.
+
+**Oba P0 nálezy ověřeny přímo v kódu a opraveny ve stejný den:**
+
+| # | Bod | Dispozice | Poznámka |
+|---|---|---|---|
+| P0-1 | `EvidenceAggregator`'s `required` kontrola ověřovala jen `producerId` shodu, ne `result` — jediná evidence s `result: "FAIL"` splňovala požadavek a `READY` mohlo vzniknout i s explicitním FAIL | **P, potvrzeno a opraveno** | Ověřeno přímo: `(byField.get(req.field) ?? []).some((r) => r.producerId === req.producerId)` v `aggregator.ts` (řádek 87 před opravou) skutečně nekontrolovalo `r.result`, a konflikt-detekce nechytí jediný záznam (potřebuje ≥2 rozdílné hodnoty). Opraveno: `RequiredEvidence.acceptableResults` (default `["PASS"]`), nový `FindingKind: "rejected"` (HARD_FAILURE → REJECT). Nové testy `DOJ-010` (explicitní FAIL → REJECT, přesně nález popsaný v posudku; + druhý test na `acceptableResults` s doménovým tokenem jiným než PASS) |
+| P0-2 | Dojička nedostává autoritativní aktuální hodnotu certifikovaného objektu (`fieldHashes`) ani `workflowId` k porovnání — interně konzistentní evidence z **jiné** faktury/workflow stejného tenanta by prošla | **P, potvrzeno a opraveno** | `aggregate()` bralo jen `{tenantId, required, evidenceRefs}` — žádné pole pro "hodnota, kterou fakticky certifikujeme právě teď". Opraveno: `aggregate()` teď vyžaduje `fieldHashes: Record<string,string>` (povinné, ne optional — strukturálně vynucuje binding) porovnané s `Evidence.inputValueHash` pro každé pole s dochovanou evidencí (`not_bound`, HARD_FAILURE), plus volitelné `workflowId` porovnané s `Evidence.workflowId`, když ho evidence deklaruje (`workflow_mismatch`, HARD_FAILURE). Nové testy `DOJ-011` (jiná faktura stejného tenanta, chybějící fieldHashes) a `DOJ-012` (jiný workflow, evidence bez workflowId neblokovaná) |
+
+**P1 nálezy, ověřeny, vědomě odloženy (nejsou v žádném rozporu s dnešní opravou, ale vyžadují buď
+větší designové rozhodnutí, nebo sahají do živého kódu farmy):**
+
+| # | Bod | Stav | Poznámka |
+|---|---|---|---|
+| P1-1 | `EvidenceLedger` je `Map` v paměti, ne durable storage — restart Žlab smaže | **Potvrzeno, odloženo** | Stejná kategorie práce jako `IdempotencyLedger` (Durable Object) u `document-host`/`email-executor` — čeká na první reálnou krávu, co by na tom stála, ne na dnešní rozhodnutí |
+| P1-2 | `EvidenceCandidate` je caller-supplied (`tenantId`/`producerId`/`buildHash` atd.) — komentář v `evidence.ts` to přiznává, ale žádný `TrustedContext`-vázaný `EvidenceWriter` mezi COW a `EvidenceLedger.append()` ještě neexistuje | **Potvrzeno, odloženo** | Přesně dnešní hranice důvěry (stejná jako `Audit.append()`) — potřebuje reálnou COW, co by na tom stála, k návrhu `EvidenceWriter` rozhraní, ne teoretický návrh předem |
+| P1-3 | `verify()` má jediný `publicKey`/`keyId` — rotace platformního klíče by odmítla starou evidenci | **Potvrzeno, odloženo** | Návrh `EvidenceKeyRing` (aktivní klíč + historie ověřovacích klíčů) — čeká na první skutečnou rotaci, ne na spekulativní implementaci |
+| P1-4 | `checkEffectFieldValidators()` důvěřuje `validation.status` v payloadu — po Žlabu je to "starý trust model" | **Z, už zapsáno** | Přesně Posudek 14 bod 5 / dnešní `### BC Executor musí být „hloupý"` P0 poznámka — beze změny, potvrzuje už rozhodnuté |
+| P1-5 | `ExecutorHost`'s `policyFor`/durable `idempotency` jsou optional — chybějící constructor parametr znamená tichý no-op, ne startup fail | **Potvrzeno, NEOPRAVENO dnes** | Sahá do `ExecutorHost`'s konstruktoru, který používají **živé** `apf-document-host`/`apf-email-executor` — změna na "startup fail bez policy" by mohla shodit farmu, pokud by nějaké volací místo na `policyFor` zapomnělo. Vyžaduje audit všech volajících míst před změnou, ne jednostrannou úpravu — vlastníkovo rozhodnutí, kdy na to dojde |
+| P1-6 | `Router.register()` nehlásí explicitní fail na duplicitní `(capability, version)` registraci — `route()` vezme první nalezenou | **Potvrzeno, NEOPRAVENO dnes** | Stejný důvod jako P1-5 — `Router.ts` je živý kód, změna chování při registraci by se měla nejdřív ověřit proti `farm:check`/skutečným instalacím, ne slepě přidat |
+| P1-7 | `Router.seen` (nezakryté pole se všemi `DispatchEnvelope`) roste bez limitu v dlouho běžícím procesu | **Potvrzeno, NEOPRAVENO dnes** | Používá ho víc testů (`SEC-INJ-001` aj.) jako testovací instrumentace — přesun do samostatného test adapteru je větší refaktor, ne bodová oprava |
+
+**Verdikt vlastníka:** 8,9/10 dnes, ~9,15–9,25 po opravě obou P0 (**hotovo ve stejný den**),
+~9,4–9,5 po Žlab durabilitě + `EvidenceWriter` + zbytku P1, ~9,6–9,7 po Office/Ponocném/
+compromised-farmer E2E. Žádné skóre 10/10 ani pak — "u systému, který jednou může zapisovat účetní
+data několika nezávislým firmám, je zdravější předpokládat, že další chyba ještě existuje."
+
+### Co posudek nezměnil
+
+Kód dnes: `src/platform/aggregator.ts` (oba P0), `tests/dojicka.test.ts` (+6 testů: DOJ-010/011/012,
+každý se dvěma variantami), `tests/konev.test.ts` (aktualizováno na nové povinné `fieldHashes`).
+386/386 testů, typecheck, arch, farm:check zelené. P1-5/6/7 vědomě neopraveny — sahají do živého
+`ExecutorHost`/`Router`, čekají na vlastníkovo rozhodnutí, ne na dnešní jednostrannou úpravu.

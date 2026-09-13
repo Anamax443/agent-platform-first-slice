@@ -2,6 +2,57 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-13 (127) — Posudek 15: dva P0 nálezy v Dojičce opraveny (explicitní FAIL i cizí faktura/workflow mohly projít jako READY)
+
+Vlastník tentokrát prošel `main` výslovně jako **nepřátelský code review**, ne kontrolu shody se
+SEVERKA — a našel dvě reálné logické díry v `EvidenceAggregator`, obě ověřeny přímo v kódu před
+opravou (ne převzaty z tvrzení).
+
+**P0-1 — explicitní FAIL mohl projít jako READY.** `aggregate()`'s `required` kontrola
+(`(byField.get(req.field) ?? []).some((r) => r.producerId === req.producerId)`) ověřovala jen
+shodu producenta, nikdy `r.result`. Jediná evidence s `result: "FAIL"` požadavek **splnila** —
+a protože konflikt-detekce potřebuje ≥2 rozdílné hodnoty výsledku, jediný FAIL záznam neprodukoval
+ani `conflict`. `VAT/účet: FAIL → Dojička → READY` bylo reálně možné. Testy Dojičky (DOJ-001..009)
+pokrývaly missing/expired/cross-tenant/tamper/conflict/value-changed/lineage velmi dobře, ale
+přesně tenhle jednoduchý negativní případ (`required evidence exists, result = FAIL`) chyběl.
+
+**P0-2 — evidence nebyla svázaná s konkrétním certifikovaným objektem.** `aggregate()` dostávalo
+jen `{tenantId, required, evidenceRefs}` — žádné pole pro "hodnotu, kterou fakticky certifikujeme
+právě teď". Interně konzistentní evidence (stejné pole, stejný `inputValueHash` napříč všemi
+předloženými záznamy) mohla ve skutečnosti patřit **jiné** faktuře stejného tenanta se
+shodující hodnotou, nebo starší verzi téže faktury před změnou pole — Dojička by to nepoznala.
+Druhá varianta: `workflowId` je v `Evidence` jen optional a agregátor ho proti ničemu nesrovnával.
+
+**Opraveno v `src/platform/aggregator.ts`:**
+- `RequiredEvidence.acceptableResults?: string[]` (default `["PASS"]`) — nový `FindingKind:
+  "rejected"` (evidence existuje, ale její `result` není v přijatelné množině), zařazen do
+  `HARD_FAILURE` → `REJECT`, nikdy `REVIEW`/tichý průchod.
+- `aggregate()` teď vyžaduje **povinné** (ne optional) `fieldHashes: Record<string,string>` —
+  autoritativní aktuální hash hodnoty pole podle volajícího, porovnaný s `Evidence.inputValueHash`
+  pro každé pole s dochovanou evidencí. Neshoda nebo chybějící vstup → nový `FindingKind:
+  "not_bound"` (`HARD_FAILURE`). Volitelné `workflowId` porovnané s `Evidence.workflowId`, když ho
+  evidence deklaruje → `FindingKind: "workflow_mismatch"` (`HARD_FAILURE`); evidence bez
+  deklarovaného `workflowId` tímhle checkem neprojde blokovaná (slabší záruka, ale inherentní
+  vlastnost optional pole, ne regrese).
+
+**`tests/dojicka.test.ts` rozšířeno na 15 testů** (DOJ-001..012, dva nové testy s dvěma variantami
+každý): explicitní FAIL → REJECT (přesně nález z posudku) + doménový token jiný než PASS přes
+`acceptableResults`; evidence jiné faktury stejného tenanta → REJECT (`not_bound`) + chybějící
+`fieldHashes` vůbec → REJECT; jiný workflow → REJECT (`workflow_mismatch`) + evidence bez
+deklarovaného workflow neblokovaná. Existující testy (DOJ-001..009) i `tests/konev.test.ts`
+aktualizovány na nové povinné `fieldHashes` pole, žádná změna jejich očekávaného výsledku.
+**386/386 testů, typecheck, arch, farm:check zelené.**
+
+**P1 nálezy ze stejného posudku (durable Žlab storage, `TrustedContext`-vázaný `EvidenceWriter`,
+key rotation, `ExecutorHost`'s optional `policyFor`/idempotency defaults, `Router` duplicate
+registration, `Router.seen` bez limitu) ověřeny a zapsány do `docs/POSUDKY.md` (Posudek 15), ale
+**vědomě NEOPRAVENY dnes** — tři z nich (`ExecutorHost`/`Router` změny) sahají do živého kódu
+farmy (`apf-document-host`/`apf-email-executor`), čekají na vlastníkovo rozhodnutí a audit volacích
+míst, ne na jednostrannou úpravu ve stejném kroku jako oprava P0.**
+
+Zapsáno do `docs/POSUDKY.md` (Posudek 15, plná tabulka P0+P1) a `docs/SEVERKA.md` (`## Pořadí`
+bod 8, Dojička popis rozšířen o obě opravy).
+
 ## 2026-09-13 (126) — CertificationRecord implementován: build-bound certifikace + odvozovací funkce plného lifecycle slovníku
 
 Reakce na Posudek 14's pořadí zbylých below-9 překážek — první z trojice (build-bound

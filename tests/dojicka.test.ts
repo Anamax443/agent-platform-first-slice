@@ -45,11 +45,16 @@ function findingKinds(findings: AggregateFinding[]): string[] {
 }
 
 describe("DOJ-001 all required evidence present and clean -> READY", () => {
-  it("companyId + bankAccount both valid, same tenant, unexpired, no conflicts", () => {
+  it("companyId + bankAccount both valid, same tenant, unexpired, no conflicts, bound to the current object", () => {
     const { ledger, aggregator } = fixture();
     const company = ledger.append(candidate({ producerId: "cz.company.verify", inputField: "companyId", inputValueHash: "hash-ico" }));
     const bank = ledger.append(candidate({ producerId: "cz.vat.verify", inputField: "bankAccount", inputValueHash: "hash-account" }));
-    const result = aggregator.aggregate({ tenantId: TENANT_A, required: REQUIRED, evidenceRefs: [company.recordId, bank.recordId] });
+    const result = aggregator.aggregate({
+      tenantId: TENANT_A,
+      fieldHashes: { companyId: "hash-ico", bankAccount: "hash-account" },
+      required: REQUIRED,
+      evidenceRefs: [company.recordId, bank.recordId],
+    });
     expect(result.decision).toBe("READY");
     expect(result.findings).toEqual([]);
     expect(result.evidenceRefs.sort()).toEqual([bank.recordId, company.recordId].sort());
@@ -60,7 +65,7 @@ describe("DOJ-002 missing required evidence -> REVIEW, not a silent pass", () =>
   it("no cz.company.verify evidence submitted at all", () => {
     const { ledger, aggregator } = fixture();
     const bank = ledger.append(candidate({ producerId: "cz.vat.verify", inputField: "bankAccount" }));
-    const result = aggregator.aggregate({ tenantId: TENANT_A, required: REQUIRED, evidenceRefs: [bank.recordId] });
+    const result = aggregator.aggregate({ tenantId: TENANT_A, fieldHashes: { bankAccount: "hash-of-value" }, required: REQUIRED, evidenceRefs: [bank.recordId] });
     expect(result.decision).toBe("REVIEW");
     expect(findingKinds(result.findings)).toEqual(["missing"]);
     expect(result.findings[0]?.field).toBe("companyId");
@@ -73,7 +78,7 @@ describe("DOJ-003 expired evidence is not usable, but is a recoverable REVIEW, n
     const company = ledger.append(candidate({ producerId: "cz.company.verify", inputField: "companyId" }));
     const bank = ledger.append(candidate({ producerId: "cz.vat.verify", inputField: "bankAccount", expiresAt: iso(plus(clock.now(), HOUR)) }));
     clock.advance(2 * HOUR);
-    const result = aggregator.aggregate({ tenantId: TENANT_A, required: REQUIRED, evidenceRefs: [company.recordId, bank.recordId] });
+    const result = aggregator.aggregate({ tenantId: TENANT_A, fieldHashes: { companyId: "hash-of-value" }, required: REQUIRED, evidenceRefs: [company.recordId, bank.recordId] });
     expect(result.decision).toBe("REVIEW");
     expect(findingKinds(result.findings)).toEqual(["expired", "missing"]);
   });
@@ -84,7 +89,7 @@ describe("DOJ-004 cross-tenant evidence is rejected outright, never silently reu
     const { ledger, aggregator } = fixture();
     const company = ledger.append(candidate({ producerId: "cz.company.verify", inputField: "companyId" }));
     const bank = ledger.append(candidate({ producerId: "cz.vat.verify", inputField: "bankAccount", tenantId: TENANT_B }));
-    const result = aggregator.aggregate({ tenantId: TENANT_A, required: REQUIRED, evidenceRefs: [company.recordId, bank.recordId] });
+    const result = aggregator.aggregate({ tenantId: TENANT_A, fieldHashes: { companyId: "hash-of-value" }, required: REQUIRED, evidenceRefs: [company.recordId, bank.recordId] });
     expect(result.decision).toBe("REJECT");
     expect(result.findings.some((f) => f.kind === "tenant_mismatch")).toBe(true);
   });
@@ -97,7 +102,7 @@ describe("DOJ-005 tampered evidence fails integrity, decision is REJECT not sile
     const bank = ledger.append(candidate({ producerId: "cz.vat.verify", inputField: "bankAccount" }));
     const rawStore = (ledger as unknown as { byId: Map<string, Evidence> }).byId;
     rawStore.set(bank.recordId, Object.freeze({ ...bank, result: "FAIL" }));
-    const result = aggregator.aggregate({ tenantId: TENANT_A, required: REQUIRED, evidenceRefs: [company.recordId, bank.recordId] });
+    const result = aggregator.aggregate({ tenantId: TENANT_A, fieldHashes: { companyId: "hash-of-value" }, required: REQUIRED, evidenceRefs: [company.recordId, bank.recordId] });
     expect(result.decision).toBe("REJECT");
     expect(result.findings.some((f) => f.kind === "integrity_failed")).toBe(true);
   });
@@ -109,7 +114,12 @@ describe("DOJ-006 two producers disagree on the same field -> REJECT, never aver
     const company = ledger.append(candidate({ producerId: "cz.company.verify", inputField: "companyId" }));
     const bankPass = ledger.append(candidate({ producerId: "cz.vat.verify", inputField: "bankAccount", inputValueHash: "hash-account", result: "PASS" }));
     const bankFail = ledger.append(candidate({ producerId: "cz.vat.verify", inputField: "bankAccount", inputValueHash: "hash-account", result: "FAIL" }));
-    const result = aggregator.aggregate({ tenantId: TENANT_A, required: REQUIRED, evidenceRefs: [company.recordId, bankPass.recordId, bankFail.recordId] });
+    const result = aggregator.aggregate({
+      tenantId: TENANT_A,
+      fieldHashes: { companyId: "hash-of-value", bankAccount: "hash-account" },
+      required: REQUIRED,
+      evidenceRefs: [company.recordId, bankPass.recordId, bankFail.recordId],
+    });
     expect(result.decision).toBe("REJECT");
     expect(result.findings.some((f) => f.kind === "conflict" && f.field === "bankAccount")).toBe(true);
   });
@@ -121,7 +131,12 @@ describe("DOJ-007 value changed after verification -> REJECT (VALUE_CHANGED_AFTE
     const company = ledger.append(candidate({ producerId: "cz.company.verify", inputField: "companyId" }));
     const bankOld = ledger.append(candidate({ producerId: "cz.vat.verify", inputField: "bankAccount", inputValueHash: "hash-of-111111" }));
     const bankNew = ledger.append(candidate({ producerId: "cz.vat.verify", inputField: "bankAccount", inputValueHash: "hash-of-999999" }));
-    const result = aggregator.aggregate({ tenantId: TENANT_A, required: REQUIRED, evidenceRefs: [company.recordId, bankOld.recordId, bankNew.recordId] });
+    const result = aggregator.aggregate({
+      tenantId: TENANT_A,
+      fieldHashes: { companyId: "hash-of-value" },
+      required: REQUIRED,
+      evidenceRefs: [company.recordId, bankOld.recordId, bankNew.recordId],
+    });
     expect(result.decision).toBe("REJECT");
     expect(result.findings.some((f) => f.kind === "conflict" && /changed after verification/.test(f.reason))).toBe(true);
   });
@@ -138,7 +153,7 @@ describe("DOJ-008 broken lineage upstream of the referenced evidence -> REJECT",
     const rawStore = (ledger as unknown as { byId: Map<string, Evidence> }).byId;
     rawStore.set(extraction.recordId, Object.freeze({ ...extraction, inputValueHash: "hash-of-999999" }));
 
-    const result = aggregator.aggregate({ tenantId: TENANT_A, required: REQUIRED, evidenceRefs: [company.recordId, bank.recordId] });
+    const result = aggregator.aggregate({ tenantId: TENANT_A, fieldHashes: { companyId: "hash-of-value" }, required: REQUIRED, evidenceRefs: [company.recordId, bank.recordId] });
     expect(result.decision).toBe("REJECT");
     expect(result.findings.some((f) => f.kind === "lineage_broken")).toBe(true);
   });
@@ -151,7 +166,78 @@ describe("DOJ-009 the aggregator has no write path into the ledger", () => {
     const { ledger, aggregator } = fixture();
     const company = ledger.append(candidate({ producerId: "cz.company.verify", inputField: "companyId" }));
     const before = ledger.forTenant(TENANT_A).length;
-    aggregator.aggregate({ tenantId: TENANT_A, required: [], evidenceRefs: [company.recordId] });
+    aggregator.aggregate({ tenantId: TENANT_A, fieldHashes: { companyId: "hash-of-value" }, required: [], evidenceRefs: [company.recordId] });
     expect(ledger.forTenant(TENANT_A).length).toBe(before);
+  });
+});
+
+describe("DOJ-010 an explicit FAIL result must never be treated as satisfying a requirement (Posudek 15, P0 #1)", () => {
+  it("the only evidence for a required field says FAIL -> REJECT, never READY", () => {
+    const { ledger, aggregator } = fixture();
+    const company = ledger.append(candidate({ producerId: "cz.company.verify", inputField: "companyId" }));
+    const bankFail = ledger.append(candidate({ producerId: "cz.vat.verify", inputField: "bankAccount", inputValueHash: "hash-account", result: "FAIL" }));
+    const result = aggregator.aggregate({
+      tenantId: TENANT_A,
+      fieldHashes: { companyId: "hash-of-value", bankAccount: "hash-account" },
+      required: REQUIRED,
+      evidenceRefs: [company.recordId, bankFail.recordId],
+    });
+    expect(result.decision).toBe("REJECT");
+    expect(result.findings.some((f) => f.kind === "rejected" && f.field === "bankAccount")).toBe(true);
+  });
+
+  it("a non-default acceptableResults list can accept a domain-specific token other than PASS", () => {
+    const { ledger, aggregator } = fixture();
+    const bank = ledger.append(candidate({ producerId: "cz.vat.verify", inputField: "bankAccount", inputValueHash: "hash-account", result: "NENALEZEN" }));
+    const result = aggregator.aggregate({
+      tenantId: TENANT_A,
+      fieldHashes: { bankAccount: "hash-account" },
+      required: [{ field: "bankAccount", producerId: "cz.vat.verify", acceptableResults: ["PASS", "NENALEZEN"] }],
+      evidenceRefs: [bank.recordId],
+    });
+    expect(result.decision).toBe("READY");
+  });
+});
+
+describe("DOJ-011 evidence must be bound to the current value of the object being certified (Posudek 15, P0 #2)", () => {
+  it("evidence internally consistent but for a different invoice's bankAccount value -> REJECT, not READY", () => {
+    const { ledger, aggregator } = fixture();
+    const company = ledger.append(candidate({ producerId: "cz.company.verify", inputField: "companyId", inputValueHash: "hash-ico" }));
+    // This evidence is real, unexpired, same-tenant, and self-consistent — it just verified a
+    // *different* invoice's bank account than the one actually being certified right now.
+    const bankOtherInvoice = ledger.append(candidate({ producerId: "cz.vat.verify", inputField: "bankAccount", inputValueHash: "hash-of-invoice-X-account" }));
+    const result = aggregator.aggregate({
+      tenantId: TENANT_A,
+      fieldHashes: { companyId: "hash-ico", bankAccount: "hash-of-invoice-Y-account" },
+      required: REQUIRED,
+      evidenceRefs: [company.recordId, bankOtherInvoice.recordId],
+    });
+    expect(result.decision).toBe("REJECT");
+    expect(result.findings.some((f) => f.kind === "not_bound" && f.field === "bankAccount")).toBe(true);
+  });
+
+  it("no fieldHashes entry at all for a field with evidence -> REJECT (cannot bind, must not default to trusting it)", () => {
+    const { ledger, aggregator } = fixture();
+    const bank = ledger.append(candidate({ producerId: "cz.vat.verify", inputField: "bankAccount" }));
+    const result = aggregator.aggregate({ tenantId: TENANT_A, fieldHashes: {}, required: [], evidenceRefs: [bank.recordId] });
+    expect(result.decision).toBe("REJECT");
+    expect(result.findings.some((f) => f.kind === "not_bound")).toBe(true);
+  });
+});
+
+describe("DOJ-012 evidence produced for a different workflow instance is rejected (Posudek 15, P0 #2)", () => {
+  it("evidence declaring workflowId wf-1 cannot certify an object for workflow wf-2", () => {
+    const { ledger, aggregator } = fixture();
+    const bank = ledger.append(candidate({ producerId: "cz.vat.verify", inputField: "bankAccount", workflowId: "wf-1" }));
+    const result = aggregator.aggregate({ tenantId: TENANT_A, workflowId: "wf-2", fieldHashes: { bankAccount: "hash-of-value" }, required: [], evidenceRefs: [bank.recordId] });
+    expect(result.decision).toBe("REJECT");
+    expect(result.findings.some((f) => f.kind === "workflow_mismatch")).toBe(true);
+  });
+
+  it("evidence with no workflowId declared at all is not blocked by a workflow check it cannot satisfy", () => {
+    const { ledger, aggregator } = fixture();
+    const bank = ledger.append(candidate({ producerId: "cz.vat.verify", inputField: "bankAccount" }));
+    const result = aggregator.aggregate({ tenantId: TENANT_A, workflowId: "wf-2", fieldHashes: { bankAccount: "hash-of-value" }, required: [], evidenceRefs: [bank.recordId] });
+    expect(result.findings.some((f) => f.kind === "workflow_mismatch")).toBe(false);
   });
 });

@@ -46,7 +46,12 @@ function candidate(overrides: Partial<EvidenceCandidate> = {}): EvidenceCandidat
 function readyChain(f: ReturnType<typeof fixture>) {
   const company = f.ledger.append(candidate({ producerId: "cz.company.verify", inputField: "companyId", inputValueHash: "hash-ico" }));
   const bank = f.ledger.append(candidate({ producerId: "cz.vat.verify", inputField: "bankAccount", inputValueHash: "hash-account" }));
-  const result = f.aggregator.aggregate({ tenantId: TENANT_A, required: REQUIRED, evidenceRefs: [company.recordId, bank.recordId] });
+  const result = f.aggregator.aggregate({
+    tenantId: TENANT_A,
+    fieldHashes: { companyId: "hash-ico", bankAccount: "hash-account" },
+    required: REQUIRED,
+    evidenceRefs: [company.recordId, bank.recordId],
+  });
   return { company, bank, result };
 }
 
@@ -68,7 +73,7 @@ describe("KONEV-002 only a READY decision can be sealed, structurally", () => {
   it("a REVIEW or REJECT AggregateResult is refused, never sealed", () => {
     const f = fixture();
     const bank = f.ledger.append(candidate({ producerId: "cz.vat.verify", inputField: "bankAccount" }));
-    const review = f.aggregator.aggregate({ tenantId: TENANT_A, required: REQUIRED, evidenceRefs: [bank.recordId] });
+    const review = f.aggregator.aggregate({ tenantId: TENANT_A, fieldHashes: { bankAccount: "hash-of-value" }, required: REQUIRED, evidenceRefs: [bank.recordId] });
     expect(review.decision).toBe("REVIEW");
     const sealed = f.sealer.seal({ result: review, tenantId: TENANT_A, objectType: "invoice", businessPayload: {} });
     expect(sealed.ok).toBe(false);
