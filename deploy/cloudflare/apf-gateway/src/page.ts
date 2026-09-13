@@ -262,8 +262,14 @@ const SHELL_CSS = String.raw`
 .app-foot b{color:var(--text)}
 .app-foot .fill{flex:1}
 .icon{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
-.pagehead{display:flex;align-items:baseline;gap:10px;margin-bottom:4px;flex-wrap:wrap}
-.pagehead h1{font-size:1.4rem}
+.mascot{display:inline-flex;align-items:center;justify-content:center;border-radius:50%;flex:none;box-shadow:var(--shadow)}
+.mascot-sm{width:28px;height:28px}
+.mascot-sm svg{width:19px;height:19px}
+.mascot-lg{width:56px;height:56px}
+.mascot-lg svg{width:38px;height:38px}
+.navlink .mascot-sm{margin:0}
+.pagehead{display:flex;align-items:center;gap:14px;margin-bottom:4px;flex-wrap:wrap}
+.pagehead h1{font-size:1.4rem;display:flex;align-items:center;gap:10px}
 .pagehead .lede{color:var(--dim);font-size:.94em;margin:0 0 18px}
 .toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:14px 0}
 .toolbar .fill{flex:1}
@@ -288,9 +294,8 @@ const SHELL_CSS = String.raw`
 .fx-detail{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fx-why{color:var(--dim);font-size:.85em}
 .fx-reco{color:var(--crit);font-size:.85em}
-.hero{position:relative;border-radius:var(--radius-lg);overflow:hidden;margin-bottom:16px;box-shadow:var(--shadow)}
-.hero img{display:block;width:100%;max-height:190px;object-fit:cover;object-position:center 30%}
-.hero .cap{position:absolute;inset:auto 0 0 0;padding:10px 16px;background:linear-gradient(transparent,rgba(20,16,8,.72));color:#fff8ea;font-family:var(--font-head)}
+.hero{border-radius:var(--radius-lg);overflow:hidden;margin-bottom:16px;box-shadow:var(--shadow)}
+.hero img{display:block;width:100%;max-height:190px;object-fit:cover;object-position:center 30%;background:var(--panel-2)}
 .attn-item{display:flex;align-items:baseline;gap:10px;padding:9px 0;border-bottom:1px solid var(--border-soft)}
 .attn-item:last-child{border-bottom:0}
 .feed-item{display:flex;align-items:baseline;gap:10px;padding:7px 0;border-bottom:1px solid var(--border-soft);font-size:.92em}
@@ -351,6 +356,36 @@ const ICONS = {
   diagram: icon('<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><line x1="8" y1="7.5" x2="10.5" y2="16.2"/><line x1="16" y1="7.5" x2="13.5" y2="16.2"/><line x1="8.5" y1="6" x2="15.5" y2="6"/>'),
   wheat: icon('<path d="M12 21V9"/><path d="M12 9c-2-2-2-4 0-6 2 2 2 4 0 6Z"/><path d="M12 13c-2.2-1.2-3-3-2.4-5.4 2.3.6 3.4 2 3 4.4Z"/><path d="M12 13c2.2-1.2 3-3 2.4-5.4-2.3.6-3.4 2-3 4.4Z"/><path d="M12 17c-2.2-1.2-3-3-2.4-5.4 2.3.6 3.4 2 3 4.4Z"/><path d="M12 17c2.2-1.2 3-3 2.4-5.4-2.3.6-3.4 2-3 4.4Z"/>'),
 };
+
+/**
+ * Actual little illustrated characters (owner's explicit request 13. 9. 2026 after seeing the first
+ * rebuild draft: "pokud tam nebudou vyobrazené krávy, hlídací pes, farmář a tak, celá terminologie
+ * ztrácí kouzlo" — thin monochrome line icons alone don't carry the farm metaphor, they need actual
+ * faces). Flat, filled, 48x48 — a cow (Stáj), a dog (Argos), a farmer (Přehled/Farmář). Deliberately
+ * simple geometry (circles/ellipses/paths), no external art asset, same "no framework, no build step"
+ * constraint as the rest of the page.
+ */
+const MASCOT_SVG = {
+  krava: `<ellipse cx="10" cy="17" rx="6.5" ry="4.5" fill="#e8dcc0" transform="rotate(-30 10 17)"/><ellipse cx="38" cy="17" rx="6.5" ry="4.5" fill="#e8dcc0" transform="rotate(30 38 17)"/><rect x="8" y="14" width="32" height="27" rx="13.5" fill="#fff8ea"/><ellipse cx="14.5" cy="23" rx="4.2" ry="3.2" fill="#a8551f" opacity=".5"/><ellipse cx="34.5" cy="31" rx="5.2" ry="3.6" fill="#a8551f" opacity=".5"/><rect x="12.5" y="29" width="23" height="11.5" rx="5.75" fill="#fbeede"/><circle cx="19" cy="35" r="1.5" fill="#8a5a26"/><circle cx="29" cy="35" r="1.5" fill="#8a5a26"/><circle cx="16.5" cy="22" r="2.4" fill="#2c2415"/><circle cx="31.5" cy="22" r="2.4" fill="#2c2415"/><circle cx="17.3" cy="21.1" r=".8" fill="#fff"/><circle cx="32.3" cy="21.1" r=".8" fill="#fff"/><path d="M20 38c2 1.7 6 1.7 8 0" stroke="#8a5a26" stroke-width="1.6" fill="none" stroke-linecap="round"/>`,
+  argos: `<path d="M10 21 L5 5 L19 15 Z" fill="#8a4a1c"/><path d="M38 21 L43 5 L29 15 Z" fill="#8a4a1c"/><circle cx="24" cy="25" r="15.5" fill="#c17f2b"/><ellipse cx="24" cy="31" rx="9.5" ry="7.5" fill="#fff8ea"/><ellipse cx="24" cy="30" rx="2.8" ry="2.1" fill="#2c2415"/><circle cx="17" cy="22" r="2.5" fill="#2c2415"/><circle cx="31" cy="22" r="2.5" fill="#2c2415"/><circle cx="17.8" cy="21.1" r=".8" fill="#fff"/><circle cx="31.8" cy="21.1" r=".8" fill="#fff"/><path d="M19.5 34.5c1.8 1.5 7.2 1.5 9 0" stroke="#2c2415" stroke-width="1.4" fill="none" stroke-linecap="round"/>`,
+  farmar: `<ellipse cx="24" cy="19" rx="21" ry="5.2" fill="#6b4a26"/><path d="M13 19c0-7.5 22-7.5 22 0Z" fill="#8a5f32"/><circle cx="24" cy="30" r="12.5" fill="#f3dfc0"/><circle cx="18.5" cy="29" r="1.9" fill="#2c2415"/><circle cx="29.5" cy="29" r="1.9" fill="#2c2415"/><path d="M17.5 34c2.2-1.6 4.3-1.6 6.5 0c2.2-1.6 4.3-1.6 6.5 0" stroke="#6b4a26" stroke-width="2.1" fill="none" stroke-linecap="round"/><path d="M19 37c2.6 2.3 7.4 2.3 10 0" stroke="#8a5a26" stroke-width="1.6" fill="none" stroke-linecap="round"/>`,
+};
+/** Wraps a MASCOT_SVG in a colored round badge — `size` "lg" for page headers, default small for the nav rail. */
+const mascot = (which: keyof typeof MASCOT_SVG, bg: string, size: "lg" | "sm" = "sm"): string =>
+  `<span class="mascot mascot-${size}" style="background:${bg}"><svg viewBox="0 0 48 48" aria-hidden="true">${MASCOT_SVG[which]}</svg></span>`;
+const MASCOT_BG: Record<"prehled" | "podatelna" | "ohrada" | "staj" | "argos" | "vysledek" | "denik", string> = {
+  prehled: "#f3e0c9",
+  podatelna: "#e3e8d8",
+  ohrada: "#e6ded0",
+  staj: "#fbeede",
+  argos: "#f3d9c2",
+  vysledek: "#dcead9",
+  denik: "#dfe3ee",
+};
+/** Same round-badge treatment as mascot(), for the sections with no animal face of their own (Ohrada/
+ * Výsledek/Deník/Podatelna) — a plain line icon() in a colored circle, so the whole nav rail reads as
+ * one consistent, colorful cast rather than three characters plus four grey glyphs. */
+const iconBadge = (svgIcon: string, bg: string, size: "lg" | "sm" = "sm"): string => `<span class="mascot mascot-${size}" style="background:${bg}">${svgIcon}</span>`;
 
 /** State label -> badge class + human-friendly rendering, one function every page uses (dřív dvě různé konvence). */
 const STATE_CLASS: Record<string, string> = {
@@ -855,9 +890,9 @@ export function renderFarm(m: FarmModel): string {
   const views: { id: string; icon: string; label: string; count?: number; body: string }[] = [
     {
       id: "prehled",
-      icon: ICONS.prehled,
+      icon: mascot("farmar", MASCOT_BG.prehled),
       label: "Přehled",
-      body: `<div class="pagehead"><h1>Přehled farmy</h1></div><p class="lede">${esc(m.installation)} · ${up}/${m.deployables.length} Workerů OK · podpis ${esc(m.gatewaySigning)}</p>
+      body: `<div class="pagehead"><h1>${mascot("farmar", MASCOT_BG.prehled, "lg")} Přehled farmy</h1></div><p class="lede">${esc(m.installation)} · ${up}/${m.deployables.length} Workerů OK · podpis ${esc(m.gatewaySigning)}</p>
       <div class="toolbar" style="margin-top:0">${stateBadge(effectiveLevel)}<span class="dim">${activeFindings.length === 0 ? "žádné otevřené nálezy" : `${activeFindings.length} ${activeFindings.length === 1 ? "nález" : "nálezy"} vyžaduje pozornost`}</span></div>
       <div class="stat-row">
         <div class="stat"><b>${m.stats.processedToday}</b><span>zpracováno dnes</span></div>
@@ -875,10 +910,10 @@ export function renderFarm(m: FarmModel): string {
     },
     {
       id: "podatelna",
-      icon: ICONS.podatelna,
+      icon: iconBadge(ICONS.podatelna, MASCOT_BG.podatelna),
       label: "Podatelna",
-      body: `<div class="pagehead"><h1>Podatelna</h1></div><p class="lede">Ruční jednotlivé podání — stejná cesta (<code>startIntake</code>) jako dávkový příjem, jen výsledek uvidíš hned, ne až po dalším běhu cronu.</p>
-      <div class="hero"><img src="/farm/ilustrace.png" alt="AI Farma — Farmář, Argos a kravičky ve svých ohradách" loading="lazy"><div class="cap">Farmář ${esc(m.installation)}</div></div>
+      body: `<div class="pagehead"><h1>${iconBadge(ICONS.podatelna, MASCOT_BG.podatelna, "lg")} Podatelna</h1></div><p class="lede">Ruční jednotlivé podání — stejná cesta (<code>startIntake</code>) jako dávkový příjem, jen výsledek uvidíš hned, ne až po dalším běhu cronu.</p>
+      <div class="hero"><img src="/farm/ilustrace.png" alt="AI Farma — Farmář, Argos a kravičky ve svých ohradách" loading="lazy"></div>
       <form method="post" action="/intake" enctype="multipart/form-data">
         <label for="novy-file">Soubor: PDF, fotka (jpg, png, webp), docx, ISDOC / XML, txt, md, eml (do 4 MB)</label>
         <input id="novy-file" type="file" name="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.docx,.isdoc,.xml,.txt,.md,.eml,application/pdf,image/*,application/xml,text/xml,text/plain,message/rfc822">
@@ -927,17 +962,17 @@ export function renderFarm(m: FarmModel): string {
     },
     {
       id: "ohrada",
-      icon: ICONS.ohrada,
+      icon: iconBadge(ICONS.ohrada, MASCOT_BG.ohrada),
       label: "Ohrada",
       count: ohradaInstances.length || undefined,
-      body: `<div class="pagehead"><h1>${ICONS.ohrada} Ohrada</h1></div><p class="lede">Instance, co čekají na rozhodnutí, nebo skončily s chybou, co si žádá pohled člověka — zde se nic samo neprovede.</p>
+      body: `<div class="pagehead"><h1>${iconBadge(ICONS.ohrada, MASCOT_BG.ohrada, "lg")} Ohrada</h1></div><p class="lede">Instance, co čekají na rozhodnutí, nebo skončily s chybou, co si žádá pohled člověka — zde se nic samo neprovede.</p>
       <div class="gridwrap"><table><thead><tr><th>Krok</th><th>Capability</th><th>Stav</th><th>Pokus</th><th>Výsledek</th></tr></thead><tbody>${ohradaInstances.length ? ohradaRows : '<tr><td colspan="5" class="dim">prázdno — nic dnes nečeká na člověka</td></tr>'}</tbody></table></div>`,
     },
     {
       id: "staj",
-      icon: ICONS.staj,
+      icon: mascot("krava", MASCOT_BG.staj),
       label: "Stáj",
-      body: `<div class="pagehead"><h1>${ICONS.staj} Stáj</h1></div><p class="lede">Kravičky a co skutečně smí vykonat, seskupeno po modulu jako ohrada — riziko a izolace jsou vlastní tvrzení komponenty (descriptor), stav na kartě je to, co <b>Router doopravdy vynucuje</b> před každým dispatchem.</p>
+      body: `<div class="pagehead"><h1>${mascot("krava", MASCOT_BG.staj, "lg")} Stáj</h1></div><p class="lede">Kravičky a co skutečně smí vykonat, seskupeno po modulu jako ohrada — riziko a izolace jsou vlastní tvrzení komponenty (descriptor), stav na kartě je to, co <b>Router doopravdy vynucuje</b> před každým dispatchem.</p>
       <form class="toolbar" method="post" action="/farm/self-test">
         <span class="dim">„OK“ dokazuje jen, že proces odpovídá — self-test skutečně spustí kapability proti reálnému modelu a porovná s golden výsledkem${m.selfTestAt ? ` — naposledy proběhlo ${shortAt(m.selfTestAt)}` : " — ještě nikdy neproběhl"}</span>
         <span class="fill"></span>
@@ -949,9 +984,9 @@ export function renderFarm(m: FarmModel): string {
     },
     {
       id: "argos",
-      icon: ICONS.argos,
+      icon: mascot("argos", MASCOT_BG.argos),
       label: "Argos",
-      body: `<div class="pagehead"><h1>${ICONS.argos} Argos hlídá</h1></div><p class="lede">Argosův vlastní verdikt a nálezy — deterministická pravidla, žádné AI. Karanténa (config/&lt;instalace&gt;/lifecycle.json) se mění deployem, ne odsud — tahle stránka jen čte, nikdy nezapisuje.</p>
+      body: `<div class="pagehead"><h1>${mascot("argos", MASCOT_BG.argos, "lg")} Argos hlídá</h1></div><p class="lede">Argosův vlastní verdikt a nálezy — deterministická pravidla, žádné AI. Karanténa (config/&lt;instalace&gt;/lifecycle.json) se mění deployem, ne odsud — tahle stránka jen čte, nikdy nezapisuje.</p>
       ${watchdogBanner(watchdog, incidents)}
       <div class="stat-row">
         <div class="stat"><b>${m.selfTestAt ? shortAt(m.selfTestAt).slice(11) : "—"}</b><span>poslední self-test</span></div>
@@ -961,9 +996,9 @@ export function renderFarm(m: FarmModel): string {
     },
     {
       id: "vysledek",
-      icon: ICONS.vysledek,
+      icon: iconBadge(ICONS.vysledek, MASCOT_BG.vysledek),
       label: "Výsledek",
-      body: `<div class="pagehead"><h1>${ICONS.vysledek} Výsledek</h1></div><p class="lede">Výsledek se složí, uloží a zaznamená — statistika za celou dobu a poslední zpracované dokumenty.</p>
+      body: `<div class="pagehead"><h1>${iconBadge(ICONS.vysledek, MASCOT_BG.vysledek, "lg")} Výsledek</h1></div><p class="lede">Výsledek se složí, uloží a zaznamená — statistika za celou dobu a poslední zpracované dokumenty.</p>
       <div class="stat-row">
         <div class="stat"><b>${m.stats.totalProcessed}</b><span>zpracováno celkem</span></div>
         <div class="stat"><b>${m.stats.processedToday}</b><span>dnes</span></div>
@@ -988,9 +1023,9 @@ export function renderFarm(m: FarmModel): string {
     },
     {
       id: "denik",
-      icon: ICONS.denik,
+      icon: iconBadge(ICONS.denik, MASCOT_BG.denik),
       label: "Deník",
-      body: `<div class="pagehead"><h1>${ICONS.denik} Audit — Deník</h1></div><p class="lede">Živý terminál: syrový auditní záznam napříč celou farmou, jeden řádek = jedna událost, nejnovější dole (jako <code>tail -f</code>).</p>
+      body: `<div class="pagehead"><h1>${iconBadge(ICONS.denik, MASCOT_BG.denik, "lg")} Audit — Deník</h1></div><p class="lede">Živý terminál: syrový auditní záznam napříč celou farmou, jeden řádek = jedna událost, nejnovější dole (jako <code>tail -f</code>).</p>
       <div class="toolbar" style="margin-top:0"><span class="fill"></span><button type="button" class="btn btn-sm" id="denik-live-toggle" aria-pressed="true">⏸ Pozastavit</button></div>
       <div class="term" id="denik-term" aria-live="polite">${terminalSeed}</div>
       <h3 style="margin-top:16px">Stejná data jako tabulka</h3>
