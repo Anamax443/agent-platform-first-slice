@@ -2,6 +2,37 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-13 (123) — Dojička implementována: deterministický evidence aggregator nad Žlabem
+
+Pokračování (121) — první jednoduchá dojička (Posudek 11 bod 7 / Posudek 12 bod 9), teď skutečně
+nad `EvidenceLedger`, ne jen návrh. Nová `src/platform/aggregator.ts`: `EvidenceAggregator` —
+konstruktor přijímá jen `EvidenceLedger` + `Clock`, žádný LLM adapter, žádný credential, žádná
+metoda kromě `aggregate()` (DOJ-009 to ověřuje reflexí, stejná disciplína jako `Audit`/EVD-004 a
+`EvidenceLedger`/ZLAB-005).
+
+`aggregate({ tenantId, required, evidenceRefs })` pro každý odkaz: ověří existenci, `ledger.verify()`
+(integrita/podpis), `ledger.verifyLineage()` (hashový graf), shodu tenanta, expiraci — pak přes
+sesbíranou evidenci hledá chybějící povinná pole a konflikty (`inputValueHash` mismatch =
+`VALUE_CHANGED_AFTER_VERIFICATION`, `result` mismatch = přímý konflikt). Nálezy nesou typovaný `kind`
+(`missing`/`expired`/`tenant_mismatch`/`integrity_failed`/`lineage_broken`/`conflict`), ne jen text —
+`missing`/`expired` samy o sobě → `REVIEW` (opravitelné, potřeba víc/čerstvější evidence),
+kterýkoli z ostatních → `REJECT` (aktivně něco nesedí: cizí tenant, tamper, konflikt). Bez nálezů →
+`READY`.
+
+**`tests/dojicka.test.ts`, 9 testů (DOJ-001..009), všechny zelené na první běh:** čistý READY;
+chybějící povinná evidence; expirovaná evidence (REVIEW, ne REJECT); cizí tenant (REJECT); tamper
+na obsahu (REJECT, integrity_failed); dva producenti nesouhlasí na stejném poli (REJECT, conflict);
+hodnota se změnila po verifikaci — jiný `inputValueHash` (REJECT, conflict); zlomená lineage u
+předka (REJECT, lineage_broken); aggregator nikdy nezapisuje do Žlabu (ledger.forTenant().length
+beze změny po `aggregate()`).
+
+Zapsáno do `docs/SEVERKA.md`: `### Tři role, ne dvě` (Žlab/Dojička bullets), `## Pořadí` body 2 a 8
+přepsány z "Nepostaveno" na hotový testovaný primitiv, `### Kontrola musí být svázaná s konkrétní
+hodnotou`'s `expiresAt` odstavec taky. **Zatím nenapojeno na žádnou skutečnou capabilitu** —
+`cz.company.verify`/`cz.vat.verify`/`bc.vendors` (SEVERKA `## Pořadí` body 5–7) jsou první krávy, co
+by měly do Žlabu reálně zapisovat; dojička čeká na ně, ne naopak. 364/364 testů (355+9), typecheck,
+arch, farm:check zelené.
+
 ## 2026-09-13 (122) — Doc drift oprava: README/SEVERKA tvrdily zastaralý stav mail.ingest/email.send, o 4 dny stará zastaralost odhalena a opravena
 
 Externí oponentura upozornila, že `README.md` tvrdí "232 testů" a "e-mail flow je skeleton", zatímco

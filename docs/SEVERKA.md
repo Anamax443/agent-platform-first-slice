@@ -235,10 +235,15 @@ jako u zbytku dokumentu: cílový obraz, ne rozhodnuté zadání. Rozšiřuje a 
   níže) — append-only, hash-chained (`parent hash` na předchozí záznam), nikdy se v něm nic
   nepřepisuje ani nemaže. Farmář do Žlabu smí jen *ukazovat* (odkazem na artefakt), nikdy do něj
   psát business hodnotu vlastní rukou (`### Hlavní invariant` níže). Dojička čte výhradně ze Žlabu,
-  nikdy z tvrzení Farmáře.
+  nikdy z tvrzení Farmáře. **Implementováno jako testovaný primitiv 13. 9. 2026** —
+  `src/platform/evidence.ts`'s `EvidenceLedger`, `tests/zlab.test.ts` (HANDOFF 121); zatím
+  nezapojeno do žádné reálné capability.
 - **Dojičky** — nová role vedle COW. Na rozdíl od COW (jednoúčelová) je dojička **jednoduchá
   kumulativní**: deterministicky sesbírá evidenci víc krav ze Žlabu do jednoho dalšího balíku/stavu
   podle pevného kontraktu. Nic nevymýšlí, nic neopravuje, nic nepřepisuje — jen skládá.
+  **Implementována jako testovaný primitiv 13. 9. 2026** — `src/platform/aggregator.ts`'s
+  `EvidenceAggregator`, `tests/dojicka.test.ts` (HANDOFF 121); `Konev`/zápis do BC pod ní ještě
+  nestojí.
 - **Konev** — zapečetěný (kryptograficky podepsaný) výstup dojičky: `CertifiedBusinessObject`.
   Obsahuje výsledná business data + odkazy na všechnu evidenci ze Žlabu, ze které vznikla, plus
   podpis nad tím vším. Jakmile je Konev zapečetěný, žádná další komponenta (ani Farmář, ani
@@ -382,8 +387,11 @@ pokud farmář nebo kdokoli jiný mezitím změní vstupní hodnotu, `inputValue
 aktuálnímu poli a evidence automaticky přestává platit (stejný mechanismus jako
 `VALUE_CHANGED_AFTER_VERIFICATION` výš, jen jako explicitní typované pole, ne implicitní
 porovnání). `expiresAt` řeší stárnutí evidence (viz composition attack suite níže — "evidence je
-stará 30 dní, dojička ji přesto použije"). Implementace zatím 0 %, kandidát pro rozšíření
-`module-descriptor.v1.schema.json` společně s formalizací Dojičky/Kráva typu výš.
+stará 30 dní, dojička ji přesto použije"). **Implementováno jako testovaný primitiv 13. 9. 2026**
+(`src/platform/evidence.ts`, HANDOFF 121) — `expiresAt` skutečně kontroluje `EvidenceAggregator`
+(`src/platform/aggregator.ts`, HANDOFF 121), ne jen návrh. Zatím kandidát pro rozšíření
+`module-descriptor.v1.schema.json` společně s formalizací Dojičky/Kráva typu výš — descriptor sám
+o Evidenci dnes neví, jen kód.
 
 **Úložiště pro `Evidence` je Žlab** (`### Tři role, ne dvě` výš) — append-only, hash-chained
 (každý záznam nese `parent hash` na předchozí záznam ve stejném řetězu, ne jen svůj vlastní hash),
@@ -750,11 +758,14 @@ nepřeřazoval** — zapsány zvlášť pod čarou, ne zapomenuté.
    `ExecutorHost` (FOUNDATION-core §3.3 kroky 5–6) + isolation cross-check při `Router.register()`.
    `rateLimit` (na `Grant`) zůstává deklarované, nevynucené — nezařazeno samostatně, nízká priorita
    dokud žádná reálná policy `rateLimit` nenastavuje.
-2. **Evidence/Provenance Contract** — formální `Evidence{evidenceId, tenantId, capability,
-   provider, inputField, inputValueHash, result, observedAt, expiresAt?, buildHash}` (Posudek 12
-   bod 11, viz `### Kontrola musí být svázaná s konkrétní hodnotou` výše). Formalizuje už zapsaný
-   `valueHash`/provenance-graph princip do konkrétního schématu, který dojička skutečně čte.
-   Nepostaveno.
+2. **Evidence/Provenance Contract — Žlab** (Posudek 12 bod 11, viz `### Kontrola musí být svázaná
+   s konkrétní hodnotou` výše). **Hotovo jako testovaný primitiv 13. 9. 2026** (HANDOFF 121):
+   `src/platform/evidence.ts`'s `EvidenceLedger` — append-only, platform-signed (Ed25519, ne cow's
+   vlastní klíč), `verify()` detekuje tamper i hash-only forgery, `verifyLineage()` chodí po
+   `parentRefs`/`parentHashes` (hashový graf) a najde přesně zlomeného předka. `tests/zlab.test.ts`,
+   7 testů (ZLAB-001..007). **Zatím nezapojeno do žádné reálné capability/ExecutorHostu** — je to
+   samostatný primitiv, ne live cesta zápisu evidence z `cz.vat.verify`/`cz.company.verify` (ty
+   zatím nepostaveny, bod 5–6 níže).
 3. **Build-bound `CertificationRecord`** — `Lifecycle` smí přepnout na `ACTIVE` jen když
    `CertificationRecord.PASS && certifiedBuildHash == runningBuildHash` (Posudek 12 bod 6, viz
    `### Admission Gate` výše). Nepostaveno.
@@ -767,10 +778,15 @@ nepřeřazoval** — zapsány zvlášť pod čarou, ne zapomenuté.
    = zdroj pro Import Gate ACCOUNT_VERIFICATION), zatím nepostaveno.
 7. **`bc.vendors`** — vnitřní protějšek k `cz.company.verify` (existující Vendor No. v BC, ne jen
    vnější potvrzení, že IČO existuje — HANDOFF 113), nepostaveno.
-8. **První deterministická dojička — `invoice.verification.aggregate`** (Posudek 11 bod 7 / Posudek
-   12 bod 9): žádné AI, kontroluje úplnost, shodu evidence's `inputValueHash`, žádný konflikt,
-   žádnou expirovanou evidenci → `READY`/`REVIEW`/`REJECT`. Stojí na bodech 2 (Evidence) a 5–7
-   (aspoň některé krávy, co má co skládat).
+8. **První deterministická dojička** (Posudek 11 bod 7 / Posudek 12 bod 9). **Hotovo jako testovaný
+   primitiv 13. 9. 2026** (HANDOFF 121): `src/platform/aggregator.ts`'s `EvidenceAggregator` — bez
+   LLM, bez credentialu, bez zápisové cesty do Žlabu (jen čte); kontroluje úplnost požadované
+   evidence, integritu/lineage přes `EvidenceLedger`, tenant, expiraci a shodu `inputValueHash`/
+   `result` → `READY`/`REVIEW`/`REJECT` s typovanými `findings` (`missing`/`expired`/
+   `tenant_mismatch`/`integrity_failed`/`lineage_broken`/`conflict`). `tests/dojicka.test.ts`, 9
+   testů (DOJ-001..009). **Zatím nenapojeno na skutečnou capabilitu** — `cz.company.verify`/
+   `cz.vat.verify`/`bc.vendors` (body 5–7) jsou první krávy, co by do Žlabu měly reálně zapisovat;
+   dojička sama je hotová a čeká na ně, ne naopak.
 9. **Compromised-farmer / composition attack suite** (Posudek 12 bod 12, viz `### Composition
    attack suite` výše) — testuje skládání víc krav dohromady (cizí-tenant evidence, zastaralá
    evidence, konfliktní fakta, nereagující kráva), ne jednotlivou COW.
