@@ -240,7 +240,15 @@ jako u zbytku dokumentu: cílový obraz, ne rozhodnuté zadání. Rozšiřuje a 
   psát business hodnotu vlastní rukou (`### Hlavní invariant` níže). Dojička čte výhradně ze Žlabu,
   nikdy z tvrzení Farmáře. **Implementováno jako testovaný primitiv 13. 9. 2026** —
   `src/platform/evidence.ts`'s `EvidenceLedger`, `tests/zlab.test.ts` (HANDOFF 121); zatím
-  nezapojeno do žádné reálné capability.
+  nezapojeno do žádné reálné capability. **Trusted `EvidenceWriter` hotov 13. 9. 2026** (Posudek 15
+  P1-2, HANDOFF 128): `EvidenceLedger.append()` je jen storage primitiv, ne trust boundary (vlastní
+  doc comment to přiznává) — `src/platform/evidence-writer.ts`'s `EvidenceWriter` je ta chybějící
+  hranice — identita (`producerId`/`capabilityVersion`/`buildHash`) svázaná jednou při konstrukci
+  (jedna instance = jedna capabilita, nikdy per-call přepsatelná), `tenantId`/`workflowId`/
+  `operationId` čtené z `HandlerInput` (co Router/ExecutorHost produkuje až po schema/binding/
+  signature/scope/policy kontrolách), kráva smí dodat jen doménový `EvidenceClaim` (pole/hash/
+  výsledek) — bez vlastního `tenantId`/`producerId` pole, tedy ani přes cast nejde identitu
+  podvrhnout. `tests/evidence-writer.test.ts`, 6 testů (EW-001..004).
 - **Dojičky** — nová role vedle COW. Na rozdíl od COW (jednoúčelová) je dojička **jednoduchá
   kumulativní**: deterministicky sesbírá evidenci víc krav ze Žlabu do jednoho dalšího balíku/stavu
   podle pevného kontraktu. Nic nevymýšlí, nic neopravuje, nic nepřepisuje — jen skládá.

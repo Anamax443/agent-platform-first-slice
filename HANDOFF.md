@@ -2,6 +2,38 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-13 (128) — Trusted EvidenceWriter: uzavřen P1-2 z Posudku 15 (kráva nemůže sama tvrdit vlastní tenant/producer/build identitu)
+
+Pokračování Posudku 15 (P1 nálezy) — "up to you" volba dalšího kroku po dohodě sekvenovat práci
+(interní primitivy dřív než UI rebuild/externí integrace). Ze tří zbylých P1 (durable Žlab storage,
+key rotation, `TrustedContext`-vázaný writer) vybrán `EvidenceWriter`, protože je nejpřímější
+bezpečnostní mezera a nesahá do živého kódu (na rozdíl od P1-5/6/7, které zůstávají neopravené).
+
+**Problém:** `EvidenceLedger.append()` je čistý storage primitiv, ne trust boundary — vlastní doc
+comment v `evidence.ts` to od začátku přiznává. Kdyby měla kráva přímou referenci na `append()`,
+mohla by si vymyslet vlastní `tenantId`/`producerId`/`buildHash`.
+
+**Nová `src/platform/evidence-writer.ts`'s `EvidenceWriter`:**
+- **Identita svázaná jednou při konstrukci** (`producerId`/`capabilityVersion`/`buildHash`/
+  `schemaVersion`) — jedna instance = jedna capabilita, per-call nepřepsatelná.
+- **`tenantId`/`workflowId`/`operationId` čtené z `HandlerInput`** (`message`+`context`, přesně to,
+  co skutečný `Handler` dostává od Routeru/ExecutorHostu až po schema/binding/signature/scope/
+  policy kontrolách — FOUNDATION-core §3.3) — nikdy z pole, které by kráva sama nastavila.
+- **`EvidenceClaim`** (co kráva smí dodat) strukturálně nemá `tenantId`/`producerId`/atd. pole —
+  `write()` čte přesně jen `inputField`/`inputValueHash`/`result`/`parentRefs`/`parentHashes`/
+  `expiresAt`, nikdy nespreaduje celý claim objekt, takže identitu nelze podvrhnout ani přes
+  type-unsafe cast (ověřeno testem EW-002).
+
+**`tests/evidence-writer.test.ts`, 6 testů (EW-001..004), všechny zelené na první běh:** tenant/
+workflow/operationId ze skutečného kontextu, ne z claimu; dva writery pro různé capability vždy
+razí svou vlastní identitu na stejný `HandlerInput`; pokus o podvrh identity přes cast neprojde;
+zapsaná evidence je skutečná, `ledger.verify()`/`get()` ji vidí stejně; žádná read/update/delete
+metoda (jen `write()`).
+
+Zapsáno do `docs/SEVERKA.md` (`### Tři role, ne dvě`, Žlab bullet). **Zatím nezapojeno do žádného
+reálného capability handleru** — stejná výhrada jako u Žlab/Dojička/Konev/CertificationRecord, čeká
+na první reálnou krávu. 392/392 testů (386+6), typecheck, arch, farm:check zelené.
+
 ## 2026-09-13 (127) — Posudek 15: dva P0 nálezy v Dojičce opraveny (explicitní FAIL i cizí faktura/workflow mohly projít jako READY)
 
 Vlastník tentokrát prošel `main` výslovně jako **nepřátelský code review**, ne kontrolu shody se
