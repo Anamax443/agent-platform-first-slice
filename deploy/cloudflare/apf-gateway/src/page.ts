@@ -1,10 +1,9 @@
-// Server-rendered pages of the gateway (behind Cloudflare Access): a form to hand a document to a workflow and the view of
-// one workflow instance. No external assets, no scripts: the page is evidence, not an app. Czech labels for the owner.
+// Server-rendered pages of the gateway (behind Cloudflare Access): Průsvitná stáj — the farm's own control
+// plane — plus the single-instance detail view and the self-test report. No external assets, no framework:
+// the page is evidence, not an app. Czech labels for the owner.
 import type { Artifact } from "../../../../src/platform/artifacts.js";
 import type { AuditRecord } from "../../../../src/platform/audit.js";
 import type { Instance } from "../../../../src/platform/journal.js";
-import { BANK_UI_CSS } from "./bank.js";
-import { FARM_THEME_CSS } from "./farm-theme.js";
 
 export interface FarmStats {
   totalProcessed: number;
@@ -22,6 +21,7 @@ export interface InboxItem {
   message?: string;
 }
 
+/** JSON shape of /version and /health — unrelated to any page, kept exactly as those two endpoints already contract it. */
 export interface Wired {
   intake: boolean;
   extract: string;
@@ -40,14 +40,6 @@ export interface Wired {
 export type ModelsInfo =
   | { default: string; choices: Array<{ key: string; label: string; provider: string; model: string; isDefault: boolean; unavailable?: string }> }
   | { error: string };
-
-export interface HomeModel {
-  installation: string;
-  user: string;
-  workflows: string[];
-  wired: Wired;
-  models: ModelsInfo;
-}
 
 export interface DeployableStatus {
   name: string;
@@ -89,7 +81,7 @@ export interface AuditLogRow {
   details: unknown;
 }
 
-/** One row of the Admission Gate table (Kravičky tab): a registered capability + the descriptor's own risk/isolation
+/** One row of the Admission Gate table (Stáj tab): a registered capability + the descriptor's own risk/isolation
  * claim + its live lifecycleStatus (HANDOFF 70/71, docs/SEVERKA.md "Admission Gate") — read-only here, the Router
  * is what actually enforces it. */
 export interface CapabilityRow {
@@ -166,99 +158,227 @@ export interface InstanceView {
 export const esc = (s: unknown): string =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string);
 
-const CSS = `
-:root{color-scheme:light}body{margin:0;background:#f6f7f9;color:#1c1f24;font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-main{max-width:64rem;margin:0 auto;padding:1.5rem}header{display:flex;justify-content:space-between;align-items:baseline;gap:1rem;flex-wrap:wrap;margin-bottom:1rem}
-h1{font-size:1.25rem;margin:0}h2{font-size:1.05rem;margin:1.5rem 0 .5rem}small,.muted{color:#5b6472}code{font:.9em ui-monospace,Consolas,monospace;background:#eceff3;padding:.05em .3em;border-radius:3px}
-.card{background:#fff;border:1px solid #dde2e8;border-radius:8px;padding:1rem 1.25rem;margin:.75rem 0}.card.err{border-color:#fca5a5;background:#fff5f5}
-label{display:block;font-weight:600;margin:.75rem 0 .25rem}textarea,input[type=text],select{width:100%;box-sizing:border-box;border:1px solid #c5ccd5;border-radius:6px;padding:.5rem;font:inherit}
-textarea{min-height:10rem;font-family:ui-monospace,Consolas,monospace}button{margin-top:1rem;background:#1d4ed8;color:#fff;border:0;border-radius:6px;padding:.6rem 1.1rem;font:inherit;font-weight:600;cursor:pointer}
-table{width:100%;border-collapse:collapse;font-size:.92rem}th,td{text-align:left;vertical-align:top;padding:.4rem .5rem;border-bottom:1px solid #e6e9ee}th{color:#5b6472;font-weight:600}
-.badge{display:inline-block;padding:.1em .55em;border-radius:999px;font-size:.8rem;font-weight:700;background:#e5e7eb}
-.SUCCEEDED{background:#dcfce7;color:#166534}.FAILED{background:#fee2e2;color:#991b1b}.WAITING{background:#fef3c7;color:#92400e}.RUNNING,.PENDING{background:#dbeafe;color:#1e40af}.UNKNOWN_OUTCOME,.CANCELLED{background:#ede9fe;color:#5b21b6}
-.wired li{margin:.15rem 0}.ok::before{content:"● ";color:#16a34a}.no::before{content:"● ";color:#dc2626}pre{white-space:pre-wrap;word-break:break-word;background:#f3f4f6;padding:.75rem;border-radius:6px;max-height:22rem;overflow:auto;font-size:.85rem}
-nav a{margin-right:1rem}
+// ---------------------------------------------------------------------------------------------------------------
+// Vizuální identita — Průsvitná stáj (rebuild 13. 9. 2026, vlastníkovo rozhodnutí "udělej to podle sebe").
+// Jeden sdílený shell/CSS pro všechny stránky gatewaye (dřív dva different vizuální jazyky: /  vs. /farm) —
+// žádná externí vendor CSS, žádný framework, jeden <style> blok, světlý i tmavý režim.
+// ---------------------------------------------------------------------------------------------------------------
+
+// No xmlns attribute (ARCH-DEP-001 would otherwise mistake the mandatory SVG namespace URI,
+// "http://www.w3.org/2000/svg", for a hardcoded installation hostname) — every major browser
+// renders an inline data: SVG favicon fine without it, since the image/svg+xml MIME type in the
+// URI itself already establishes SVG parsing.
+const FAVICON =
+  "data:image/svg+xml,%3Csvg viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c17f2b'/%3E%3Cpath d='M8 13c0-1.8 1.8-3.2 3.6-2.6.5-1.7 3.3-1.7 3.8 0C17.2 9.8 19 11.2 19 13' stroke='%23fff8ea' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3Crect x='7' y='13' width='18' height='11' rx='5.5' fill='%23fff8ea'/%3E%3Ccircle cx='12.2' cy='18' r='1.1' fill='%23c17f2b'/%3E%3Ccircle cx='19.8' cy='18' r='1.1' fill='%23c17f2b'/%3E%3Cpath d='M13.6 21.2c1 .8 2.8.8 3.8 0' stroke='%23c17f2b' stroke-width='1.3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E";
+
+const APP_CSS = String.raw`
+:root{
+  --bg:#f7f4ec; --panel:#fffdf8; --panel-2:#fbf6ea; --chrome:#f0e9d6; --border:#e2d6b8; --border-soft:#ece3c9;
+  --text:#26210f; --dim:#75694a; --faint:#a89a72;
+  --accent:#a8551f; --accent-fg:#fff8ea; --accent-soft:#f3e0c9;
+  --ok:#2f7a3d; --ok-soft:#e3f1e0; --warn:#a06a00; --warn-soft:#f7ecd2; --crit:#b23a2e; --crit-soft:#fbe4df;
+  --shadow:0 1px 2px rgba(38,33,15,.06), 0 1px 8px rgba(38,33,15,.05);
+  --radius:10px; --radius-lg:16px;
+  --font:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif;
+  --font-head:"Iowan Old Style","Palatino Linotype",Georgia,serif;
+  --font-mono:"Cascadia Mono","Consolas",ui-monospace,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#181510; --panel:#1f1b14; --panel-2:#24201795; --chrome:#171310; --border:#3a3220; --border-soft:#2a2418;
+  --text:#f1ead6; --dim:#b8a97e; --faint:#7c6f4d;
+  --accent:#e0925a; --accent-fg:#1c1710; --accent-soft:#3a2a17;
+  --ok:#6ec17c; --ok-soft:#1e2f1f; --warn:#e0ac47; --warn-soft:#332809; --crit:#e5776a; --crit-soft:#3a1e19;
+  --shadow:0 1px 2px rgba(0,0,0,.35), 0 1px 10px rgba(0,0,0,.3);
+  color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#181510; --panel:#1f1b14; --panel-2:#24201795; --chrome:#171310; --border:#3a3220; --border-soft:#2a2418;
+  --text:#f1ead6; --dim:#b8a97e; --faint:#7c6f4d;
+  --accent:#e0925a; --accent-fg:#1c1710; --accent-soft:#3a2a17;
+  --ok:#6ec17c; --ok-soft:#1e2f1f; --warn:#e0ac47; --warn-soft:#332809; --crit:#e5776a; --crit-soft:#3a1e19;
+  --shadow:0 1px 2px rgba(0,0,0,.35), 0 1px 10px rgba(0,0,0,.3);
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 var(--font)}
+code,kbd{font:.92em var(--font-mono);background:var(--border-soft);padding:.08em .38em;border-radius:5px}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+h1,h2,h3{font-family:var(--font-head);font-weight:650;margin:0}
+button,input,select,textarea{font:inherit;color:inherit}
+.dim{color:var(--dim)}
+.mono{font-family:var(--font-mono)}
+.badge{display:inline-flex;align-items:center;gap:6px;padding:.22em .7em .22em .55em;border-radius:999px;font-size:.82em;font-weight:650;white-space:nowrap}
+.badge .dot{width:7px;height:7px;border-radius:50%;background:currentColor;flex:none}
+.b-ok{background:var(--ok-soft);color:var(--ok)}
+.b-warn{background:var(--warn-soft);color:var(--warn)}
+.b-crit{background:var(--crit-soft);color:var(--crit)}
+.b-neutral{background:var(--border-soft);color:var(--dim)}
+.btn{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--border);border-radius:var(--radius);padding:.5em 1em;background:var(--panel);color:var(--text);font-weight:600;cursor:pointer;box-shadow:var(--shadow)}
+.btn:hover{background:var(--chrome)}
+.btn-primary{background:var(--accent);color:var(--accent-fg);border-color:transparent}
+.btn-primary:hover{filter:brightness(1.07)}
+.btn-danger{background:var(--crit);color:#fff;border-color:transparent}
+.btn-sm{padding:.3em .7em;font-size:.85em;font-weight:600}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px 16px;box-shadow:var(--shadow)}
+.card.crit{border-color:var(--crit)}
+table{width:100%;border-collapse:collapse;font-size:.93em}
+th,td{text-align:left;vertical-align:top;padding:.55em .6em;border-bottom:1px solid var(--border-soft)}
+th{color:var(--dim);font-weight:650;font-size:.82em;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap}
+label{display:block;font-weight:650;margin:.9em 0 .3em}
+input[type=text],input[type=file],textarea,select{width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:var(--radius);padding:.55em .65em;background:var(--panel);color:var(--text)}
+textarea{min-height:8rem;font-family:var(--font-mono)}
+pre{white-space:pre-wrap;word-break:break-word;background:var(--border-soft);padding:.7em .85em;border-radius:8px;max-height:22rem;overflow:auto;font-size:.85em;font-family:var(--font-mono)}
+details summary{cursor:pointer;color:var(--dim);font-size:.88em}
+details summary:hover{color:var(--text)}
+hr{border:0;border-top:1px solid var(--border-soft);margin:1.1em 0}
 `;
 
-const shell = (title: string, body: string): string =>
-  `<!doctype html><html lang="cs"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><style>${CSS}</style></head><body><main>${body}</main></body></html>`;
+const SHELL_CSS = String.raw`
+.app{min-height:100vh;display:grid;grid-template-columns:220px 1fr;grid-template-rows:60px 1fr 34px;grid-template-areas:"top top" "rail main" "foot foot";background:var(--chrome)}
+.app[data-rail="collapsed"]{grid-template-columns:60px 1fr}
+.app-top{grid-area:top;display:flex;align-items:center;gap:12px;padding:0 14px;background:var(--panel);border-bottom:1px solid var(--border)}
+.app-top .railbtn{display:flex;align-items:center;justify-content:center;width:32px;height:32px;border:0;border-radius:8px;background:none;color:var(--dim);cursor:pointer;flex:none}
+.app-top .railbtn:hover{background:var(--chrome);color:var(--text)}
+.brand{display:flex;align-items:center;gap:9px;font-family:var(--font-head);font-weight:700;font-size:1.02em;white-space:nowrap}
+.brand .mark{width:26px;height:26px;flex:none}
+.brand .sub{color:var(--dim);font-weight:400;font-size:.86em}
+.app-top .fill{flex:1}
+.app-top .meta{display:flex;align-items:center;gap:6px;padding:.3em .7em;border:1px solid var(--border);border-radius:999px;color:var(--dim);font-size:.82em;white-space:nowrap}
+.app-rail{grid-area:rail;background:var(--chrome);border-right:1px solid var(--border);padding:10px 8px;overflow-y:auto}
+.app[data-rail="collapsed"] .app-rail{padding:10px 6px}
+.navlink{display:flex;align-items:center;gap:10px;height:38px;padding:0 10px;border-radius:8px;color:var(--text);font-weight:600;font-size:.93em;white-space:nowrap;overflow:hidden}
+.navlink:hover{background:var(--hover,var(--border-soft));text-decoration:none}
+.navlink .ic{width:18px;height:18px;flex:none;color:var(--dim)}
+.navlink[aria-current="true"]{background:var(--accent-soft);color:var(--text)}
+.navlink[aria-current="true"] .ic{color:var(--accent)}
+.app[data-rail="collapsed"] .navlink .lbl,.app[data-rail="collapsed"] .navsec,.app[data-rail="collapsed"] .navlink .count{display:none}
+.navsec{padding:14px 10px 5px;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
+.navlink .count{margin-left:auto;background:var(--crit-soft);color:var(--crit);border-radius:999px;padding:0 7px;font-size:.78em;font-weight:700}
+.app-main{grid-area:main;overflow-y:auto;padding:20px 22px 40px}
+.app-main>section{max-width:74rem}
+.app-foot{grid-area:foot;display:flex;align-items:center;gap:14px;padding:0 16px;background:var(--panel);border-top:1px solid var(--border);color:var(--dim);font-size:.8em;white-space:nowrap;overflow-x:auto}
+.app-foot b{color:var(--text)}
+.app-foot .fill{flex:1}
+.icon{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.pagehead{display:flex;align-items:baseline;gap:10px;margin-bottom:4px;flex-wrap:wrap}
+.pagehead h1{font-size:1.4rem}
+.pagehead .lede{color:var(--dim);font-size:.94em;margin:0 0 18px}
+.toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:14px 0}
+.toolbar .fill{flex:1}
+.grid-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
+.stat-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:16px 0}
+.stat{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px 16px;box-shadow:var(--shadow)}
+.stat b{display:block;font-family:var(--font-head);font-size:1.7rem}
+.stat span{color:var(--dim);font-size:.85em}
+.pen{border:1.5px dashed var(--border);border-radius:calc(var(--radius-lg) + 4px);padding:12px 12px 4px;margin:0 0 16px;background:var(--panel-2)}
+.pen-label{display:flex;align-items:center;gap:7px;font-family:var(--font-head);font-weight:650;margin-bottom:10px}
+.pen-label .icon{color:var(--accent)}
+.p-card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius-lg);padding:12px 14px;box-shadow:var(--shadow)}
+.p-card.crit{border-color:var(--crit)}
+.p-card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-weight:650}
+.p-card-head code{background:none;padding:0}
+.p-card-role{color:var(--dim);font-size:.87em;margin-top:4px;line-height:1.4}
+.p-card-meta{display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:8px;font-size:.85em;color:var(--dim)}
+.p-card-meta b{color:var(--text)}
+.p-card details,.p-card form{margin-top:8px}
+.fx-row{display:flex;gap:8px;align-items:baseline;padding:3px 0;font-size:.85em;border-bottom:1px dotted var(--border-soft)}
+.fx-row:last-child{border-bottom:0}
+.fx-detail{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fx-why{color:var(--dim);font-size:.85em}
+.fx-reco{color:var(--crit);font-size:.85em}
+.hero{position:relative;border-radius:var(--radius-lg);overflow:hidden;margin-bottom:16px;box-shadow:var(--shadow)}
+.hero img{display:block;width:100%;max-height:190px;object-fit:cover;object-position:center 30%}
+.hero .cap{position:absolute;inset:auto 0 0 0;padding:10px 16px;background:linear-gradient(transparent,rgba(20,16,8,.72));color:#fff8ea;font-family:var(--font-head)}
+.attn-item{display:flex;align-items:baseline;gap:10px;padding:9px 0;border-bottom:1px solid var(--border-soft)}
+.attn-item:last-child{border-bottom:0}
+.feed-item{display:flex;align-items:baseline;gap:10px;padding:7px 0;border-bottom:1px solid var(--border-soft);font-size:.92em}
+.feed-item:last-child{border-bottom:0}
+.feed-item .t{color:var(--dim);font-family:var(--font-mono);font-size:.85em;flex:none;width:5.4em}
+.gridwrap{overflow:auto}
+.gh-toggle{cursor:pointer}
+.gh-toggle:hover td{background:var(--chrome)}
+.gh-chevron{display:inline-block;width:.9em;transition:transform .15s}
+.gh-toggle[aria-expanded="true"] .gh-chevron{transform:rotate(90deg)}
+tr.group-head td{background:var(--panel-2);white-space:normal;font-weight:650}
+.wrap{white-space:normal!important;overflow:visible!important;text-overflow:clip!important;word-break:break-word;line-height:1.4}
+.term{margin:0;height:22rem;overflow-y:auto;background:var(--chrome);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;font-family:var(--font-mono);font-size:.87em;line-height:1.6}
+.term .t-line{white-space:pre-wrap;word-break:break-word}
+.term .t-line.t-new{animation:flash 1.4s ease-out}
+.term .t-dim{color:var(--dim)}
+@keyframes flash{from{background:var(--accent-soft)}to{background:transparent}}
+.bar-row{display:flex;align-items:center;gap:10px;margin:6px 0}
+.bar-label{width:7rem;flex:none;font-size:.85em;color:var(--dim)}
+.bar-track{flex:1;height:12px;background:var(--border-soft);border-radius:4px;overflow:hidden}
+.bar-fill{height:100%;background:var(--accent);border-radius:4px}
+.bar-count{width:2.4rem;flex:none;text-align:right;font:.85em var(--font-mono)}
+[hidden]{display:none!important}
+@media (max-width:820px){
+  .app{grid-template-columns:1fr;grid-template-areas:"top" "main" "foot"}
+  .app-rail{display:none}
+}
+`;
 
-const wiredList = (w: Wired): string => {
-  const row = (ok: boolean, label: string, detail: string) => `<li class="${ok ? "ok" : "no"}">${esc(label)} <small>${esc(detail)}</small></li>`;
-  return `<ul class="wired">${[
-    row(w.intake, "příjem dokumentu (formulář, originál do R2)", "hotovo"),
-    row(true, "extrakce textu z PDF, fotky, docx", w.extract),
-    row(true, "journal instance", w.journal),
-    row(true, "audit", w.audit),
-    row(true, "artefakty", w.artifacts),
-    row(w.dispatch, "dispatch: router a podpis obálky", w.dispatch ? w.gateway : "zatím ne: každý krok toku skončí DEPENDENCY_UNAVAILABLE"),
-    row(!w.signing.startsWith("MISSING"), "podpisový klíč gateway (Ed25519)", w.signing),
-    row(true, "fakes: registr, DMS, archiv jako dvojníci za service bindingem", w.fakes),
-    row(w.hosts, "hosty: document-host (stamp, archive), mail, e-mail", w.hosts ? "zapojeno" : "zatím ne: kroky stamp a dál skončí DEPENDENCY_UNAVAILABLE"),
-    row(w.accessJwtVerified, "ověření Access JWT ve Workeru", w.accessJwtVerified ? "ano" : "zatím jen hlavička od Access"),
-  ].join("")}</ul>`;
+/** One shared shell for every page — /farm, a single instance, a self-test report, an error. `bodyHtml` is the
+ * `<section>`/full page-specific markup; `wide` uses the side-nav app shell (only renderFarm), everything else
+ * gets a simple centered document. */
+const shell = (title: string, bodyHtml: string, opts: { wide?: boolean; script?: string } = {}): string =>
+  `<!doctype html><html lang="cs"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><link rel="icon" href="${FAVICON}">
+<style>${APP_CSS}${opts.wide ? SHELL_CSS : DOC_CSS}</style></head><body>${bodyHtml}${opts.script ? `<script>${opts.script}</script>` : ""}</body></html>`;
+
+const DOC_CSS = String.raw`
+body{padding:0}
+.doc{max-width:52rem;margin:0 auto;padding:28px 20px 60px}
+.doc header{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+.doc header h1{font-size:1.3rem}
+.doc nav{margin-top:1.5rem;display:flex;gap:14px;flex-wrap:wrap}
+.doc h2{font-size:1.05rem;margin:1.6rem 0 .6rem}
+.doc h3{font-size:.98rem;margin:1.2rem 0 .4rem}
+`;
+
+/** A small inline SVG icon, 24x24 viewport, currentColor stroke — same convention throughout. */
+const icon = (paths: string): string => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
+const ICONS = {
+  menu: icon('<line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/>'),
+  prehled: icon('<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="4.5" rx="1.5"/><rect x="13" y="11" width="7" height="9" rx="1.5"/><rect x="4" y="13.5" width="7" height="6.5" rx="1.5"/>'),
+  podatelna: icon('<path d="M4 12V7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v5"/><path d="M4 12h4.5l1.2 2.4h4.6L15.5 12H20"/><path d="M4 12v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6"/>'),
+  ohrada: icon('<line x1="5" y1="4" x2="5" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="19" y1="4" x2="19" y2="20"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/>'),
+  staj: icon('<path d="M6 9.5a2.3 2.3 0 0 1 3-2.2M18 9.5a2.3 2.3 0 0 0-3-2.2"/><rect x="5" y="9" width="14" height="10" rx="5"/><circle cx="9.5" cy="14" r=".7" fill="currentColor" stroke="none"/><circle cx="14.5" cy="14" r=".7" fill="currentColor" stroke="none"/><path d="M10 17.2c.7.5 1.3.5 2 0"/>'),
+  argos: icon('<path d="M6 9c-1.2-.8-1.6-2.4 0-3.2.8.4 1.2 1.2 1.2 2M18 9c1.2-.8 1.6-2.4 0-3.2-.8.4-1.2 1.2-1.2 2"/><path d="M6 10.5a6 6 0 0 1 12 0c0 3.5-2.7 6-6 6s-6-2.5-6-6Z"/><circle cx="10" cy="11" r=".6" fill="currentColor" stroke="none"/><circle cx="14" cy="11" r=".6" fill="currentColor" stroke="none"/>'),
+  vysledek: icon('<circle cx="12" cy="12" r="9"/><polyline points="8 12.5 10.8 15.3 16 9.5"/>'),
+  denik: icon('<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/>'),
+  diagram: icon('<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><line x1="8" y1="7.5" x2="10.5" y2="16.2"/><line x1="16" y1="7.5" x2="13.5" y2="16.2"/><line x1="8.5" y1="6" x2="15.5" y2="6"/>'),
+  wheat: icon('<path d="M12 21V9"/><path d="M12 9c-2-2-2-4 0-6 2 2 2 4 0 6Z"/><path d="M12 13c-2.2-1.2-3-3-2.4-5.4 2.3.6 3.4 2 3 4.4Z"/><path d="M12 13c2.2-1.2 3-3 2.4-5.4-2.3.6-3.4 2-3 4.4Z"/><path d="M12 17c-2.2-1.2-3-3-2.4-5.4 2.3.6 3.4 2 3 4.4Z"/><path d="M12 17c2.2-1.2 3-3 2.4-5.4-2.3.6-3.4 2-3 4.4Z"/>'),
 };
 
-export function renderHome(m: HomeModel): string {
-  const options = m.workflows.map((w) => `<option value="${esc(w)}"${w === "document-intake" ? " selected" : ""}>${esc(w)}</option>`).join("");
-  return shell(
-    `apf · ${m.installation}`,
-    `<header><h1>agent-platform-first-slice · farma <code>${esc(m.installation)}</code></h1><small>${esc(m.user)}</small></header>
-<div class="card"><form method="post" action="/intake" enctype="multipart/form-data">
-<label for="file">Soubor: PDF, fotka (jpg, png, webp), docx, ISDOC / XML, txt, md, eml (do 4 MB)</label>
-<input id="file" type="file" name="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.docx,.isdoc,.xml,.txt,.md,.eml,application/pdf,image/*,application/xml,text/xml,text/plain,message/rfc822">
-<label for="text">Nebo vložený text (faktura, smlouva, e-mail…)</label>
-<textarea id="text" name="text" placeholder="Když je nahraný soubor, text se nepoužije."></textarea>
-<label for="workflow">Tok</label>
-<select id="workflow" name="workflow">${options}</select>
-<label for="model">Model AI pro posouzení (classify)</label>
-${
-  "error" in m.models
-    ? `<div class="card err"><b>Bez modelu nelze spustit tok.</b> ${esc(m.models.error)}</div>`
-    : `<select id="model" name="model">${m.models.choices
-        .map((c) =>
-          c.unavailable
-            ? `<option value="${esc(c.key)}" disabled>${esc(c.label)} — nedostupné: ${esc(c.unavailable)}</option>`
-            : `<option value="${esc(c.key)}"${c.isDefault ? " selected" : ""}>${esc(c.label)}${c.isDefault ? " (výchozí)" : ""}</option>`,
-        )
-        .join("")}</select><small class="muted">Posouzení dělá vždy model; pravidla jsou jen druhý nezávislý signál ve validaci a záložní strategie. Použitý model a verze promptu jdou do provenance výsledku.</small>`
-}
-<label for="stampText">Text razítka (nepovinné)</label>
-<input id="stampText" type="text" name="stampText" placeholder="VALIDATED INVOICE">
-<button type="submit">Odeslat do toku</button>
-</form></div>
-<h2>Co je na farmě zapojené</h2><div class="card">${wiredList(m.wired)}</div>
-<nav><a href="/farm">Farmář</a><a href="/VYVOJOVY-DIAGRAM.html">Jak to funguje</a><a href="/version">/version</a><a href="/audit.json">/audit.json</a></nav>`,
-  );
-}
-
-/** State label → bank status class (docs/UI/predpis-saas-modern-side-nav.txt §8: "stav nese barvu i slovo", nikdy jen barva). */
+/** State label -> badge class + human-friendly rendering, one function every page uses (dřív dvě různé konvence). */
 const STATE_CLASS: Record<string, string> = {
-  OK: "st-ok",
-  "OK (dvojník)": "st-ok",
-  SUCCEEDED: "st-ok",
-  ACTIVE: "st-ok",
-  HEALTHY: "st-ok",
-  QUARANTINED: "st-crit",
-  DOWN: "st-crit",
-  FAILED: "st-crit",
-  INCIDENT: "st-crit",
-  WAITING: "st-warn",
-  NEZAPOJENO: "st-warn",
-  UNKNOWN_OUTCOME: "st-warn",
-  DEGRADED: "st-warn",
-  CANCELLED: "st-warn",
-  RUNNING: "st-man",
-  PENDING: "st-man",
-  NÁVRH: "st-man",
-  SKIPPED: "st-man",
+  OK: "b-ok",
+  "OK (dvojník)": "b-ok",
+  SUCCEEDED: "b-ok",
+  ACTIVE: "b-ok",
+  HEALTHY: "b-ok",
+  QUARANTINED: "b-crit",
+  DOWN: "b-crit",
+  FAILED: "b-crit",
+  INCIDENT: "b-crit",
+  WARN: "b-warn",
+  WAITING: "b-warn",
+  NEZAPOJENO: "b-warn",
+  UNKNOWN_OUTCOME: "b-warn",
+  DEGRADED: "b-warn",
+  CANCELLED: "b-warn",
+  RUNNING: "b-neutral",
+  PENDING: "b-neutral",
+  NÁVRH: "b-neutral",
+  SKIPPED: "b-neutral",
 };
-const stateBadge = (label: string): string => `<span class="${STATE_CLASS[label] ?? ""}"><span class="p-state"><span class="p-dot"></span>${esc(label)}</span></span>`;
-const stateTd = (label: string): string => `<td class="c-state">${stateBadge(label)}</td>`;
+const stateBadge = (label: string): string => `<span class="badge ${STATE_CLASS[label] ?? "b-neutral"}"><span class="dot"></span>${esc(label)}</span>`;
+const stateTd = (label: string): string => `<td>${stateBadge(label)}</td>`;
 
 /** What each "kravička" actually does, in plain Czech — the raw health table alone doesn't say. */
 const DEPLOYABLE_ROLE: Record<string, string> = {
-  "apf-gateway": "Přijme dokument, rozpozná typ (AI) a řídí celý průběh",
   "apf-document-host": "Orazítkuje dokument po ověření a zapíše ho — dnes proti testovacímu dvojníku DMS, ne ostrému systému. Umí i „document.archive“, ale v běžném toku se nevolá (existuje jen kvůli testu izolace)",
   "apf-email-executor": "Odesílá e-mailová upozornění",
   "apf-mail-ingest": "Přijímá dokumenty poslané e-mailem",
@@ -282,7 +402,7 @@ const workerStateLabel = (d: DeployableStatus): string => {
   return d.name === "apf-fakes" ? "OK (dvojník)" : "OK";
 };
 
-/** Isolation class → plain label + hover explanation (LOGICAL/PRINCIPAL are jargon on their own). */
+/** Isolation class -> plain label + hover explanation (LOGICAL/PRINCIPAL are jargon on their own). */
 const isolationLabel = (raw: string): { label: string; title?: string } => {
   if (raw === "self") return { label: "gateway", title: "toto je samotná gateway, hlásí vlastní zdraví" };
   if (raw === "LOGICAL") return { label: "sdílený proces", title: "LOGICAL: běží ve stejném Workeru jako další úkol, ale s odděleným přístupovým klíčem" };
@@ -290,12 +410,12 @@ const isolationLabel = (raw: string): { label: string; title?: string } => {
   return { label: raw };
 };
 
-/** Risk class → Czech label + a colour cue for HIGH/CRITICAL (docs/POSUDKY.md Posudek 7, Admission Gate discussion). */
+/** Risk class -> Czech label + a colour cue for HIGH/CRITICAL (docs/POSUDKY.md Posudek 7, Admission Gate discussion). */
 const RISK_LABEL: Record<string, string> = { LOW: "nízké", MEDIUM: "střední", HIGH: "vysoké", CRITICAL: "kritické" };
 const riskBadge = (raw: string | undefined): string => {
   if (!raw) return `<span class="dim">—</span>`;
-  const cls = raw === "HIGH" || raw === "CRITICAL" ? "st-crit" : raw === "MEDIUM" ? "st-warn" : "st-ok";
-  return `<span class="${cls}">${esc(RISK_LABEL[raw] ?? raw)}</span>`;
+  const cls = raw === "HIGH" || raw === "CRITICAL" ? "b-crit" : raw === "MEDIUM" ? "b-warn" : "b-ok";
+  return `<span class="badge ${cls}">${esc(RISK_LABEL[raw] ?? raw)}</span>`;
 };
 
 /** ISO timestamp, trimmed to "YYYY-MM-DD HH:MM:SS" — same trim used by the Deník terminal. */
@@ -306,8 +426,9 @@ const shortAt = (at: string): string => esc(at).replace("T", " ").replace(/\.\d+
  * last stored self-test result — undefined means "never run", stated plainly rather than left implicit. */
 const selfTestBadge = (st: { passed: number; total: number } | undefined): string => {
   if (!st) return `<span class="dim" title="Self-test nikdy neproběhl na téhle farmě">self-test: nikdy</span>`;
-  const cls = st.total === 0 ? "dim" : st.passed === st.total ? "st-ok" : "st-crit";
-  return `<span class="${cls}" title="Poslední self-test: ${esc(st.passed)}/${esc(st.total)} fixtures prošlo">self-test <b>${st.passed}/${st.total}</b></span>`;
+  const cls = st.total === 0 ? "dim" : st.passed === st.total ? "" : "";
+  const color = st.total === 0 ? "var(--dim)" : st.passed === st.total ? "var(--ok)" : "var(--crit)";
+  return `<span class="${cls}" style="color:${color}" title="Poslední self-test: ${esc(st.passed)}/${esc(st.total)} fixtures prošlo">self-test <b>${st.passed}/${st.total}</b></span>`;
 };
 
 /** One line of a card's drill-down — owner's request 2026-09-09: "chci vidět kontroly", ne jen souhrnné číslo. */
@@ -319,8 +440,8 @@ const fixtureLine = (f: SelfTestFixtureState): string => {
   const detail = f.skipped ? esc(f.skipped) : f.diff.length ? esc(f.diff.join(" · ")) : f.description ? esc(f.description) : "shoda s golden";
   // Owner 2026-09-10: PASS/FAIL alone doesn't say what's protected or what to do about red — "why" survives
   // even a green result, "recommendation" only ever matters once something actually failed.
-  const why = f.why ? `<div class="fx-why dim">Proč: ${esc(f.why)}</div>` : "";
-  const reco = !f.ok && !f.skipped && f.onFailure ? `<div class="fx-reco" style="color:var(--crit)">Doporučení: ${esc(f.onFailure)}</div>` : "";
+  const why = f.why ? `<div class="fx-why">Proč: ${esc(f.why)}</div>` : "";
+  const reco = !f.ok && !f.skipped && f.onFailure ? `<div class="fx-reco">Doporučení: ${esc(f.onFailure)}</div>` : "";
   return `<div class="fx-row">${stateBadge(label)}<code>${esc(f.id)}</code><span class="dim">${esc(f.kind)}</span><span class="fx-detail dim" title="${detail}">${detail}</span></div>${why}${reco}`;
 };
 
@@ -330,9 +451,9 @@ const selfTestList = (fixtures: SelfTestFixtureState[] | undefined): string =>
 
 /** The list above + a button to (re-)run just this card's own suite instead of always all 72 fixtures —
  * owner's request 2026-09-09: "i si je být schopen individuálně vyvolat". Only meaningful where a real
- * capability suite exists behind the scope (Argos cards); Kravičky worker cards get selfTestList() alone. */
+ * capability suite exists behind the scope (Stáj's capability cards) — worker cards get selfTestList() alone. */
 const selfTestDrilldown = (fixtures: SelfTestFixtureState[] | undefined, capability: string): string =>
-  `${selfTestList(fixtures)}<form method="post" action="/farm/self-test?capability=${encodeURIComponent(capability)}"><button class="p-btn p-btn-sm" type="submit">Spustit jen ${esc(capability)}</button></form>`;
+  `${selfTestList(fixtures)}<form method="post" action="/farm/self-test?capability=${encodeURIComponent(capability)}"><button class="btn btn-sm" type="submit">Spustit jen ${esc(capability)}</button></form>`;
 
 /** One card of the Admission Gate pen: capability, its risk/isolation claim, live lifecycle, and — separately —
  * Argos's own live health opinion on top of it (HANDOFF 89), when there's an open finding to show. */
@@ -340,7 +461,7 @@ const capabilityRow = (c: CapabilityRow, watchdog: WatchdogSnapshot, incidents: 
   const iso = isolationLabel(c.isolationClass ?? "");
   const argos = capabilityWatchdogLevel(c.capability, watchdog, incidents);
   const argosBadge = argos ? `<span title="Argosův živý nález, ne formální stav Admission Gate">Argos: ${stateBadge(argos)}</span>` : "";
-  return `<div class="p-card${c.lifecycleStatus === "QUARANTINED" ? " st-crit-card" : ""}"><div class="p-card-head"><code>${esc(c.capability)}</code>/v${esc(c.version)}${c.usesLlm ? ' <small title="volá jazykový model">🤖</small>' : ""}${stateBadge(c.lifecycleStatus)}</div><div class="p-card-meta"><span>riziko ${riskBadge(c.riskClass)}</span><span${iso.title ? ` title="${esc(iso.title)}"` : ""}>izolace <b>${esc(iso.label || "—")}</b></span><span>${esc(c.sideEffects ?? "—")}</span></div><div class="p-card-meta">${selfTestBadge(c.selfTest)}${argosBadge}</div>${selfTestDrilldown(c.selfTestFixtures, c.capability)}</div>`;
+  return `<div class="p-card${c.lifecycleStatus === "QUARANTINED" ? " crit" : ""}"><div class="p-card-head"><code>${esc(c.capability)}</code>/v${esc(c.version)}${c.usesLlm ? ' <small title="volá jazykový model">🤖</small>' : ""}${stateBadge(c.lifecycleStatus)}</div><div class="p-card-meta"><span>riziko ${riskBadge(c.riskClass)}</span><span${iso.title ? ` title="${esc(iso.title)}"` : ""}>izolace <b>${esc(iso.label || "—")}</b></span><span>${esc(c.sideEffects ?? "—")}</span></div><div class="p-card-meta">${selfTestBadge(c.selfTest)}${argosBadge}</div>${selfTestDrilldown(c.selfTestFixtures, c.capability)}</div>`;
 };
 
 /** How long something lasted between two ISO timestamps, for a human reading a finding — minutes/hours/days,
@@ -352,6 +473,12 @@ const humanDuration = (fromIso: string, toIso: string): string => {
   if (hours < 48) return `${hours} h`;
   return `${Math.round(hours / 24)} dní`;
 };
+
+// -----------------------------------------------------------------------------------------------------------
+// Argos — beze změny logiky (jen prezentace výš/níž je nová). Tahle sekce je 1:1 stejná jako před rebuildem:
+// computeWatchdog/reconcileIncidents/acknowledgeIncident/composeIncidentAlert/effectiveWatchdogLevel jsou
+// testované čistě funkce (tests/page.test.ts) a rebuild vizuální vrstvy na nich nesmí nic změnit.
+// -----------------------------------------------------------------------------------------------------------
 
 export type WatchdogLevel = "HEALTHY" | "DEGRADED" | "INCIDENT";
 export interface WatchdogFinding {
@@ -610,12 +737,12 @@ const watchdogFindingLine = (f: WatchdogFinding, incidents: IncidentRecord[]): s
     const by = record.acknowledgedBy ? `${esc(record.acknowledgedBy)}, ` : "";
     return `<li class="dim">${esc(f.text)}${age} — ✓ potvrzeno jako známé (${by}${shortAt(record.acknowledgedAt)})</li>`;
   }
-  const ackForm = `<form method="post" action="/farm/incidents/acknowledge" style="display:inline"><input type="hidden" name="key" value="${esc(f.key)}"><button class="p-btn p-btn-sm" type="submit" title="Potvrdit jako známý/přijatý nález — zůstane vidět, přestane počítat do celkového stavu">potvrdit jako známé</button></form>`;
+  const ackForm = `<form method="post" action="/farm/incidents/acknowledge" style="display:inline"><input type="hidden" name="key" value="${esc(f.key)}"><button class="btn btn-sm" type="submit" title="Potvrdit jako známý/přijatý nález — zůstane vidět, přestane počítat do celkového stavu">potvrdit jako známé</button></form>`;
   return `<li style="color:var(--${f.level === "INCIDENT" ? "crit" : "warn"})">${esc(f.text)}${age} ${ackForm}</li>`;
 };
 
-/** The banner at the top of Argos's own tab — one verdict instead of reading every card, plus (once an incident
- * has been seen more than once) how long it's actually been going on. */
+/** The banner at the top of Argos's own page — one verdict instead of reading every card, plus (once an
+ * incident has been seen more than once) how long it's actually been going on. */
 const watchdogBanner = (snapshot: WatchdogSnapshot, incidents: IncidentRecord[]): string => {
   const level = effectiveWatchdogLevel(snapshot, incidents);
   const activeCount = snapshot.findings.filter((f) => !isAcknowledgedFinding(f.key, incidents)).length;
@@ -624,47 +751,24 @@ const watchdogBanner = (snapshot: WatchdogSnapshot, incidents: IncidentRecord[])
     snapshot.findings.length === 0
       ? "žádné otevřené nálezy"
       : `${activeCount} ${activeCount === 1 ? "otevřený nález" : "otevřené nálezy"}` + (ackCount > 0 ? `, ${ackCount} potvrzeno jako známé` : "");
-  return `<div class="p-toolbar">${stateBadge(level)}<span class="meta">${summary}</span></div>${
+  return `<div class="toolbar">${stateBadge(level)}<span class="dim">${summary}</span></div>${
     snapshot.findings.length ? `<ul style="margin:.25rem 0 1rem 1.25rem;padding:0">${snapshot.findings.map((f) => watchdogFindingLine(f, incidents)).join("")}</ul>` : ""
   }`;
 };
 
-/**
- * Farmář na banku Interface-Par (Anamax443/Interface-Par, styl saas-modern, rozvržení side-nav — viz
- * docs/UI/predpis-saas-modern-side-nav.txt). Vlastní stránka, ne shell() — jiný vizuální jazyk než zbytek gatewaye.
- * Přehled + kravičky (pět Workerů) + poslední instance (seskupené kroky) + deník (sdílený audit, D1) na jedné stránce.
- */
+// -----------------------------------------------------------------------------------------------------------
+// Průsvitná stáj — nová IA (13. 9. 2026): Přehled · Podatelna · Ohrada · Stáj · Argos · Výsledek · Deník.
+// -----------------------------------------------------------------------------------------------------------
+
 export function renderFarm(m: FarmModel): string {
-  // Answering /version (HTTP 200) only proves the Worker is alive — its own body can still say wired:false
-  // (a skeleton that hasn't been wired into the flow yet). "OK" here must mean the second thing too.
   const up = m.deployables.filter((d) => workerReady(d)).length;
-  // Computed once, reused by both the Argos banner and each Kapability card's live health badge below — never
-  // written to config/lifecycle.json (HANDOFF 89, owner's choice: DEGRADED stays a computed display signal,
-  // deliberately not a third LifecycleStatus value — Admission Gate's ACTIVE/QUARANTINED stays a human decision
-  // with its own commit, this is Argos's live opinion on top of it, not a replacement for it).
   const watchdog = computeWatchdog(m);
   const incidents = m.incidents ?? [];
+  const effectiveLevel = effectiveWatchdogLevel(watchdog, incidents);
 
-  // Declared first: penHead() (built further down, inside an IIFE that runs immediately) reads ICONS too —
-  // a const only hoists its binding, not its value, so anything that reads it before this line throws
-  // ReferenceError (found live on farm-bass443, this exact bug, HANDOFF 73's own first deploy).
-  const icon = (paths: string): string => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
-  const ICONS = {
-    menu: icon('<line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/>'),
-    // A cow face: two small ear/horn curves, a rounded muzzle, two spot dots, a smile — deliberately simple at 16px.
-    kravicky: icon('<path d="M6 8.5a2.3 2.3 0 0 1 3-2.2M18 8.5a2.3 2.3 0 0 0-3-2.2"/><rect x="5" y="8" width="14" height="10" rx="5"/><circle cx="9.5" cy="13" r=".7" fill="currentColor" stroke="none"/><circle cx="14.5" cy="13" r=".7" fill="currentColor" stroke="none"/><path d="M10 16.5c.7.5 1.3.5 2 0"/>'),
-    // A dog face (Argos): ears, head, two eyes — same visual family as kravicky, so the two feel like they belong together.
-    argos: icon('<path d="M6 9c-1.2-.8-1.6-2.4 0-3.2.8.4 1.2 1.2 1.2 2M18 9c1.2-.8 1.6-2.4 0-3.2-.8.4-1.2 1.2-1.2 2"/><path d="M6 10.5a6 6 0 0 1 12 0c0 3.5-2.7 6-6 6s-6-2.5-6-6Z"/><circle cx="10" cy="11" r=".6" fill="currentColor" stroke="none"/><circle cx="14" cy="11" r=".6" fill="currentColor" stroke="none"/>'),
-    // A holding pen: three posts, two rails.
-    ohrada: icon('<line x1="5" y1="4" x2="5" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="19" y1="4" x2="19" y2="20"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/>'),
-    // Erwin's own hat: brim + dome, the same simple silhouette family as kravicky/argos.
-    erwin: icon('<path d="M4 15.5c0-1 3.6-2 8-2s8 1 8 2"/><path d="M8 13.5c0-3.3 1.8-6 4-6s4 2.7 4 6"/>'),
-    // A result: checkmark in a circle.
-    vysledek: icon('<circle cx="12" cy="12" r="9"/><polyline points="8 12.5 10.8 15.3 16 9.5"/>'),
-    denik: icon('<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/>'),
-    novy: icon('<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>'),
-    diagram: icon('<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><line x1="8" y1="7.5" x2="10.5" y2="16.2"/><line x1="16" y1="7.5" x2="13.5" y2="16.2"/><line x1="8.5" y1="6" x2="15.5" y2="6"/>'),
-  };
+  const byName = (name: string) => m.deployables.find((d) => d.name === name);
+  const gatewayRow = byName("apf-gateway");
+  const hostNames = ["apf-document-host", "apf-email-executor", "apf-mail-ingest"];
 
   const deployableCard = (d: DeployableStatus): string => {
     const b = (d.body ?? {}) as Record<string, unknown>;
@@ -673,17 +777,12 @@ export function renderFarm(m: FarmModel): string {
     const role = DEPLOYABLE_ROLE[d.name];
     const iso = isolationLabel(String(b.isolation ?? ""));
     const state = workerStateLabel(d);
-    return `<div class="p-card${state === "DOWN" ? " st-crit-card" : ""}"><div class="p-card-head"><code>${esc(d.name)}</code>${stateBadge(state)}</div>${role ? `<div class="p-card-role">${esc(role)}</div>` : ""}<div class="p-card-meta"><span${iso.title ? ` title="${esc(iso.title)}"` : ""}>izolace <b>${esc(iso.label)}</b></span>${detail ? `<span>${esc(detail)}</span>` : ""}</div><div class="p-card-meta">${selfTestBadge(d.selfTest)}</div>${selfTestList(d.selfTestFixtures)}</div>`;
+    return `<div class="p-card${state === "DOWN" ? " crit" : ""}"><div class="p-card-head"><code>${esc(d.name)}</code>${stateBadge(state)}</div>${role ? `<div class="p-card-role">${esc(role)}</div>` : ""}<div class="p-card-meta"><span${iso.title ? ` title="${esc(iso.title)}"` : ""}>izolace <b>${esc(iso.label)}</b></span>${detail ? `<span>${esc(detail)}</span>` : ""}</div><div class="p-card-meta">${selfTestBadge(d.selfTest)}</div>${selfTestList(d.selfTestFixtures)}</div>`;
   };
-  // apf-gateway IS Erwin (decides, plans, routes) — not one of the cows he directs. Owner's own observation
-  // (2026-09-09, screenshot of the Kravičky tab): "toto je spíš farmář, ne?" — moved to Erwin's own section.
-  const byName = (name: string) => m.deployables.find((d) => d.name === name);
-  const gatewayRow = byName("apf-gateway");
-  const hostNames = ["apf-document-host", "apf-email-executor", "apf-mail-ingest"];
-  const cardSection = (label: string, cardsHtml: string): string => (cardsHtml ? `<div class="p-cardsec"><div class="p-cardsec-label">${esc(label)}</div><div class="p-cardgrid">${cardsHtml}</div></div>` : "");
   const plannedCard = (p: { name: string; role: string }): string => `<div class="p-card"><div class="p-card-head"><code>${esc(p.name)}</code>${stateBadge("NÁVRH")}</div><div class="p-card-role">${esc(p.role)}</div></div>`;
-  const erwinGatewayCard = cardSection("Erwin sám (apf-gateway) — přijímá dokument a rozhoduje, kam ho poslat dál", gatewayRow ? deployableCard(gatewayRow) : "");
-  const kravickyCards =
+  const cardSection = (label: string, cardsHtml: string): string => (cardsHtml ? `<div style="margin:16px 0"><div class="dim" style="font-family:var(--font-head);font-weight:650;margin-bottom:8px">${esc(label)}</div><div class="grid-cards">${cardsHtml}</div></div>` : "");
+
+  const stajCards =
     cardSection(
       "Hostitelé, které gateway volá",
       hostNames
@@ -695,9 +794,7 @@ export function renderFarm(m: FarmModel): string {
     cardSection("Testovací dvojník (jen pro vývoj a testy)", byName("apf-fakes") ? deployableCard(byName("apf-fakes") as DeployableStatus) : "") +
     cardSection("Návrh — zatím nepostaveno, jen v docs/NAVRHOVY-LIST-farma.md", PLANNED_DEPLOYABLES.map(plannedCard).join(""));
 
-  // Kapability seskupené po modulu jako ohrady (owner's request 2026-09-09: karty, ne řádky tabulky —
-  // vizuálně blíž skutečné farmě, jedna ohrada = jeden modul, uvnitř jeho kapability jako kravičky).
-  // Pořadí modulů = pořadí prvního výskytu v m.capabilities (stabilní, žádné další řazení).
+  // Kapability seskupené po modulu jako ohrady (owner's request 2026-09-09: karty, ne řádky tabulky).
   const penGrid = (() => {
     const byModule = new Map<string, CapabilityRow[]>();
     for (const c of m.capabilities) {
@@ -705,12 +802,12 @@ export function renderFarm(m: FarmModel): string {
       (byModule.get(c.module) as CapabilityRow[]).push(c);
     }
     return [...byModule.entries()]
-      .map(([mod, caps]) => `<div class="pen"><div class="pen-label">${ICONS.kravicky}${esc(mod)}</div><div class="p-cardgrid">${caps.map((c) => capabilityRow(c, watchdog, incidents)).join("")}</div></div>`)
+      .map(([mod, caps]) => `<div class="pen"><div class="pen-label">${ICONS.staj}${esc(mod)}</div><div class="grid-cards">${caps.map((c) => capabilityRow(c, watchdog, incidents)).join("")}</div></div>`)
       .join("");
   })();
 
-  // Owner's request 2026-09-08: what carries the link belongs in column 1 (not buried mid-line), rows collapsed to a
-  // one-line summary by default, click to see the steps — a document block is evidence to check, not to always read in full.
+  // Owner's request 2026-09-08: what carries the link belongs in column 1, rows collapsed to a one-line summary
+  // by default, click to see the steps — a document block is evidence to check, not to always read in full.
   const instanceRowsOf = (rows: FarmInstanceRow[]): string =>
     rows
       .map((i) => {
@@ -725,21 +822,15 @@ export function renderFarm(m: FarmModel): string {
       })
       .join("");
   const instanceRows = instanceRowsOf(m.instances);
-  // Ohrada (owner's request 2026-09-09, farm illustration: the pen for unclear/failed/waiting cases, "zde se nic
-  // samo neprovede"): the same instances as Poslední instance, filtered to what actually needs a human decision.
-  // Reads the same already-fetched m.instances — no separate query, so it only ever shows what's within
-  // instanceLimit/instanceWindow, same honest limit as the full list.
   const ohradaInstances = m.instances.filter((i) => !i.purged && (i.status === "WAITING" || i.status === "FAILED" || i.status === "UNKNOWN_OUTCOME"));
   const ohradaRows = instanceRowsOf(ohradaInstances);
 
   const denikRows = m.auditLog
     .map((r) => {
       const link = r.workflowId ? `<a href="/workflow/${esc(r.workflowId)}">${esc(r.workflowId)}</a>` : "—";
-      return `<tr><td class="c-date">${esc(r.at)}</td><td>${esc(r.kind)}</td><td>${link}</td><td>${esc(r.capability ?? "")}</td><td class="wrap">${auditSummary(r.kind, r.capability, r.details)}</td></tr>`;
+      return `<tr><td class="dim mono">${esc(r.at)}</td><td>${esc(r.kind)}</td><td>${link}</td><td>${esc(r.capability ?? "")}</td><td class="wrap">${auditSummary(r.kind, r.capability, r.details)}</td></tr>`;
     })
     .join("");
-  // Live terminal (owner's request 2026-09-09: "vidět co se šustne") — same rows as denikRows, oldest first (tail -f
-  // order), seeded server-side so the box isn't empty before the client's first poll picks up.
   const terminalLine = (r: AuditLogRow): string => {
     const time = esc(r.at).replace("T", " ").replace(/\.\d+Z$|Z$/, "");
     const link = r.workflowId ? ` <a href="/workflow/${esc(r.workflowId)}">${esc(r.workflowId)}</a>` : "";
@@ -748,40 +839,47 @@ export function renderFarm(m: FarmModel): string {
   };
   const terminalSeed = [...m.auditLog].reverse().map(terminalLine).join("");
 
+  // Přehled: needs-attention feed (open incidents + ohrada backlog + failed inbox) — the dashboard-first landing
+  // the operator sees before drilling into anything (vlastníkovo rozhodnutí 13. 9. 2026: "je farma zdravá, co
+  // potřebuje pozornost" má být první, ne formulář).
+  const activeFindings = watchdog.findings.filter((f) => !isAcknowledgedFinding(f.key, incidents));
+  const attnItems: string[] = [];
+  for (const f of activeFindings) attnItems.push(`<div class="attn-item">${stateBadge(f.level)}<span>${esc(f.text)}</span></div>`);
+  if (m.inbox.failed.length) attnItems.push(`<div class="attn-item">${stateBadge("WARN")}<span>${m.inbox.failed.length} ${m.inbox.failed.length === 1 ? "soubor selhal" : "souborů selhalo"} v dávkovém příjmu — viz Podatelna</span></div>`);
+  const recentFeed = [...m.instances]
+    .filter((i): i is Extract<FarmInstanceRow, { purged?: false }> => !i.purged)
+    .slice(0, 8)
+    .map((i) => `<div class="feed-item"><span class="t">${shortAt(i.updatedAt).slice(11)}</span>${stateBadge(i.status)}<a href="/workflow/${esc(i.workflowId)}">${i.originalName ? esc(i.originalName) : esc(i.workflowId)}</a><span class="dim">${esc(i.workflow)}</span></div>`)
+    .join("");
 
-  const bodyHtml = `<div class="ui" id="ui" data-layout="side-nav" data-style="farm">
-  <div class="p-title">
-    <button type="button" class="p-titlebtn" id="railToggle" title="Sbalit/rozbalit menu" aria-label="Sbalit/rozbalit menu">${ICONS.menu}</button>
-    <span class="p-brand"><span class="mark"></span>🌾 Farmář<span class="sub">— farma ${esc(m.installation)}</span></span>
-    <span class="vsep"></span>
-    <span class="p-field">podpis ${esc(m.gatewaySigning)}</span>
-    <span class="grow"></span>
-    <span class="p-field" id="clock" title="Živý čas prohlížeče"></span>
-    <span class="vsep"></span>
-    <span class="p-field"><code title="Commit, ze kterého je tento build">${esc(m.gitSha)}</code></span>
-    <span class="vsep"></span>
-    <span class="p-field">${up}/${m.deployables.length} Workerů OK</span>
-  </div>
-
-  <nav class="p-nav">
-    <a class="p-navitem" href="#zadani" data-view="zadani" title="Zadání požadavku">${ICONS.novy}<span class="lbl">Zadání požadavku</span></a>
-    <a class="p-navitem" href="#erwin" data-view="erwin" title="Erwin — plánování">${ICONS.erwin}<span class="lbl">Erwin</span></a>
-    <a class="p-navitem" href="#argos" data-view="argos" title="Argos — kontrola">${ICONS.argos}<span class="lbl">Argos</span></a>
-    <a class="p-navitem" href="#kravicky" data-view="kravicky" title="Kravičky — práce">${ICONS.kravicky}<span class="lbl">Kravičky</span></a>
-    <a class="p-navitem" href="#ohrada" data-view="ohrada" title="Ohrada — čeká na člověka">${ICONS.ohrada}<span class="lbl">Ohrada${ohradaInstances.length ? ` (${ohradaInstances.length})` : ""}</span></a>
-    <a class="p-navitem" href="#vysledek" data-view="vysledek" title="Výsledek">${ICONS.vysledek}<span class="lbl">Výsledek</span></a>
-    <a class="p-navitem" href="#denik" data-view="denik" title="Audit">${ICONS.denik}<span class="lbl">Audit</span></a>
-    <div class="p-navsec">Farma</div>
-    <a class="p-navitem" href="/VYVOJOVY-DIAGRAM.html" title="Jak to funguje — bezpečnostní řetězec a běh toku">${ICONS.diagram}<span class="lbl">Jak to funguje</span></a>
-    <a class="p-navitem" href="/MATICE-ODPOVEDNOSTI.html" title="Kdo (kravička/kapabilita) odpovídá za co">${ICONS.diagram}<span class="lbl">Matice odpovědnosti</span></a>
-  </nav>
-
-  <main class="p-main">
-    <div id="view-zadani">
-      <img class="p-hero" src="/farm/ilustrace.png" alt="AI Farma — Erwin, Argos a kravičky ve svých ohradách" loading="lazy">
-      <div class="p-panehead">${ICONS.novy}<span>Zadání požadavku</span><span class="n">1 · vstup</span></div>
-      <div class="p-toolbar"><span class="meta">Ruční jednotlivé podání — stejná cesta (<code>startIntake</code>) jako dávkový příjem, jen výsledek uvidíš hned, ne až po dalším běhu cronu</span></div>
-      <form class="p-form" method="post" action="/intake" enctype="multipart/form-data">
+  const views: { id: string; icon: string; label: string; count?: number; body: string }[] = [
+    {
+      id: "prehled",
+      icon: ICONS.prehled,
+      label: "Přehled",
+      body: `<div class="pagehead"><h1>Přehled farmy</h1></div><p class="lede">${esc(m.installation)} · ${up}/${m.deployables.length} Workerů OK · podpis ${esc(m.gatewaySigning)}</p>
+      <div class="toolbar" style="margin-top:0">${stateBadge(effectiveLevel)}<span class="dim">${activeFindings.length === 0 ? "žádné otevřené nálezy" : `${activeFindings.length} ${activeFindings.length === 1 ? "nález" : "nálezy"} vyžaduje pozornost`}</span></div>
+      <div class="stat-row">
+        <div class="stat"><b>${m.stats.processedToday}</b><span>zpracováno dnes</span></div>
+        <div class="stat"><b>${m.stats.totalProcessed}</b><span>celkem</span></div>
+        <div class="stat"><b>${ohradaInstances.length}</b><span>čeká v Ohradě</span></div>
+        <div class="stat"><b>${formatDuration(m.stats.avgProcessingMs)}</b><span>průměrný čas</span></div>
+      </div>
+      ${
+        attnItems.length
+          ? `<div class="card" style="margin-bottom:16px"><h3 style="margin-bottom:6px">Vyžaduje pozornost</h3>${attnItems.join("")}</div>`
+          : `<div class="card" style="margin-bottom:16px">${stateBadge("HEALTHY")} <span class="dim">Nic dnes nevyžaduje pozornost.</span></div>`
+      }
+      <div class="card" style="margin-bottom:16px"><div class="p-card-head"><span>Farmář <code>apf-gateway</code></span>${stateBadge(gatewayRow ? workerStateLabel(gatewayRow) : "DOWN")}</div><div class="p-card-role">Přijme dokument, rozpozná typ (AI) a řídí celý průběh — ${m.workflows.length} toků, ${("error" in m.models ? 0 : m.models.choices.length)} modelů pro posouzení</div><div class="p-card-meta">${selfTestBadge(gatewayRow?.selfTest)}</div></div>
+      <div class="card"><h3 style="margin-bottom:6px">Nedávné operace</h3>${recentFeed || '<span class="dim">zatím žádné</span>'}</div>`,
+    },
+    {
+      id: "podatelna",
+      icon: ICONS.podatelna,
+      label: "Podatelna",
+      body: `<div class="pagehead"><h1>Podatelna</h1></div><p class="lede">Ruční jednotlivé podání — stejná cesta (<code>startIntake</code>) jako dávkový příjem, jen výsledek uvidíš hned, ne až po dalším běhu cronu.</p>
+      <div class="hero"><img src="/farm/ilustrace.png" alt="AI Farma — Farmář, Argos a kravičky ve svých ohradách" loading="lazy"><div class="cap">Farmář ${esc(m.installation)}</div></div>
+      <form method="post" action="/intake" enctype="multipart/form-data">
         <label for="novy-file">Soubor: PDF, fotka (jpg, png, webp), docx, ISDOC / XML, txt, md, eml (do 4 MB)</label>
         <input id="novy-file" type="file" name="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.docx,.isdoc,.xml,.txt,.md,.eml,application/pdf,image/*,application/xml,text/xml,text/plain,message/rfc822">
         <label for="novy-text">Nebo vložený text (faktura, smlouva, e-mail…)</label>
@@ -791,7 +889,7 @@ export function renderFarm(m: FarmModel): string {
         <label for="novy-model">Model AI pro posouzení (classify)</label>
         ${
           "error" in m.models
-            ? `<div class="meta" style="color:var(--crit)">Bez modelu nelze spustit tok. ${esc(m.models.error)}</div>`
+            ? `<div class="dim" style="color:var(--crit)">Bez modelu nelze spustit tok. ${esc(m.models.error)}</div>`
             : `<select id="novy-model" name="model">${m.models.choices
                 .map((c) =>
                   c.unavailable
@@ -802,232 +900,161 @@ export function renderFarm(m: FarmModel): string {
         }
         <label for="novy-stampText">Text razítka (nepovinné)</label>
         <input id="novy-stampText" type="text" name="stampText" placeholder="VALIDATED INVOICE">
-        <button class="p-btn" type="submit">Odeslat do toku</button>
+        <button class="btn btn-primary" type="submit" style="margin-top:12px">Odeslat do toku</button>
       </form>
-
-      <div class="p-panehead"><span>Dávkový příjem (inbox)</span><span class="n">${m.inbox.pending.length} čeká${m.inbox.failed.length ? ` · ${m.inbox.failed.length} selhalo` : ""}</span></div>
-      <form class="p-toolbar" method="post" action="/farm/inbox" enctype="multipart/form-data">
-        <input type="file" name="files" multiple>
-        <button class="p-btn" type="submit">Nahrát do inboxu</button>
-        <span class="vsep"></span>
-        <span class="meta">kontrola každých 5 minut, max ${m.inbox.batchLimit} souborů na běh</span>
+      <hr>
+      <div class="toolbar" style="margin-top:0"><h3 class="fill">Dávkový příjem (inbox)</h3><span class="dim">${m.inbox.pending.length} čeká${m.inbox.failed.length ? ` · ${m.inbox.failed.length} selhalo` : ""}</span></div>
+      <form class="toolbar" method="post" action="/farm/inbox" enctype="multipart/form-data">
+        <input type="file" name="files" multiple style="width:auto">
+        <button class="btn" type="submit">Nahrát do inboxu</button>
+        <span class="dim">kontrola každých 5 minut, max ${m.inbox.batchLimit} souborů na běh, nebo přímo R2 → <code>apf-artifacts</code> → <code>inbox/</code></span>
       </form>
-      <div class="p-toolbar">
-        <span class="meta">nebo přímo Cloudflare dashboard → R2 → <code>apf-artifacts</code> → <code>inbox/</code> (stejné místo, žádný rozdíl)</span>
-      </div>
       ${
         m.inbox.pending.length
-          ? `<div class="p-gridwrap"><table class="p-table">
-        <thead><tr><th>Soubor</th><th>Velikost</th><th>Nahráno</th></tr></thead>
-        <tbody>${m.inbox.pending.map((it) => `<tr><td class="wrap">${esc(it.name)}</td><td>${kb(it.size)}</td><td class="c-date">${esc(it.uploaded)}</td></tr>`).join("")}</tbody>
-      </table></div>`
+          ? `<div class="gridwrap"><table><thead><tr><th>Soubor</th><th>Velikost</th><th>Nahráno</th></tr></thead><tbody>${m.inbox.pending.map((it) => `<tr><td class="wrap">${esc(it.name)}</td><td>${kb(it.size)}</td><td class="dim mono">${esc(it.uploaded)}</td></tr>`).join("")}</tbody></table></div>`
           : ""
       }
       ${
         m.inbox.failed.length
-          ? `<div class="p-panehead"><span style="color:var(--crit)">Selhalo v inbox/failed/</span><span class="n">podívej se, co je špatně, a zkus znovu</span></div>
-      <div class="p-gridwrap"><table class="p-table">
-        <thead><tr><th>Soubor</th><th>Velikost</th><th>Důvod</th><th></th></tr></thead>
-        <tbody>${m.inbox.failed
-          .map(
-            (it) =>
-              `<tr><td class="wrap">${esc(it.name)}</td><td>${kb(it.size)}</td><td class="wrap">${esc(it.reason ?? "")}${it.message ? ` <small class="dim">${esc(it.message)}</small>` : ""}</td><td><form method="post" action="/farm/inbox/retry"><input type="hidden" name="key" value="${esc(it.key)}"><button class="p-btn" type="submit">Zkusit znovu</button></form></td></tr>`,
-          )
-          .join("")}</tbody>
-      </table></div>`
+          ? `<h3 style="color:var(--crit);margin-top:16px">Selhalo v inbox/failed/</h3><div class="gridwrap"><table><thead><tr><th>Soubor</th><th>Velikost</th><th>Důvod</th><th></th></tr></thead><tbody>${m.inbox.failed
+              .map(
+                (it) =>
+                  `<tr><td class="wrap">${esc(it.name)}</td><td>${kb(it.size)}</td><td class="wrap">${esc(it.reason ?? "")}${it.message ? ` <small class="dim">${esc(it.message)}</small>` : ""}</td><td><form method="post" action="/farm/inbox/retry"><input type="hidden" name="key" value="${esc(it.key)}"><button class="btn btn-sm" type="submit">Zkusit znovu</button></form></td></tr>`,
+              )
+              .join("")}</tbody></table></div>`
           : ""
-      }
-    </div>
-
-    <div id="view-erwin" hidden>
-      <div class="p-panehead">${ICONS.erwin}<span>Erwin</span><span class="n">2 · plánování</span></div>
-      <div class="p-toolbar"><span class="meta">Rozumí požadavku, rozdělí ho na kroky (workflow) a pošle správné kravičce — instalace ${esc(m.installation)}, podpis ${esc(m.gatewaySigning)}</span></div>
-      ${erwinGatewayCard}
-      <div class="p-cardsec">
-        <div class="p-cardsec-label">Toky, co Erwin umí naplánovat</div>
-        <div class="p-cardgrid">${m.workflows.map((w) => `<div class="p-card"><div class="p-card-head"><code>${esc(w)}</code></div></div>`).join("")}</div>
-      </div>
-      <div class="p-cardsec">
-        <div class="p-cardsec-label">Modely pro posouzení dokumentu (document.classify)</div>
-        <div class="p-cardgrid">${
-          "error" in m.models
-            ? `<div class="p-card st-crit-card"><div class="p-card-role">${esc(m.models.error)}</div></div>`
-            : m.models.choices
-                .map(
-                  (c) =>
-                    `<div class="p-card${c.unavailable ? " st-crit-card" : ""}"><div class="p-card-head">${esc(c.label)}${c.isDefault ? stateBadge("ACTIVE") : ""}</div><div class="p-card-role">${esc(c.provider)} · <code>${esc(c.model)}</code>${c.unavailable ? `<br>nedostupné: ${esc(c.unavailable)}` : ""}</div></div>`,
-                )
-                .join("")
-        }</div>
-      </div>
-      <div class="p-toolbar"><span class="meta">${up}/${m.deployables.length} Workerů OK · ${m.instances.length} instancí zpracováno · ${m.auditLog.length} v deníku</span></div>
-    </div>
-
-    <div id="view-argos" hidden>
-      <div class="p-panehead">${ICONS.argos}<span>Argos hlídá — Kapability (Admission Gate)</span><span class="n">3 · kontrola · ${m.capabilities.length}, ${m.capabilities.filter((c) => c.lifecycleStatus === "QUARANTINED").length} v karanténě</span></div>
+      }`,
+    },
+    {
+      id: "ohrada",
+      icon: ICONS.ohrada,
+      label: "Ohrada",
+      count: ohradaInstances.length || undefined,
+      body: `<div class="pagehead"><h1>${ICONS.ohrada} Ohrada</h1></div><p class="lede">Instance, co čekají na rozhodnutí, nebo skončily s chybou, co si žádá pohled člověka — zde se nic samo neprovede.</p>
+      <div class="gridwrap"><table><thead><tr><th>Krok</th><th>Capability</th><th>Stav</th><th>Pokus</th><th>Výsledek</th></tr></thead><tbody>${ohradaInstances.length ? ohradaRows : '<tr><td colspan="5" class="dim">prázdno — nic dnes nečeká na člověka</td></tr>'}</tbody></table></div>`,
+    },
+    {
+      id: "staj",
+      icon: ICONS.staj,
+      label: "Stáj",
+      body: `<div class="pagehead"><h1>${ICONS.staj} Stáj</h1></div><p class="lede">Kravičky a co skutečně smí vykonat, seskupeno po modulu jako ohrada — riziko a izolace jsou vlastní tvrzení komponenty (descriptor), stav na kartě je to, co <b>Router doopravdy vynucuje</b> před každým dispatchem.</p>
+      <form class="toolbar" method="post" action="/farm/self-test">
+        <span class="dim">„OK“ dokazuje jen, že proces odpovídá — self-test skutečně spustí kapability proti reálnému modelu a porovná s golden výsledkem${m.selfTestAt ? ` — naposledy proběhlo ${shortAt(m.selfTestAt)}` : " — ještě nikdy neproběhl"}</span>
+        <span class="fill"></span>
+        <button class="btn btn-primary" type="submit">Spustit self-test</button>
+      </form>
+      ${stajCards}
+      <h3 style="margin:18px 0 8px">Kapability (Admission Gate)</h3>
+      ${m.capabilities.length ? penGrid : '<p class="dim">zatím žádné (vzdálení Workeři neodpověděli)</p>'}`,
+    },
+    {
+      id: "argos",
+      icon: ICONS.argos,
+      label: "Argos",
+      body: `<div class="pagehead"><h1>${ICONS.argos} Argos hlídá</h1></div><p class="lede">Argosův vlastní verdikt a nálezy — deterministická pravidla, žádné AI. Karanténa (config/&lt;instalace&gt;/lifecycle.json) se mění deployem, ne odsud — tahle stránka jen čte, nikdy nezapisuje.</p>
       ${watchdogBanner(watchdog, incidents)}
-      <div class="p-toolbar"><span class="meta">Co každá kravička skutečně smí vykonat, seskupeno po modulu jako ohrada — riziko a izolace jsou vlastní tvrzení komponenty (descriptor), stav na kartě je to, co <b>Router doopravdy vynucuje</b> před každým dispatchem. Karanténa (config/&lt;instalace&gt;/lifecycle.json) se mění deploym, ne odsud — tahle stránka jen čte, nikdy nezapisuje</span></div>
-      <div class="p-toolbar"><span class="meta">„self-test X/Y" na kartě = kolik vzorových případů té kapability naposledy skutečně prošlo proti reálnému běhu (ne jen že Worker odpověděl) — spusť ho na záložce Kravičky${m.selfTestAt ? `, naposledy ${shortAt(m.selfTestAt)}` : ""}</span></div>
-      ${m.capabilities.length ? penGrid : '<div class="pen-empty">zatím žádné (vzdálení Workeři neodpověděli)</div>'}
-    </div>
-
-    <div id="view-kravicky" hidden>
-      <div class="p-panehead"><span>Kravičky</span><span class="n">4 · práce · ${m.deployables.length - 1} Workerů</span></div>
-      <div class="p-toolbar"><span class="meta">Zdraví a role jednotlivých Workerů, co Erwin volá — kdo co dělá a jestli běží</span></div>
-      <form class="p-toolbar" method="post" action="/farm/self-test">
-        <span class="meta">„OK" výš dokazuje jen, že proces odpovídá — self-test skutečně spustí <code>document.classify</code>/<code>document.validate</code> (na <code>apf-gateway</code>) i <code>document.stamp</code>/<code>document.archive</code> (na <code>apf-document-host</code>, přes síť) proti reálnému modelu a porovná s golden výsledkem${m.selfTestAt ? ` — naposledy proběhlo ${shortAt(m.selfTestAt)}` : " — ještě nikdy neproběhl"}</span>
-        <span class="grow"></span>
-        <button class="p-btn" type="submit">Spustit self-test</button>
-      </form>
-      ${kravickyCards}
-    </div>
-
-    <div id="view-ohrada" hidden>
-      <div class="p-panehead">${ICONS.ohrada}<span>Ohrada</span><span class="n">${ohradaInstances.length} čeká na člověka</span></div>
-      <div class="p-toolbar"><span class="meta">Instance, co čekají na rozhodnutí, nebo skončily s chybou, co si žádá pohled člověka — zde se nic samo neprovede. Stejný zdroj dat jako Poslední instance, jen vyfiltrovaný na ${esc("WAITING")}/${esc("FAILED")}/${esc("UNKNOWN_OUTCOME")}</span></div>
-      <div class="p-gridwrap"><table class="p-table">
-        <thead><tr><th>Krok</th><th>Capability</th><th class="c-state">Stav</th><th>Pokus</th><th>Výsledek</th></tr></thead>
-        <tbody>${ohradaInstances.length ? ohradaRows : '<tr><td colspan="5" class="dim">prázdno — nic dnes nečeká na člověka</td></tr>'}</tbody>
-      </table></div>
-    </div>
-
-    <div id="view-vysledek" hidden>
-      <div class="p-panehead">${ICONS.vysledek}<span>Výsledek</span><span class="n">5 · ${m.instances.length} instancí</span></div>
-      <div class="p-toolbar"><span class="meta">Výsledek se složí, uloží a zaznamená — statistika za celou dobu a poslední zpracované dokumenty</span></div>
-      <div class="p-stats">
-        <div class="p-stat"><b>${m.stats.totalProcessed}</b><span>zpracováno celkem</span></div>
-        <div class="p-stat"><b>${m.stats.processedToday}</b><span>dnes</span></div>
-        <div class="p-stat"><b>${formatDuration(m.stats.avgProcessingMs)}</b><span>průměrný čas zpracování</span></div>
+      <div class="stat-row">
+        <div class="stat"><b>${m.selfTestAt ? shortAt(m.selfTestAt).slice(11) : "—"}</b><span>poslední self-test</span></div>
+        <div class="stat"><b>${m.alertHealth?.lastSuccessAt ? "OK" : m.alertHealth ? "?" : "—"}</b><span>alertovací kanál</span></div>
+        <div class="stat"><b>${m.recentAuditTenantMismatches}</b><span>pokusů o cizí tenant (24 h)</span></div>
+      </div>`,
+    },
+    {
+      id: "vysledek",
+      icon: ICONS.vysledek,
+      label: "Výsledek",
+      body: `<div class="pagehead"><h1>${ICONS.vysledek} Výsledek</h1></div><p class="lede">Výsledek se složí, uloží a zaznamená — statistika za celou dobu a poslední zpracované dokumenty.</p>
+      <div class="stat-row">
+        <div class="stat"><b>${m.stats.totalProcessed}</b><span>zpracováno celkem</span></div>
+        <div class="stat"><b>${m.stats.processedToday}</b><span>dnes</span></div>
+        <div class="stat"><b>${formatDuration(m.stats.avgProcessingMs)}</b><span>průměrný čas zpracování</span></div>
       </div>
-      ${
-        m.stats.byType.length
-          ? `<div class="p-toolbar"><span class="meta">Podle typu dokumentu (classify)</span></div>
-      <div class="p-bars">${barChart(m.stats.byType)}</div>`
-          : ""
-      }
-      <div class="p-panehead"><span>Poslední instance</span><span class="n">${m.instances.length}</span></div>
-      <div class="p-toolbar"><span class="meta">Pohled na dokument: řádek se souborem a stavem, klikni pro rozbalení kroků (classify → validate → stamp)</span></div>
-      <form class="p-toolbar" method="get" action="/farm#vysledek">
-        <span class="meta">Zobrazit</span>
-        <select name="limit" onchange="this.form.submit()">${[15, 30, 50, 100, 200].map((n) => `<option value="${n}"${n === m.instanceLimit ? " selected" : ""}>${n}</option>`).join("")}</select>
-        <span class="meta">dokumentů</span>
-        <span class="vsep"></span>
-        <select name="window" onchange="this.form.submit()">${[
-          ["", "celá historie"],
-          ["24h", "posledních 24 h"],
-          ["7d", "posledních 7 dní"],
-          ["30d", "posledních 30 dní"],
-        ]
-          .map(([v, label]) => `<option value="${v}"${v === m.instanceWindow ? " selected" : ""}>${esc(label as string)}</option>`)
-          .join("")}</select>
-        <noscript><button class="p-btn" type="submit">Použít</button></noscript>
-      </form>
-      <div class="p-gridwrap"><table class="p-table">
-        <thead><tr><th>Krok</th><th>Capability</th><th class="c-state">Stav</th><th>Pokus</th><th>Výsledek</th></tr></thead>
-        <tbody>${m.instances.length ? instanceRows : '<tr><td colspan="5" class="dim">zatím žádná</td></tr>'}</tbody>
-      </table></div>
-    </div>
-
-    <div id="view-denik" hidden>
-      <div class="p-panehead">${ICONS.denik}<span>Audit — Deník</span><span class="n">posledních ${m.auditLog.length}</span></div>
-      <div class="p-toolbar">
-        <span class="meta">Živý terminál: syrový auditní záznam napříč celou farmou, jeden řádek = jedna událost, nejnovější dole (jako <code>tail -f</code>)</span>
-        <span class="grow"></span>
-        <button type="button" class="p-btn" id="denik-live-toggle" aria-pressed="true">⏸ Pozastavit</button>
+      ${m.stats.byType.length ? `<h3>Podle typu dokumentu (classify)</h3><div>${barChart(m.stats.byType)}</div>` : ""}
+      <div class="toolbar"><h3 class="fill">Poslední instance</h3>
+        <form method="get" action="/farm#vysledek" style="display:flex;gap:8px;align-items:center">
+          <select name="limit" onchange="this.form.submit()" style="width:auto">${[15, 30, 50, 100, 200].map((n) => `<option value="${n}"${n === m.instanceLimit ? " selected" : ""}>${n}</option>`).join("")}</select>
+          <select name="window" onchange="this.form.submit()" style="width:auto">${[
+            ["", "celá historie"],
+            ["24h", "posledních 24 h"],
+            ["7d", "posledních 7 dní"],
+            ["30d", "posledních 30 dní"],
+          ]
+            .map(([v, label]) => `<option value="${v}"${v === m.instanceWindow ? " selected" : ""}>${esc(label as string)}</option>`)
+            .join("")}</select>
+          <noscript><button class="btn btn-sm" type="submit">Použít</button></noscript>
+        </form>
       </div>
-      <div class="p-term" id="denik-term" aria-live="polite">${terminalSeed}</div>
-      <div class="p-toolbar"><span class="meta">Stejná data jako tabulka: nejnovější nahoře, pro dohledání konkrétní události</span></div>
-      <div class="p-gridwrap"><table class="p-table">
-        <thead><tr><th class="c-date">Čas</th><th>Druh</th><th>Instance</th><th>Capability</th><th>Detail</th></tr></thead>
-        <tbody>${denikRows}</tbody>
-      </table></div>
-    </div>
-  </main>
+      <div class="gridwrap"><table><thead><tr><th>Krok</th><th>Capability</th><th>Stav</th><th>Pokus</th><th>Výsledek</th></tr></thead><tbody>${m.instances.length ? instanceRows : '<tr><td colspan="5" class="dim">zatím žádné</td></tr>'}</tbody></table></div>`,
+    },
+    {
+      id: "denik",
+      icon: ICONS.denik,
+      label: "Deník",
+      body: `<div class="pagehead"><h1>${ICONS.denik} Audit — Deník</h1></div><p class="lede">Živý terminál: syrový auditní záznam napříč celou farmou, jeden řádek = jedna událost, nejnovější dole (jako <code>tail -f</code>).</p>
+      <div class="toolbar" style="margin-top:0"><span class="fill"></span><button type="button" class="btn btn-sm" id="denik-live-toggle" aria-pressed="true">⏸ Pozastavit</button></div>
+      <div class="term" id="denik-term" aria-live="polite">${terminalSeed}</div>
+      <h3 style="margin-top:16px">Stejná data jako tabulka</h3>
+      <div class="gridwrap"><table><thead><tr><th>Čas</th><th>Druh</th><th>Instance</th><th>Capability</th><th>Detail</th></tr></thead><tbody>${denikRows}</tbody></table></div>`,
+    },
+  ];
 
-  <footer class="p-status">
+  const navHtml = views
+    .map((v) => `<a class="navlink" href="#${v.id}" data-view="${v.id}" title="${esc(v.label)}">${v.icon}<span class="lbl">${esc(v.label)}</span>${v.count ? `<span class="count">${v.count}</span>` : ""}</a>`)
+    .join("");
+  const sectionsHtml = views.map((v, i) => `<section id="view-${v.id}"${i === 0 ? "" : " hidden"}>${v.body}</section>`).join("");
+
+  const bodyHtml = `<div class="app" id="app">
+  <div class="app-top">
+    <button type="button" class="railbtn" id="railToggle" title="Sbalit/rozbalit menu" aria-label="Sbalit/rozbalit menu">${ICONS.menu}</button>
+    <span class="brand">${ICONS.wheat}<span>Průsvitná stáj</span><span class="sub">${esc(m.installation)}</span></span>
+    <span class="fill"></span>
+    <span class="meta" id="clock" title="Živý čas prohlížeče"></span>
+    <span class="meta"><code title="Commit, ze kterého je tento build">${esc(m.gitSha)}</code></span>
+    <span class="meta">${up}/${m.deployables.length} Workerů OK</span>
+  </div>
+  <nav class="app-rail">${navHtml}
+    <div class="navsec">Farma</div>
+    <a class="navlink" href="/VYVOJOVY-DIAGRAM.html" title="Jak to funguje">${ICONS.diagram}<span class="lbl">Jak to funguje</span></a>
+    <a class="navlink" href="/MATICE-ODPOVEDNOSTI.html" title="Kdo odpovídá za co">${ICONS.diagram}<span class="lbl">Matice odpovědnosti</span></a>
+  </nav>
+  <main class="app-main">${sectionsHtml}</main>
+  <footer class="app-foot">
     <span><b>${up}/${m.deployables.length}</b> Workerů</span>
     <span><b>${m.instances.length}</b> instancí</span>
     <span><b>${m.auditLog.length}</b> v deníku</span>
     <span><b>${m.inbox.pending.length}</b> v inboxu${m.inbox.failed.length ? ` <span class="dim">(${m.inbox.failed.length} selhalo)</span>` : ""}</span>
-    <span class="grow"></span>
-    <span>Farmář · ${esc(m.installation)}</span>
+    <span class="fill"></span>
+    <span>Průsvitná stáj · ${esc(m.installation)}</span>
   </footer>
 </div>`;
 
-  return `<!doctype html><html lang="cs"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Farmář · ${esc(m.installation)}</title>
-<style>
-html,body{height:100%;margin:0}
-.ui{height:100vh}
-.ui a{color:inherit;text-decoration:none}
-.ui a:hover:not(.p-navitem):not(.p-btn){text-decoration:underline}
-.ui code{font-family:var(--font-data);background:var(--bordersoft);padding:.05em .35em;border-radius:4px;font-size:.92em}
-.ui .p-titlebtn{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex:none;border:0;border-radius:var(--radius);background:none;color:var(--dim);cursor:pointer}
-.ui .p-titlebtn:hover{background:var(--hover);color:var(--text)}
-.ui .p-table tbody td.wrap{white-space:normal;overflow:visible;text-overflow:clip;word-break:break-word;line-height:1.4;padding-top:8px;padding-bottom:8px}
-.ui .p-table:has(tr.group-head) tbody tr:not(.group-head) td:first-child{padding-left:1.5rem}
-.ui .gh-toggle{cursor:pointer}
-.ui .gh-toggle:hover td{filter:brightness(0.97)}
-.ui .gh-chevron{display:inline-block;width:.9em;transition:transform .15s}
-.ui .gh-toggle[aria-expanded="true"] .gh-chevron{transform:rotate(90deg)}
-.ui details{margin-top:3px}
-.ui details summary{cursor:pointer;font-size:.85em;color:var(--dim)}
-.ui details summary:hover{color:var(--text)}
-.ui pre.wrap{white-space:pre-wrap;word-break:break-word;margin:4px 0 0;font-size:.82em;max-width:100%;background:var(--bordersoft);padding:.5em .6em;border-radius:6px}
-.ui .p-term{margin:0 14px 10px;height:22rem;overflow-y:auto;background:var(--chrome);border:var(--border-w) solid var(--border);border-radius:8px;padding:8px 10px;font-family:var(--font-data);font-size:var(--fs-data);line-height:1.6}
-.ui .p-term .t-line{white-space:pre-wrap;word-break:break-word}
-.ui .p-term .t-line.t-new{animation:term-flash 1.4s ease-out}
-.ui .p-term .t-dim{color:var(--dim)}
-@keyframes term-flash{from{background:var(--accsoft)}to{background:transparent}}
-.ui .p-form{padding:0 14px 14px}
-.ui .p-form label{display:block;font-weight:600;margin:.9rem 0 .3rem}
-.ui .p-form textarea,.ui .p-form input[type=text],.ui .p-form select{width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:var(--radius);padding:.5rem;font:inherit;background:var(--pane);color:var(--text)}
-.ui .p-form textarea{min-height:8rem;font-family:var(--font-data)}
-.ui .p-form input[type=file]{margin-top:.2rem;max-width:100%}
-.ui .p-form .p-btn{margin-top:1rem;border-color:var(--border)}
-.ui .p-stats{display:flex;gap:1px;background:var(--border);border-bottom:var(--border-w) solid var(--border)}
-.ui .p-stat{flex:1;background:var(--pane);padding:14px 16px;display:flex;flex-direction:column;gap:2px}
-.ui .p-stat b{font-size:1.6rem;font-family:var(--font-display)}
-.ui .p-stat span{color:var(--dim);font-size:calc(var(--fs-ui) - .5px)}
-.ui .p-bars{padding:10px 14px 14px;background:var(--pane);border-bottom:var(--border-w) solid var(--border)}
-.ui .p-bar-row{display:flex;align-items:center;gap:10px;margin:6px 0}
-.ui .p-bar-label{width:6rem;flex:none;font-size:.85em;color:var(--dim)}
-.ui .p-bar-track{flex:1;height:14px;background:var(--bordersoft);border-radius:4px;overflow:hidden}
-.ui .p-bar-fill{height:100%;background:var(--accent);border-radius:4px}
-.ui .p-bar-count{width:2.5rem;flex:none;text-align:right;font:.85em var(--font-data)}
-${BANK_UI_CSS}
-${FARM_THEME_CSS}
-</style>
-</head><body>${bodyHtml}
-<script>
-(function () {
-  var VIEWS = ["zadani", "erwin", "argos", "kravicky", "ohrada", "vysledek", "denik"];
+  const script = `(function () {
+  var VIEWS = ${JSON.stringify(views.map((v) => v.id))};
   function applyView() {
-    var v = (location.hash || "#zadani").slice(1);
-    if (VIEWS.indexOf(v) === -1) v = "zadani";
+    var v = (location.hash || "#prehled").slice(1);
+    if (VIEWS.indexOf(v) === -1) v = "prehled";
     VIEWS.forEach(function (id) {
       var el = document.getElementById("view-" + id);
       if (el) el.hidden = id !== v;
     });
-    document.querySelectorAll(".p-nav a[data-view]").forEach(function (a) {
+    document.querySelectorAll(".navlink[data-view]").forEach(function (a) {
       a.setAttribute("aria-current", a.dataset.view === v ? "true" : "false");
     });
   }
   window.addEventListener("hashchange", applyView);
   applyView();
 
-  var ui = document.getElementById("ui");
+  var app = document.getElementById("app");
   var rail = document.getElementById("railToggle");
   function setRail(on) {
-    ui.dataset.layout = on ? "rail" : "side-nav";
-    try { localStorage.setItem("farm-rail", on ? "1" : "0"); } catch (e) {}
+    app.dataset.rail = on ? "collapsed" : "expanded";
+    try { localStorage.setItem("stroj-rail", on ? "1" : "0"); } catch (e) {}
   }
-  if (rail) rail.addEventListener("click", function () { setRail(ui.dataset.layout !== "rail"); });
-  try { if (localStorage.getItem("farm-rail") === "1") setRail(true); } catch (e) {}
+  if (rail) rail.addEventListener("click", function () { setRail(app.dataset.rail !== "collapsed"); });
+  try { if (localStorage.getItem("stroj-rail") === "1") setRail(true); } catch (e) {}
 
   var clock = document.getElementById("clock");
-  function tick() {
-    if (clock) clock.textContent = new Date().toLocaleTimeString("cs-CZ");
-  }
+  function tick() { if (clock) clock.textContent = new Date().toLocaleTimeString("cs-CZ"); }
   if (clock) { tick(); setInterval(tick, 1000); }
 
   document.querySelectorAll(".gh-toggle").forEach(function (row) {
@@ -1040,15 +1067,15 @@ ${FARM_THEME_CSS}
     });
   });
 
-  // Deník live terminal (owner's request 2026-09-09: "vidět co se šustne"): poll /audit.json?after=<last>, append as
-  // DOM nodes built with textContent (never innerHTML) — audit details can carry text lifted straight from an
+  // Deník live terminal (owner's request 2026-09-09: "vidět co se šustne"): poll /audit.json?after=<last>, append
+  // as DOM nodes built with textContent (never innerHTML) — audit details can carry text lifted straight from an
   // untrusted document (F2), so this must never turn into an HTML-injection path into the operator's own console.
   var term = document.getElementById("denik-term");
   if (term) {
     var liveToggle = document.getElementById("denik-live-toggle");
     var live = true;
     var lastAt = term.lastElementChild ? term.lastElementChild.getAttribute("data-at") : null;
-    function fmtTime(at) { return String(at || "").replace("T", " ").replace(/\.\d+Z$|Z$/, ""); }
+    function fmtTime(at) { return String(at || "").replace("T", " ").replace(/\\.\\d+Z$|Z$/, ""); }
     function lineEl(rec) {
       var div = document.createElement("div");
       div.className = "t-line t-new";
@@ -1101,9 +1128,9 @@ ${FARM_THEME_CSS}
     term.scrollTop = term.scrollHeight;
     setInterval(poll, 3000);
   }
-})();
-</script>
-</body></html>`;
+})();`;
+
+  return shell(`Průsvitná stáj · ${m.installation}`, bodyHtml, { wide: true, script });
 }
 
 export function renderError(title: string, message: string, details: Record<string, unknown> = {}): string {
@@ -1112,7 +1139,7 @@ export function renderError(title: string, message: string, details: Record<stri
     .join("");
   return shell(
     title,
-    `<header><h1>${esc(title)}</h1></header><div class="card err"><p>${esc(message)}</p>${rows ? `<table>${rows}</table>` : ""}</div><nav><a href="/">Zpět na formulář</a></nav>`,
+    `<div class="doc"><header><h1>${esc(title)}</h1></header><div class="card crit"><p>${esc(message)}</p>${rows ? `<table>${rows}</table>` : ""}</div><nav><a href="/farm">Zpět na Průsvitnou stáj</a></nav></div>`,
   );
 }
 
@@ -1155,7 +1182,7 @@ export function renderSelfTest(rows: SelfTestRow[]): string {
     return `<tr><td><code>${esc(r.id)}</code></td><td>${esc(r.kind)}</td>${stateTd(r.skipped ? "SKIPPED" : r.ok ? "SUCCEEDED" : "FAILED")}<td class="wrap">${detail}${why}${reco}</td></tr>`;
   };
   const capabilitySection = (cap: string, rs: SelfTestRow[]): string =>
-    `<h3>${esc(cap)} <small class="muted">${rs.filter((r) => r.ok && !r.skipped).length}/${rs.filter((r) => !r.skipped).length}</small></h3>
+    `<h3>${esc(cap)} <small class="dim">${rs.filter((r) => r.ok && !r.skipped).length}/${rs.filter((r) => !r.skipped).length}</small></h3>
 <table><thead><tr><th>Fixture</th><th>Druh</th><th>Stav</th><th>Detail</th></tr></thead><tbody>${rs.map(rowHtml).join("")}</tbody></table>`;
   const sections = [...byWorker.entries()]
     .map(([worker, workerRows]) => {
@@ -1163,13 +1190,13 @@ export function renderSelfTest(rows: SelfTestRow[]): string {
       for (const r of workerRows) byCapability.set(r.capability, [...(byCapability.get(r.capability) ?? []), r]);
       const n = workerRows.filter((r) => !r.skipped).length;
       const ok = workerRows.filter((r) => r.ok && !r.skipped).length;
-      return `<h2>🐄 ${esc(worker)} <small class="muted">${ok}/${n} — kontrola opravdu proběhla přes tenhle Worker, ne jen odsud</small></h2>
+      return `<h2>🐄 ${esc(worker)} <small class="dim">${ok}/${n} — kontrola opravdu proběhla přes tenhle Worker, ne jen odsud</small></h2>
 ${[...byCapability.entries()].map(([cap, rs]) => capabilitySection(cap, rs)).join("")}`;
     })
     .join("");
   return shell(
     "Self-test kravičky",
-    `<header><h1>Self-test kravičky</h1><small>${ran.length - failed.length}/${ran.length} fixtures prošlo (${rows.length - ran.length} přeskočeno — vyžadují adapter chaos mode, jen Node testy)</small></header>${sections}<nav><a href="/farm#kravicky">Zpět na Kravičky</a></nav>`,
+    `<div class="doc"><header><h1>Self-test kravičky</h1><small class="dim">${ran.length - failed.length}/${ran.length} fixtures prošlo (${rows.length - ran.length} přeskočeno — vyžadují adapter chaos mode, jen Node testy)</small></header>${sections}<nav><a href="/farm#staj">Zpět na Stáj</a></nav></div>`,
   );
 }
 
@@ -1182,13 +1209,13 @@ const formatDuration = (ms: number | null): string => {
   return `${Math.floor(ms / 60_000)} min ${Math.round((ms % 60_000) / 1000)} s`;
 };
 
-/** No SVG, no JS, no chart library — CSS width bars, same "server-rendered evidence" ethos as the rest of /farm. */
+/** No SVG, no JS, no chart library — CSS width bars, same "server-rendered evidence" ethos as the rest of the app. */
 const barChart = (rows: { type: string; count: number }[]): string => {
   const max = Math.max(1, ...rows.map((r) => r.count));
   return rows
     .map(
       (r) =>
-        `<div class="p-bar-row"><span class="p-bar-label">${esc(r.type)}</span><div class="p-bar-track"><div class="p-bar-fill" style="width:${Math.round((r.count / max) * 100)}%"></div></div><span class="p-bar-count">${r.count}</span></div>`,
+        `<div class="bar-row"><span class="bar-label">${esc(r.type)}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.round((r.count / max) * 100)}%"></div></div><span class="bar-count">${r.count}</span></div>`,
     )
     .join("");
 };
@@ -1206,9 +1233,9 @@ const artifactCard = (a: Artifact): string => {
   const kind = a.derivedFrom ? `derivace z <code>${esc(a.derivedFrom)}</code>, výrobce <code>${esc(a.producer)}</code>` : "originál";
   const meta = `sha256 <code>${esc(a.sha256)}</code> · ${esc(a.contentType ?? "text/plain")} · ${kb(a.byteLength ?? a.bytes.length)} · přijato ${esc(a.receivedAt)} od <code>${esc(a.receivedFrom)}</code> · tenant <code>${esc(a.tenantId)}</code>`;
   const body = a.location
-    ? `<p class="muted">Binární originál je uložen neměnně v R2 pod <code>${esc(a.location)}</code>; text z něj je v derivaci níže.</p>`
+    ? `<p class="dim">Binární originál je uložen neměnně v R2 pod <code>${esc(a.location)}</code>; text z něj je v derivaci níže.</p>`
     : `<pre>${esc(a.bytes.slice(0, 2500))}${a.bytes.length > 2500 ? "\n…" : ""}</pre>`;
-  return `<div class="card"><b>${esc(a.artifactId)}</b> <span class="muted">${kind}</span><br><small>${meta}</small>${body}</div>`;
+  return `<div class="card" style="margin:10px 0"><b>${esc(a.artifactId)}</b> <span class="dim">${kind}</span><br><small class="dim">${meta}</small>${body}</div>`;
 };
 
 const pick = (o: unknown, ...path: string[]): unknown => path.reduce<unknown>((cur, k) => (cur && typeof cur === "object" ? (cur as Record<string, unknown>)[k] : undefined), o);
@@ -1216,7 +1243,7 @@ const pick = (o: unknown, ...path: string[]): unknown => path.reduce<unknown>((c
 /** Raw JSON, but never dumped inline unwrapped — collapsed behind a toggle, wraps if opened. Used where a payload has no known human phrasing. */
 const rawJson = (value: unknown, cap = 600): string => {
   const s = JSON.stringify(value ?? {});
-  return `<details><summary class="dim">podrobnosti (JSON)</summary><pre class="wrap">${esc(s.length > cap ? `${s.slice(0, cap)}…` : s)}</pre></details>`;
+  return `<details><summary>podrobnosti (JSON)</summary><pre class="wrap">${esc(s.length > cap ? `${s.slice(0, cap)}…` : s)}</pre></details>`;
 };
 
 /** Step result in plain Czech, per capability — for /farm, where there's no renderOutput() above it to carry the human summary. Falls back to collapsed raw JSON for an unknown capability. */
@@ -1272,30 +1299,27 @@ const renderOutput = (v: InstanceView): string => {
   const subject = v.artifacts.find((a) => a.artifactId === i.input.artifactId) ?? derived ?? original;
   const lastOf = (capability: string) => [...i.steps].reverse().find((s) => s.capability === capability);
   const planned = new Set(i.steps.map((s) => s.capability));
-  // Visual stamp is additive to document.stamp (owner's decision 2026-09-07): if the real stamp never succeeded
-  // (still WAITING on review, or the flow ended before reaching it), there is nothing to show — don't offer a link
-  // that can only 404.
   const stampSucceeded = lastOf("document.stamp")?.status === "SUCCEEDED";
   const stepCell = (capability: string, ok: (payload: Record<string, unknown>) => string): string => {
     const s = lastOf(capability);
-    if (!s) return planned.size === 0 ? '<span class="muted">tok ještě nezačal</span>' : '<span class="muted">nedosaženo, tok skončil dřív</span>';
+    if (!s) return planned.size === 0 ? '<span class="dim">tok ještě nezačal</span>' : '<span class="dim">nedosaženo, tok skončil dřív</span>';
     if (s.status === "SUCCEEDED" && s.result?.payload) return ok(s.result.payload);
-    if (s.status === "FAILED") return `<span class="badge FAILED">FAILED</span> <code>${esc(s.result?.error?.code ?? "")}</code> <small>${esc(s.result?.error?.message ?? "")}</small>`;
-    if (s.status === "WAITING") return `<span class="badge WAITING">WAITING</span> ${esc(s.result?.waitReason ?? "")}`;
-    return `<span class="badge ${esc(s.status)}">${esc(s.status)}</span>`;
+    if (s.status === "FAILED") return `${stateBadge("FAILED")} <code>${esc(s.result?.error?.code ?? "")}</code> <small>${esc(s.result?.error?.message ?? "")}</small>`;
+    if (s.status === "WAITING") return `${stateBadge("WAITING")} ${esc(s.result?.waitReason ?? "")}`;
+    return stateBadge(s.status);
   };
   const rows = [
     [
       "Vstup",
       original
         ? `${original.name ? `<b>${esc(original.name)}</b> · ` : ""}${esc(original.contentType ?? "text/plain")} · ${kb(original.byteLength ?? original.bytes.length)} · od <code>${esc(original.receivedFrom)}</code>${original.location ? ` · <a href="/workflow/${esc(v.workflowId)}/original" target="_blank" rel="noopener">zobrazit originál</a>` : ""}${original.location && stampSucceeded ? ` · <a href="/workflow/${esc(v.workflowId)}/original-stamped" target="_blank" rel="noopener">zobrazit vizuálně orazítkovaný originál</a>` : ""}`
-        : '<span class="muted">žádný</span>',
+        : '<span class="dim">žádný</span>',
     ],
     [
       "Text dokumentu",
       subject
         ? `${derived ? `vytěžen z originálu (<code>${esc(derived.producer)}</code>)` : "vložený text"}, ${subject.bytes.length} znaků<details><summary>zobrazit</summary><pre>${esc(subject.bytes.slice(0, 6000))}${subject.bytes.length > 6000 ? "\n…" : ""}</pre></details>`
-        : '<span class="muted">žádný</span>',
+        : '<span class="dim">žádný</span>',
     ],
     ["Typ dokumentu (classify)", stepCell("document.classify", (p) => `<b>${esc(pick(p, "documentType", "value"))}</b> <small>zdroj ${esc(pick(p, "documentType", "source"))}, jistota ${esc(pick(p, "documentType", "confidence"))}</small>`)],
     ["Validace (validate)", stepCell("document.validate", (p) => `<b>${esc(pick(p, "documentType", "validation", "status"))}</b> <small>${esc(pick(p, "documentType", "validation", "provider"))}, razítko ${pick(p, "stampAllowed") ? "povoleno" : "zamítnuto"}</small>`)],
@@ -1308,26 +1332,26 @@ const renderOutput = (v: InstanceView): string => {
       ),
     ],
     ...(i.workflow === "mail-intake" ? [["Notifikace (email.send)", stepCell("email.send", (p) => `<b>odesláno</b> <small>příjemce <code>${esc(pick(p, "recipientRef"))}</code>, id <code>${esc(pick(p, "smtpMessageId"))}</code></small>`)]] : []),
-    ["Stav toku", `<span class="badge ${esc(i.status)}">${esc(i.status)}</span> <small>${i.status === "SUCCEEDED" ? "všechny kroky proběhly" : i.status === "WAITING" ? `čeká na ${esc(i.waiting?.reason)}` : i.status === "FAILED" ? "tok skončil explicitně, viz kroky níže" : ""}</small>`],
+    ["Stav toku", `${stateBadge(i.status)} <small>${i.status === "SUCCEEDED" ? "všechny kroky proběhly" : i.status === "WAITING" ? `čeká na ${esc(i.waiting?.reason)}` : i.status === "FAILED" ? "tok skončil explicitně, viz kroky níže" : ""}</small>`],
   ];
   const reviewForm =
     i.status === "WAITING" && i.waiting?.reason === "REVIEW" && i.waiting.reviewTaskId
-      ? `<div class="card">
-      <h3>Rozhodnutí (review)</h3>
-      <p class="muted">Úkol <code>${esc(i.waiting.reviewTaskId)}</code> čeká do <code>${esc(i.waiting.deadline)}</code>. Dřív tahle stránka jen zobrazovala, že se čeká — teď jde skutečně rozhodnout.</p>
+      ? `<div class="card" style="margin-top:12px">
+      <h3 style="margin-bottom:6px">Rozhodnutí (review)</h3>
+      <p class="dim">Úkol <code>${esc(i.waiting.reviewTaskId)}</code> čeká do <code>${esc(i.waiting.deadline)}</code>.</p>
       <form method="post" action="/workflow/${esc(v.workflowId)}/review/decide">
         <input type="hidden" name="reviewTaskId" value="${esc(i.waiting.reviewTaskId)}">
-        <label for="correctedType">Opravený typ dokumentu (jen pro „Opravit a zopakovat")</label>
+        <label for="correctedType">Opravený typ dokumentu (jen pro „Opravit a zopakovat“)</label>
         <select id="correctedType" name="correctedType"><option value="">—</option><option>INVOICE</option><option>CONTRACT</option><option>OTHER</option></select>
         <div style="margin-top:.75rem;display:flex;gap:.5rem;flex-wrap:wrap">
-          <button type="submit" name="decision" value="RECLASSIFY">Opravit a zopakovat</button>
-          <button type="submit" name="decision" value="APPROVE" style="background:#166534">Schválit tak, jak je</button>
-          <button type="submit" name="decision" value="REJECT" style="background:#991b1b">Zamítnout (ukončit)</button>
+          <button class="btn" type="submit" name="decision" value="RECLASSIFY">Opravit a zopakovat</button>
+          <button class="btn" type="submit" name="decision" value="APPROVE" style="background:var(--ok);color:#fff">Schválit tak, jak je</button>
+          <button class="btn" type="submit" name="decision" value="REJECT" style="background:var(--crit);color:#fff">Zamítnout (ukončit)</button>
         </div>
       </form>
     </div>`
       : "";
-  return `<h2>Výstup</h2><div class="card"><table>${rows.map(([k, val]) => `<tr><th style="width:14rem">${k}</th><td>${val}</td></tr>`).join("")}</table></div>${reviewForm}`;
+  return `<h2>Výstup</h2><div class="card">${rows.map(([k, val]) => `<div style="display:flex;gap:14px;padding:7px 0;border-bottom:1px solid var(--border-soft)"><div class="dim" style="width:12rem;flex:none;font-weight:650">${k}</div><div>${val}</div></div>`).join("")}</div>${reviewForm}`;
 };
 
 /** Shared by the instance page and /farm's per-instance detail: one row per step, same columns both places. */
@@ -1335,7 +1359,7 @@ const stepsTable = (steps: Instance["steps"]): string =>
   `<table><tr><th>Krok</th><th>Stav</th><th>Pokus / logický</th><th>Výsledek</th></tr>${steps
     .map(
       (s) =>
-        `<tr><td><b>${esc(s.stepId)}</b><br><small>${esc(s.capability)}/v${esc(s.capabilityVersion)}</small></td><td><span class="badge ${esc(s.status)}">${esc(s.status)}</span></td><td>${s.attempt} / ${s.logicalAttempt}<br><small>${esc(s.strategy)}</small></td><td>${fmtResult(s)}</td></tr>`,
+        `<tr><td><b>${esc(s.stepId)}</b><br><small>${esc(s.capability)}/v${esc(s.capabilityVersion)}</small></td><td>${stateBadge(s.status)}</td><td>${s.attempt} / ${s.logicalAttempt}<br><small>${esc(s.strategy)}</small></td><td>${fmtResult(s)}</td></tr>`,
     )
     .join("")}</table>`;
 
@@ -1346,14 +1370,14 @@ export function renderInstance(v: InstanceView): string {
     .join("");
   return shell(
     `${i.workflow} ${v.workflowId}`,
-    `<header><h1>Instance toku <code>${esc(i.workflow)}/v${esc(i.workflowVersion)}</code></h1><span class="badge ${esc(i.status)}">${esc(i.status)}</span></header>
-<div class="card"><small>id <code>${esc(v.workflowId)}</code> · korelace <code>${esc(i.correlationId)}</code> · tenant <code>${esc(i.tenantId)}</code> · aktér <code>${esc(i.actorId)}</code> · založeno ${esc(i.createdAt)} · změněno ${esc(i.updatedAt)} · publikovaný stav <code>${esc(JSON.stringify(i.published))}</code>${i.waiting ? ` · čeká na <code>${esc(i.waiting.reason)}</code> do ${esc(i.waiting.deadline)}` : ""}</small></div>
+    `<div class="doc"><header><h1>Instance toku <code>${esc(i.workflow)}/v${esc(i.workflowVersion)}</code></h1>${stateBadge(i.status)}</header>
+<div class="card" style="margin-bottom:14px"><small class="dim">id <code>${esc(v.workflowId)}</code> · korelace <code>${esc(i.correlationId)}</code> · tenant <code>${esc(i.tenantId)}</code> · aktér <code>${esc(i.actorId)}</code> · založeno ${esc(i.createdAt)} · změněno ${esc(i.updatedAt)}${i.waiting ? ` · čeká na <code>${esc(i.waiting.reason)}</code> do ${esc(i.waiting.deadline)}` : ""}</small></div>
 ${renderOutput(v)}
 <h2>Kroky</h2><div class="card">${stepsTable(i.steps)}
-<small class="muted">Krok, který skončil <code>DEPENDENCY_UNAVAILABLE</code>, narazil na část farmy, která ještě není zapojená; orchestrátor ho zkusil tolikrát, kolik dovoluje definice toku, a pak instanci explicitně ukončil.</small></div>
-<h2>Artefakty</h2>${v.artifacts.map(artifactCard).join("") || '<div class="card muted">žádné</div>'}
+<small class="dim">Krok, který skončil <code>DEPENDENCY_UNAVAILABLE</code>, narazil na část farmy, která ještě není zapojená; orchestrátor ho zkusil tolikrát, kolik dovoluje definice toku, a pak instanci explicitně ukončil.</small></div>
+<h2>Artefakty</h2>${v.artifacts.map(artifactCard).join("") || '<div class="card dim">žádné</div>'}
 <h2>Audit této instance</h2><div class="card"><table><tr><th>Čas</th><th>Druh</th><th>Capability</th><th>Detail</th></tr>${audit}</table></div>
-<nav><a href="/">Nový dokument</a><a href="/workflow/${esc(v.workflowId)}.json">JSON</a><a href="/audit.json">Společný audit (D1)</a></nav>
-<form method="post" action="/workflow/${esc(v.workflowId)}/purge" onsubmit="return confirm('Smazat instanci včetně originálu a derivací? Ve společném auditu zůstane záznam PURGED.')"><input type="hidden" name="reason" value="owner request from instance page"><button type="submit" style="background:#991b1b;margin-top:1.5rem">Smazat instanci (originál, derivace, objekt)</button></form>`,
+<nav><a href="/farm">Nový dokument</a><a href="/workflow/${esc(v.workflowId)}.json">JSON</a><a href="/audit.json">Společný audit (D1)</a></nav>
+<form method="post" action="/workflow/${esc(v.workflowId)}/purge" onsubmit="return confirm('Smazat instanci včetně originálu a derivací? Ve společném auditu zůstane záznam PURGED.')"><input type="hidden" name="reason" value="owner request from instance page"><button class="btn btn-danger" type="submit" style="margin-top:1.5rem">Smazat instanci (originál, derivace, objekt)</button></form></div>`,
   );
 }

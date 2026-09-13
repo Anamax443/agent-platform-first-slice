@@ -2,6 +2,51 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-13 (129) — Průsvitná stáj: kompletní rebuild operátorské stránky (/farm), nahrazuje starý dvoujazyčný UI
+
+Vlastníkovo explicitní rozhodnutí: "počítám s tím, že stránky živé farmy úplně zrušíme a nahradíme
+Průsvitnou stájí na stejnou adresu apf.maxferit.cz. zapomeň, že máme nějaké vzory UI. udělej to
+podle sebe, klidně tam dej i farmáře krávy a tak." Ne evoluční oprava — celý vizuální jazyk psán
+znovu, business logika (Argos/incidenty/audit) zůstala 1:1.
+
+**Co se nezměnilo (schválně):** `computeWatchdog()`, `reconcileIncidents()`, `acknowledgeIncident()`,
+`composeIncidentAlert()`, `effectiveWatchdogLevel()`, `auditClaimContradicts()`,
+`capabilityWatchdogLevel()`, `isAcknowledgedFinding()`, `humanDuration()` — čisté, testované funkce
+(44/54 testů v `tests/page.test.ts` na nich stojí beze změny) zkopírovány beze změny byte-za-byte.
+Všechny exportované typy (`FarmModel`, `CapabilityRow`, `DeployableStatus`, `IncidentRecord`, ...)
+beze změny — `index.ts`'s D1/R2/Durable Object logika (`buildFarmModel()` atd.) se nedotýká.
+Všechny POST cesty (`/intake`, `/farm/inbox`, `/farm/inbox/retry`, `/farm/self-test`,
+`/farm/incidents/acknowledge`, `/workflow/:id/review/decide`, `/workflow/:id/purge`) beze změny —
+nové formuláře postují na stejné URL se stejnými poli. XSS disciplína zachována (`esc()` všude,
+Deník live-terminal skript dál staví DOM přes `textContent`/`createElement`, nikdy `innerHTML` —
+audit `details` může nést text z nedůvěryhodného dokumentu, F2).
+
+**Co je nové:**
+- Vlastní CSS od nuly (`APP_CSS`/`SHELL_CSS`/`DOC_CSS` v `page.ts`) — `bank.ts` (vendorovaný
+  Interface-Par „saas-modern" design systém) a `farm-theme.ts` **smazány**, nic jiného je
+  neimportovalo. Světlý i tmavý režim (`prefers-color-scheme` + `data-theme`), inline SVG favicon
+  (žádný soubor navíc).
+- Nová IA — 7 view (dřív Zadání/Erwin/Argos/Kravičky/Ohrada/Výsledek/Deník) → **Přehled ·
+  Podatelna · Ohrada · Stáj · Argos · Výsledek · Deník**. "Přehled" je nová landing dashboard
+  stránka (watchdog banner + potřebuje pozornost + nedávné operace + Farmářova vlastní karta se
+  self-testem — dřív "Erwin" tab, teď přesunuto sem, protože obsahově bylo tenké a duplicitní).
+  "Stáj" slučuje starý "Kravičky" (worker karty) a Argos's kapabilitní pen-grid (Admission Gate +
+  Argos živý nález + self-test drilldown) do jednoho místa — kravičky a jejich capabilities patří
+  spolu. "Argos" teď je čistě watchdogova vlastní stránka (banner, nálezy, alert-channel
+  zdraví) — bez kapabilitních karet, ty jsou na Stáji.
+- `/` (dřív samostatná plain-form stránka, `renderHome`/`homeModel`) je teď jen redirect na `/farm`
+  — žádná druhá stránka, jeden vstupní bod. Prázdný `/intake` fallback teď používá `renderError()`.
+
+**Testy:** `tests/page.test.ts`'s prvních 13 testů (HTML struktura) přepsáno na novou IA — každé
+podkladové chování zachováno (self-test badge "nikdy"/"naposledy proběhlo", fixture drilldown,
+why/onFailure rozlišení passing/failing, Ohrada filtr, Výsledek statistiky, empty-state), jen nová
+umístění (`view-staj` místo `view-argos` pro kapabilitní karty atd.). 44/54 testů (pure-logic) beze
+změny stále zelené. **392/392 testů celkem, typecheck, arch, farm:check zelené.**
+
+**Vizuální náhled** vygenerován přímo z `renderFarm()` (žádný Cloudflare runtime import, jde volat
+mimo Worker) a poslán vlastníkovi ke kontrole před nasazením — **nenasazeno na `farm-bass443`,
+dokud vlastník neschválí vzhled.**
+
 ## 2026-09-13 (128) — Trusted EvidenceWriter: uzavřen P1-2 z Posudku 15 (kráva nemůže sama tvrdit vlastní tenant/producer/build identitu)
 
 Pokračování Posudku 15 (P1 nálezy) — "up to you" volba dalšího kroku po dohodě sekvenovat práci

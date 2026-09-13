@@ -34,7 +34,6 @@ import {
   reconcileIncidents,
   renderError,
   renderFarm,
-  renderHome,
   renderInstance,
   renderSelfTest,
   type ArgosAlertHealth,
@@ -945,8 +944,6 @@ const contentTypeOf = (name: string, type: string): string => {
 const isText = (contentType: string): boolean =>
   contentType.startsWith("text/") || contentType === "message/rfc822" || contentType === "application/json" || contentType === "application/xml";
 
-const homeModel = (request: Request, env: Env) => ({ installation: INSTALLATION, user: receivedFrom(request), workflows: [...WORKFLOW_NAMES], wired: wiredOf(env), models: modelsOf(env) });
-
 interface IntakeRequest {
   workflow: string;
   tenantId: string;
@@ -1387,7 +1384,9 @@ export default {
       return new Response(obj.body, { headers: { "content-type": "image/png", "cache-control": "public, max-age=31536000, immutable" } });
     }
 
-    if (url.pathname === "/" && request.method === "GET") return html(renderHome(homeModel(request, env)));
+    // Rebuild 13. 9. 2026 (vlastníkovo rozhodnutí, "nahradíme na stejnou adresu"): / je teď jen redirect na
+    // Průsvitnou stáj, žádná samostatná plain-form stránka.
+    if (url.pathname === "/" && request.method === "GET") return Response.redirect(new URL("/farm", url).toString(), 302);
 
     if (url.pathname === "/intake" && request.method === "POST") {
       const form = await request.formData();
@@ -1405,7 +1404,7 @@ export default {
         content = isText(contentType) ? { kind: "text", bytes: await file.text(), contentType } : { kind: "binary", buf: await file.arrayBuffer(), name: file.name, contentType };
       } else {
         const text = String(form.get("text") ?? "");
-        if (!text.trim()) return html(renderHome(homeModel(request, env)), 400);
+        if (!text.trim()) return html(renderError("Prázdný požadavek", "Nahraj soubor, nebo vlož text — obojí bylo prázdné."), 400);
         content = { kind: "text", bytes: text, contentType: "text/plain" };
       }
 
