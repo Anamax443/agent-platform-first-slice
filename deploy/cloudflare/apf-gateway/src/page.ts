@@ -173,32 +173,29 @@ const FAVICON =
 
 const APP_CSS = String.raw`
 :root{
+  /* Dark green, unconditionally default (owner's explicit request 13. 9. 2026: apf.maxferit.cz — the
+     real thing — should look like ai-farma-web's dark demo, not follow prefers-color-scheme into a
+     light shell nobody asked for). Palette lifted straight from deploy/cloudflare/ai-farma-web/styles.css
+     so the two stay visually one family. Light stays reachable at [data-theme="light"] below, dormant
+     until something actually sets that attribute (no toggle wired yet). */
+  --bg:#07110e; --panel:#0c1814; --panel-2:#102019; --chrome:#0a1712; --border:#20392f; --border-soft:#17251e;
+  --text:#edf7f1; --dim:#8fa79d; --faint:#5b7267;
+  --accent:#45d483; --accent-fg:#06120d; --accent-soft:#132a1f;
+  --ok:#45d483; --ok-soft:#123321; --warn:#f0bd4f; --warn-soft:#332809; --crit:#ff6b6b; --crit-soft:#2b1515;
+  --shadow:0 1px 2px rgba(0,0,0,.35), 0 1px 10px rgba(0,0,0,.3);
+  --radius:10px; --radius-lg:16px;
+  --font:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif;
+  --font-head:"Iowan Old Style","Palatino Linotype",Georgia,serif;
+  --font-mono:"Cascadia Mono","Consolas",ui-monospace,monospace;
+  color-scheme:dark;
+}
+:root[data-theme="light"]{
   --bg:#f7f4ec; --panel:#fffdf8; --panel-2:#fbf6ea; --chrome:#f0e9d6; --border:#e2d6b8; --border-soft:#ece3c9;
   --text:#26210f; --dim:#75694a; --faint:#a89a72;
   --accent:#a8551f; --accent-fg:#fff8ea; --accent-soft:#f3e0c9;
   --ok:#2f7a3d; --ok-soft:#e3f1e0; --warn:#a06a00; --warn-soft:#f7ecd2; --crit:#b23a2e; --crit-soft:#fbe4df;
   --shadow:0 1px 2px rgba(38,33,15,.06), 0 1px 8px rgba(38,33,15,.05);
-  --radius:10px; --radius-lg:16px;
-  --font:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif;
-  --font-head:"Iowan Old Style","Palatino Linotype",Georgia,serif;
-  --font-mono:"Cascadia Mono","Consolas",ui-monospace,monospace;
   color-scheme:light;
-}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
-  --bg:#181510; --panel:#1f1b14; --panel-2:#24201795; --chrome:#171310; --border:#3a3220; --border-soft:#2a2418;
-  --text:#f1ead6; --dim:#b8a97e; --faint:#7c6f4d;
-  --accent:#e0925a; --accent-fg:#1c1710; --accent-soft:#3a2a17;
-  --ok:#6ec17c; --ok-soft:#1e2f1f; --warn:#e0ac47; --warn-soft:#332809; --crit:#e5776a; --crit-soft:#3a1e19;
-  --shadow:0 1px 2px rgba(0,0,0,.35), 0 1px 10px rgba(0,0,0,.3);
-  color-scheme:dark;
-}}
-:root[data-theme="dark"]{
-  --bg:#181510; --panel:#1f1b14; --panel-2:#24201795; --chrome:#171310; --border:#3a3220; --border-soft:#2a2418;
-  --text:#f1ead6; --dim:#b8a97e; --faint:#7c6f4d;
-  --accent:#e0925a; --accent-fg:#1c1710; --accent-soft:#3a2a17;
-  --ok:#6ec17c; --ok-soft:#1e2f1f; --warn:#e0ac47; --warn-soft:#332809; --crit:#e5776a; --crit-soft:#3a1e19;
-  --shadow:0 1px 2px rgba(0,0,0,.35), 0 1px 10px rgba(0,0,0,.3);
-  color-scheme:dark;
 }
 *{box-sizing:border-box}
 html,body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 var(--font)}
@@ -368,19 +365,22 @@ const ICONS = {
 const MASCOT_SVG = {
   krava: `<ellipse cx="10" cy="17" rx="6.5" ry="4.5" fill="#e8dcc0" transform="rotate(-30 10 17)"/><ellipse cx="38" cy="17" rx="6.5" ry="4.5" fill="#e8dcc0" transform="rotate(30 38 17)"/><rect x="8" y="14" width="32" height="27" rx="13.5" fill="#fff8ea"/><ellipse cx="14.5" cy="23" rx="4.2" ry="3.2" fill="#a8551f" opacity=".5"/><ellipse cx="34.5" cy="31" rx="5.2" ry="3.6" fill="#a8551f" opacity=".5"/><rect x="12.5" y="29" width="23" height="11.5" rx="5.75" fill="#fbeede"/><circle cx="19" cy="35" r="1.5" fill="#8a5a26"/><circle cx="29" cy="35" r="1.5" fill="#8a5a26"/><circle cx="16.5" cy="22" r="2.4" fill="#2c2415"/><circle cx="31.5" cy="22" r="2.4" fill="#2c2415"/><circle cx="17.3" cy="21.1" r=".8" fill="#fff"/><circle cx="32.3" cy="21.1" r=".8" fill="#fff"/><path d="M20 38c2 1.7 6 1.7 8 0" stroke="#8a5a26" stroke-width="1.6" fill="none" stroke-linecap="round"/>`,
   argos: `<path d="M10 21 L5 5 L19 15 Z" fill="#8a4a1c"/><path d="M38 21 L43 5 L29 15 Z" fill="#8a4a1c"/><circle cx="24" cy="25" r="15.5" fill="#c17f2b"/><ellipse cx="24" cy="31" rx="9.5" ry="7.5" fill="#fff8ea"/><ellipse cx="24" cy="30" rx="2.8" ry="2.1" fill="#2c2415"/><circle cx="17" cy="22" r="2.5" fill="#2c2415"/><circle cx="31" cy="22" r="2.5" fill="#2c2415"/><circle cx="17.8" cy="21.1" r=".8" fill="#fff"/><circle cx="31.8" cy="21.1" r=".8" fill="#fff"/><path d="M19.5 34.5c1.8 1.5 7.2 1.5 9 0" stroke="#2c2415" stroke-width="1.4" fill="none" stroke-linecap="round"/>`,
-  farmar: `<ellipse cx="24" cy="19" rx="21" ry="5.2" fill="#6b4a26"/><path d="M13 19c0-7.5 22-7.5 22 0Z" fill="#8a5f32"/><circle cx="24" cy="30" r="12.5" fill="#fff3e2"/><circle cx="18.5" cy="29" r="1.9" fill="#2c2415"/><circle cx="29.5" cy="29" r="1.9" fill="#2c2415"/><path d="M17.5 34c2.2-1.6 4.3-1.6 6.5 0c2.2-1.6 4.3-1.6 6.5 0" stroke="#6b4a26" stroke-width="2.1" fill="none" stroke-linecap="round"/><path d="M19 37c2.6 2.3 7.4 2.3 10 0" stroke="#8a5a26" stroke-width="1.6" fill="none" stroke-linecap="round"/>`,
+  farmar: `<ellipse cx="24" cy="19" rx="21" ry="5.2" fill="#6b4a26"/><path d="M13 19c0-7.5 22-7.5 22 0Z" fill="#8a5f32"/><circle cx="24" cy="30" r="12.5" fill="#fff3e2" stroke="#c9a06b" stroke-width="1.3"/><circle cx="18.5" cy="29" r="1.9" fill="#2c2415"/><circle cx="29.5" cy="29" r="1.9" fill="#2c2415"/><path d="M17.5 34c2.2-1.6 4.3-1.6 6.5 0c2.2-1.6 4.3-1.6 6.5 0" stroke="#6b4a26" stroke-width="2.1" fill="none" stroke-linecap="round"/><path d="M19 37c2.6 2.3 7.4 2.3 10 0" stroke="#8a5a26" stroke-width="1.6" fill="none" stroke-linecap="round"/>`,
 };
 /** Wraps a MASCOT_SVG in a colored round badge — `size` "lg" for page headers, default small for the nav rail. */
 const mascot = (which: keyof typeof MASCOT_SVG, bg: string, size: "lg" | "sm" = "sm"): string =>
   `<span class="mascot mascot-${size}" style="background:${bg}"><svg viewBox="0 0 48 48" aria-hidden="true">${MASCOT_SVG[which]}</svg></span>`;
+// Dark, per-section-tinted badge backgrounds (owner's 13. 9. 2026 "dark demo as default" request) —
+// darkened versions of the old light tones, same hue families, so the mascot faces (light cream/white
+// fills) read with even more contrast than they did on the old light badges, not less.
 const MASCOT_BG: Record<"prehled" | "podatelna" | "ohrada" | "staj" | "argos" | "vysledek" | "denik", string> = {
-  prehled: "#f3e0c9",
-  podatelna: "#e3e8d8",
-  ohrada: "#e6ded0",
-  staj: "#fbeede",
-  argos: "#f3d9c2",
-  vysledek: "#dcead9",
-  denik: "#dfe3ee",
+  prehled: "#2a2015",
+  podatelna: "#16241c",
+  ohrada: "#241f18",
+  staj: "#1c2a1e",
+  argos: "#2a2116",
+  vysledek: "#16241a",
+  denik: "#1a2028",
 };
 /** Same round-badge treatment as mascot(), for the sections with no animal face of their own (Ohrada/
  * Výsledek/Deník/Podatelna) — a plain line icon() in a colored circle, so the whole nav rail reads as

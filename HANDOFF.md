@@ -2,6 +2,42 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-13 (138) — apf-gateway: tmavá zelená paleta jako výchozí (ne prefers-color-scheme)
+
+HANDOFF (137)'s barevná oprava kníru nestačila — vlastník po screenshotu z živého
+`apf.maxferit.cz` (světlé téma, protože prohlížeč/OS mělo světlé `prefers-color-scheme`):
+"ja ty světly stranky nechcu!!!!!! ja chtěl by bylo jako demo" — chtěl přesně vzhled
+`ai-farma-web` dema (tmavá zelená), ne jakékoli tmavé téma, a ne podmíněné systémovým
+nastavením.
+
+**Root cause:** `APP_CSS`'s `:root{}` nesl **světlou** paletu jako výchozí; tmavá (jiná, hnědo-
+jantarová, ne zelená) paleta se aktivovala jen přes `@media (prefers-color-scheme: dark)` — bez
+manuálního přepínače (žádný `data-theme` toggle nikde v kódu) byl vzhled zcela na libovůli
+prohlížeče/OS uživatele, kdo se zrovna dívá.
+
+**Oprava:**
+- `:root{}` teď nese tmavou zelenou paletu **1:1 podle `deploy/cloudflare/ai-farma-web/styles.css`**
+  (`--bg:#07110e`, `--panel:#0c1814`, `--accent`/`--ok:#45d483`, `--crit:#ff6b6b` atd.) — vždy
+  výchozí, bez ohledu na systémové nastavení.
+- Stará světlá paleta přesunuta pod `:root[data-theme="light"]` — zachovaná pro budoucí přepínač
+  (zatím nikde nenastavovaný), ne smazaná.
+- `@media (prefers-color-scheme: dark)` blok smazán — redundantní, když je tmavá už výchozí.
+- `MASCOT_BG` (7 barev odznaků maskotů) přebarveno na tmavé, sekčně tónované varianty — světlé
+  tváře maskotů (kráva/pes/farmář) teď mají mnohem silnější kontrast než na starém světlém pozadí,
+  ne slabší. Farmářova tvář z HANDOFF (137) tím dostala definitivní opravu "zadarmo".
+
+**Ověřeno vizuálně před nasazením** — `renderFarm()` je volatelný mimo Worker runtime (žádný
+Cloudflare-specific import), takže šlo vyrenderovat reálný HTML výstup s testovacím `FarmModel`
+(dočasný test, smazaný po použití) a screenshotovat ho Playwrightem lokálně, ne hádat na živém
+Access-chráněném webu naslepo. 419/419 testů, typecheck, arch, farm:check zelené. Nasazeno jen
+`apf-gateway` (přímo přes vygenerovaný config).
+
+**Vedlejší nález, nezaložen k opravě teď:** `Stáj`'s "Návrh — zatím nepostaveno" sekce pořád
+tvrdí `cz.company.verify`/`cz.vat.verify` jako "NÁVRH" (nepostaveno) — HANDOFF (132)/(136) je
+ale postavily. Tenhle konkrétní seznam v `page.ts` je zřejmě ručně psaný, ne odvozený z
+`docs/cow-catalog.json`; drift, který si zaslouží samostatnou opravu, ne mixnout do tohohle
+tématového nasazení.
+
 ## 2026-09-13 (137) — Farmář maskot: obličej splýval s pozadím odznaku ("nějakej starej ksicht")
 
 Vlastník na živém `apf.maxferit.cz` (po HANDOFF 133 nasazení): "nějakej starej ksicht" u
