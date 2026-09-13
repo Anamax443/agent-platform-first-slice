@@ -143,6 +143,12 @@ export function generateFarmConfigs(installation, root = repoRoot) {
     // Paths in a wrangler config are relative to the config file; the generated file lives elsewhere than the source.
     delete merged.$schema;
     if (typeof base.main === "string") merged.main = relFrom(targetDir, join(dirname(baseFile), base.main));
+    // Same reasoning as `main`: assets.directory is relative to the config file, and the generated file lives
+    // elsewhere than the source (bit us for real on ai-farma-web, HANDOFF — "." resolved to the generated dir,
+    // an ~empty directory, instead of deploy/cloudflare/<d>/, silently shipping an empty asset bundle).
+    if (merged.assets && typeof merged.assets.directory === "string") {
+      merged.assets = { ...merged.assets, directory: relFrom(targetDir, join(dirname(baseFile), merged.assets.directory)) };
+    }
     const target = join(targetDir, "wrangler.jsonc");
     writeFileSync(target, `${JSON.stringify(merged, null, 2)}\n`);
     written.push(target);

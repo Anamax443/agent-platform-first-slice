@@ -2,6 +2,35 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-13 (134) — incident: farm-deploy.mjs shipl prázdný ai-farma-web (404), opraveno do 10 minut
+
+Vlastníkovo hlášení "hamburger je divnej" vedlo k dohledání, že `ai-farma-web` po HANDOFF (133)
+nasazení vracelo **404** na `/` i `/app.js` — žádný hamburger nebylo vidět, protože se nenačetla
+vůbec žádná stránka.
+
+**Root cause:** `scripts/farm-config.mjs`'s `generateFarmConfigs()` přepočítávala `main` na cestu
+relativní k vygenerovanému configu (`.wrangler/generated/<instalace>/<deployable>/`), ale
+**`assets.directory` ne** — `ai-farma-web/wrangler.jsonc`'s `"assets":{"directory":"."}` se tak po
+vygenerování vyhodnotil jako "tenhle (skoro prázdný) generovaný adresář", ne
+`deploy/cloudflare/ai-farma-web/`. `ai-farma-web` sám dokumentuje, že jde nasazovat "přímo
+`wrangler deploy` z tohoto adresáře, ne přes farm-config.mjs/farm-deploy.mjs" — ale `deployables()`
+ho stejně bere (auto-discovery každého `deploy/cloudflare/*/wrangler.jsonc`, žádný exclude), takže
+dnešní `farm-deploy.mjs farm-bass443` (HANDOFF 133, kvůli apf-gateway) ho vzal s sebou a tiše
+rozbil — dry-run to neodhalil (`wrangler deploy --dry-run` nekontroluje počet reálně přečtených
+souborů, jen že build projde).
+
+**Oprava:** `farm-config.mjs:145-149` — `assets.directory` teď prochází stejným `relFrom()`
+přepočtem jako `main`. Ověřeno přímo (`wrangler deploy -c <generated config> --dry-run`): "Read 9
+files" místo ticha/1 souboru. `ai-farma-web` samotný **znovu nasazen přímým `wrangler deploy`**
+(oprava breakage, ne test opravy generátoru) — `/` a `/app.js` zpět na `200`. 405/405 testů,
+typecheck, arch, farm:check zelené.
+
+**Nevyřešeno, otevřené:** `ai-farma-web` by podle vlastní dokumentace neměl procházet
+`farm-config.mjs`/`farm-deploy.mjs` vůbec — `deployables()` nemá exclude mechanismus, takže se tam
+dostane pokaždé, jen teď už bezpečně (config je správný, i když ho nikdo nepoužívá k reálnému
+nasazení). Rozhodnutí, jestli přidat explicitní exclude, nebo nechat jak je (teď už neškodné),
+čeká na vlastníka.
+
 ## 2026-09-13 (133) — Průsvitná stáj (HANDOFF 129) nasazena na farm-bass443 — vlastník schválil vzhled
 
 Vlastník schválil vizuální náhled z HANDOFF (129) a požádal o nasazení ("stránky by měly nahradit
