@@ -2,6 +2,46 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-13 (130) — deploy/cloudflare/ai-farma-web: zákaznický marketing web nahrazen interaktivním demem Human Control Plane
+
+Vlastník donesl statický HTML/CSS/JS prototyp (mimo repo) s dotazem "tak by to mohlo vypadat, co?" —
+po review a dvou drobných CSS opravách (Podatelna karty se překrývaly s patičkou, Průsvitná stáj
+přetékala na 1440px) padlo rozhodnutí "chci z toho udělat webovky": nahradit celý obsah
+`deploy/cloudflare/ai-farma-web` (dřív `index/kravy/cenik/kontakt/o-nas/bezpecnost/multitenant/
+reference.html` + `scripts/build-cow-catalog.mjs` generující katalog z `docs/cow-catalog.json`) tímhle
+demem. Starý obsah i COW-katalog codegen **smazány** — vlastníkovo explicitní "smazat všechno, dashboard
+je nový celý web", ne evoluce vedle sebe.
+
+**Kolize objevená za běhu:** stejný den vznikl HANDOFF (129) — kompletní rebuild skutečné operátorské
+stránky `apf-gateway` (`/farm`, `page.ts`) na IA Přehled/Podatelna/Ohrada/Stáj/Argos/Výsledek/Deník
+(brand "Průsvitná stáj"), **zatím nenasazeno, čeká na vlastníkovo schválení vzhledu**. Prototyp měl jinou,
+starší IA (Operace/Review/Krávy/Office/Audit/Nastavení). Na vlastníkovo rozhodnutí sekce demo
+přejmenovány/sloučeny podle dnešní reálné IA, aby veřejné demo nepůsobilo jako jiná vize:
+- Review → **Ohrada** (stejná karta FV-2026-1847/bank account, jen název a lede podle `page.ts:964-969`)
+- Krávy + Průsvitná stáj (animovaný běh) → **Stáj** (COW registry karty + živá ukázka krokování na jedné
+  stránce, přesně jak to `page.ts:971-983` popisuje — "seskupeno po modulu jako Ohrada")
+- Operace → **Výsledek**, Audit & Evidence → **Deník** (+ statický `.log` blok navíc, nod k reálnému
+  "živý terminál")
+- Argos beze změny (label i obsah se už shodovaly)
+- **Nastavení smazáno** (v reálné IA není)
+- **Office zachováno** navzdory tomu, že v dnešním apf-gateway rebuildu není — vlastníkovo explicitní
+  "potřebujeme Office kde budeme přidělovat tokeny a přeřazovat e-mailové adresy tenantům". Dostal
+  vlastní nav skupinu "Správa · plán" a badge "PLÁN" v nadpisu, plus nové tabulky Tokeny a E-mailové
+  aliasy (dřív měl jen Tenanty/Identity/Konektory) — čitelně oddělené od těch 7 reálných view, ne
+  vydávané za totéž.
+
+`wrangler.jsonc` (jen komentář, `name`/`assets` beze změny — stejný Worker, stejná URL) a `README.md`
+přepsány pro nový obsah; `.assetsignore` beze změny. `docs/cow-catalog.json` samotný nesmazán (pořád
+zdroj pravdy pro platformu, jen tenhle web už ho nekonzumuje).
+
+**Ověřeno vizuálně** (Playwright screenshoty, 1440px i 390px, `python -m http.server` lokálně) —
+navigace, sloučená Stáj animace (`#staj` selektory v `runStep`/`clearActive`/`resetRun` přejmenovány
+z `#barn`), mobilní horizontálně scrollovatelná spodní lišta (8 položek), bez console erroru. Čistě
+statické demo — žádná vazba na živou farmu, žádná reálná tenant data. `npm run typecheck`/`test`
+(392/392)/`arch`/`farm:check` zelené (tyhle soubory nejsou v `tsconfig` scope, ale gate se spustil
+celý). **Nenasazeno na `farm-bass443`** — čeká na vlastníkovo poslední ano k `wrangler deploy` a
+`git push`.
+
 ## 2026-09-13 (129) — Průsvitná stáj: kompletní rebuild operátorské stránky (/farm), nahrazuje starý dvoujazyčný UI
 
 Vlastníkovo explicitní rozhodnutí: "počítám s tím, že stránky živé farmy úplně zrušíme a nahradíme
