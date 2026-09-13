@@ -1,0 +1,61 @@
+[
+  {
+    "id": "canonical-found-active",
+    "kind": "canonical",
+    "description": "IČO exists in ARES and the base (RES) registry marks it active.",
+    "why": "Základní kladný případ — existující, aktivní subjekt musí projít jako found+active, jinak celý downstream (ACCOUNT_VERIFICATION, Vendor lookup) staví na chybném signálu.",
+    "onFailure": "Aktivní subjekt se nehlásí jako found:true/active:true — prověřit mapování seznamRegistraci.stavZdrojeRes na active.",
+    "payload": { "ico": "27074358" }
+  },
+  {
+    "id": "canonical-found-ceased",
+    "kind": "canonical",
+    "description": "IČO exists but datumZaniku is set — SEVERKA: 'existuje' and 'active' are independent signals.",
+    "why": "Zaniklý subjekt pořád \"existuje\" v ARES (found:true), ale nesmí se tvářit jako aktivní — datumZaniku je nezávislý signál, ne alias pro not-found.",
+    "onFailure": "Zaniklý subjekt se hlásí jako active:true, nebo naopak found:false — obojí je špatně, jsou to dva nezávislé bity.",
+    "payload": { "ico": "87654321" }
+  },
+  {
+    "id": "boundary-not-found",
+    "kind": "boundary",
+    "description": "IČO does not exist in ARES (VYSTUP_SUBJEKT_NENALEZEN) — a business result, not an error (SEVERKA, same pattern as document.classify's OTHER).",
+    "why": "Neexistující IČO je business výsledek, ne technická chyba — volající (např. Dojička) musí umět rozlišit \"neexistuje\" od \"ARES nedostupné\", jinak by DENY a RETRY splynuly.",
+    "onFailure": "Neexistující IČO vrací FAILED místo SUCCEEDED found:false — prověřit, jestli se AresSubjectNotFound omylem propaguje jako chyba.",
+    "payload": { "ico": "00000019" }
+  },
+  {
+    "id": "injection-non-numeric-ico",
+    "kind": "injection",
+    "description": "A non-8-digit-numeric string never reaches the handler or ARES — closed by the input schema enum/pattern.",
+    "why": "IČO má uzavřený tvar (8 číslic) — cokoli jiného (injection pokus, cizí formát) se musí zastavit na schema hranici, dřív než by to vůbec šlo na ARES jako HTTP dotaz.",
+    "onFailure": "Neplatný tvar IČO prošel až k handleru/adaptéru — schema validace na routeru neběží, nebo je pattern moc volný.",
+    "payload": { "ico": "12345678; DROP TABLE" }
+  },
+  {
+    "id": "error-ares-timeout",
+    "kind": "error",
+    "description": "ARES adapter times out — DEPENDENCY_TIMEOUT, not a validation failure.",
+    "why": "Timeout je infrastrukturní stav (DEPENDENCY_TIMEOUT), ne obchodní zamítnutí — volající podle toho ví, že má smysl to zkusit znovu.",
+    "onFailure": "Timeout se vrací jako jiná chyba než DEPENDENCY_TIMEOUT — volající by nevěděl, že retry dává smysl.",
+    "adapters": { "ares": "timeout" },
+    "payload": { "ico": "27074358" }
+  },
+  {
+    "id": "error-ares-unavailable",
+    "kind": "error",
+    "description": "ARES adapter unreachable/5xx — DEPENDENCY_UNAVAILABLE.",
+    "why": "Nedostupnost ARES je stejná rodina chyb jako timeout (DEPENDENCY_UNAVAILABLE) — capabilita nesmí tvrdit, že IČO neexistuje, jen proto že se nedovolala.",
+    "onFailure": "Nedostupnost ARES se vrátila jako found:false místo DEPENDENCY_UNAVAILABLE — prověřit, že unavailable a not-found nejsou zaměněné.",
+    "adapters": { "ares": "unavailable" },
+    "payload": { "ico": "27074358" }
+  },
+  {
+    "id": "error-ares-malformed",
+    "kind": "error",
+    "description": "ARES returns a schema-valid-looking but semantically broken body (INT-FAIL-004a-style range violation).",
+    "why": "Odpověď ARES je nedůvěryhodná data jako u kterékoli jiné integrace — handler musí odmítnout tvar, který neodpovídá očekávanému kontraktu, ne ho slepě přeposlat dál.",
+    "onFailure": "Poškozená odpověď ARES prošla jako platný výsledek — prověřit kontrolu tvaru záznamu v handleru.",
+    "adapters": { "ares": "nonsense" },
+    "payload": { "ico": "27074358" }
+  }
+]

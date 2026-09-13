@@ -1,0 +1,9 @@
+{
+  "$id": "cz.company.verify.input.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ico"],
+  "properties": {
+    "ico": { "type": "string", "pattern": "^[0-9]{8}$", "description": "IČO, pevných 8 číslic (shoduje se s invoice.extract's companyId)." }
+  }
+}

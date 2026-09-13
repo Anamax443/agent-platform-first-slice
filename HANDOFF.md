@@ -2,6 +2,42 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-13 (132) — cz.company.verify postaveno (ARES), první krok z HANDOFF 131's "ručně napřed"
+
+Vlastník zvolil (po diskuzi o "Kráva z GUI", HANDOFF 131) postavit `cz.company.verify`/
+`cz.vat.verify` ručně podle dnešního postupu dřív, než se staví meta-nástroj. Tohle je první z
+dvou — deterministický, žádné AI (SEVERKA), přesně na vzoru `document-validator`/`RegistryAdapter`.
+
+**Nové:**
+- `src/adapters/ares.ts` — `AresAdapter`/`FakeAresAdapter`/`HttpAresAdapter`. Chování ověřeno přímo
+  proti skutečnému `https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/ekonomicke-subjekty/{ico}`
+  13. 9. 2026 (curl, ne z dokumentace): 200 tvar (`ico`/`obchodniJmeno`/`datumZaniku` chybí když
+  aktivní/`seznamRegistraci.stavZdrojeRes`), 404 `VYSTUP_SUBJEKT_NENALEZEN`, 400
+  `VSTUP_NEVALIDNI_FORMAT_ICO`. `HttpAresAdapter` **nemá zabudovaný `baseUrl`** — narazil jsem na
+  `ARCH-DEP-001`'s hostname lint (žádný veřejný hostname literál v `src/**`), takže reálný
+  `ares.gov.cz` je instalační hodnota, dosud nikde nedosazená.
+- `src/components/cz-company-verify/{descriptor,input.schema,output.schema,handler}` — `found`/
+  `active` nezávislé bity, `VYSTUP_SUBJEKT_NENALEZEN` = `SUCCEEDED found:false` (business, ne
+  error — SEVERKA's `OTHER`-vzor), `riskClass: LOW`, `requiredScopes: ["cz.company.verify"]`.
+- `src/slice.ts` — `ares` adapter + `router.register()`, stejný vzor jako `document.validate`.
+- `config/{local-fakes,farm-bass443}/{profile.json,policy/cz.company.verify.v1.policy.json,
+  lifecycle.json}` — capabilita v obou instalacích (jinak `router.register()`'s fail-closed
+  `policyFor()`/`LifecycleRegistry`'s mandatorní allow-list by `farm-bass443`'s `farm:check`
+  dry-run shodil). **Není to nasazení** — jen build-time config, žádný `wrangler deploy` neproběhl.
+- `tests/harness/{suite.ts,conformance.ts}` — `AdapterModes.ares`, `FakeAresAdapter` do
+  `sliceOptionsFor()`. `tests/ctr.test.ts`'s `COMPONENTS` mapa — nová capabilita se jinak vůbec
+  neběží (conformance runner není auto-discovery, čte jen tenhle pevný seznam).
+- `conformance/cz.company.verify/` — 7 fixtures (2 canonical, 1 boundary, 1 injection, 3 error).
+- `docs/cow-catalog.json` — `vat-ares` (status `plan`, obě capability pohromadě) rozdělen na
+  `cz-company-verify` (`live`) a `cz-vat-verify` (zůstává `plan`) — jeden `id` nesmí tvrdit hotovost
+  za dvě capability, když je hotová jen jedna.
+
+**405/405 testů (392+13), typecheck, arch, farm:check zelené** (obě instalace). **Zatím nezapojeno
+do žádného workflow ani do skutečného `HttpAresAdapter`/produkčního `baseUrl`** — Router capabilitu
+umí dispatchnout, nic ji zatím nevolá. Nenasazeno nikam. Další: `cz.vat.verify` (SOAP/XML, dávka,
+rate limity — SEVERKA `## Připravované doménové COW`), pak vlastníkovo rozhodnutí o zapojení do
+reálného workflow a o meta-nástroji (HANDOFF 131).
+
 ## 2026-09-13 (131) — SEVERKA: "Kráva z GUI" (no-code onboarding) — rozhodnutí zapsáno, nic implementováno
 
 Vlastník chce zakládat nové krávy z webového GUI, ne ručně v kódu: dodá jen kód volání ven

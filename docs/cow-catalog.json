@@ -22,14 +22,26 @@
     "capabilities": ["mail.ingest", "email.send"]
   },
   {
-    "id": "vat-ares",
+    "id": "cz-company-verify",
     "emoji": "🐂",
     "icon": "🏛️",
     "tag": "CZ Registry",
-    "title": "VAT / ARES COW",
-    "description": "Deterministické ověření IČO, DIČ, plátcovství a účtů proti externím registrům.",
+    "title": "ARES COW",
+    "description": "Deterministické ověření existence a aktivity IČO proti ARES (Registr ekonomických subjektů).",
+    "status": "live",
+    "modules": ["cz-company-verify"],
+    "capabilities": ["cz.company.verify"],
+    "note": "Postaveno 13. 9. 2026 (HANDOFF 132). Zatím nezapojeno do žádného workflow ani do skutečného HttpAresAdapter volání — Router ho umí dispatchnout, nic ho zatím nevolá."
+  },
+  {
+    "id": "cz-vat-verify",
+    "emoji": "🐃",
+    "icon": "💶",
+    "tag": "CZ Registry",
+    "title": "VAT COW",
+    "description": "Deterministické ověření plátcovství DPH a zveřejněných bankovních účtů proti Finanční správě.",
     "status": "plan",
-    "note": "docs/NAVRHOVY-LIST-farma.md, krok 8b — cz.company.verify, cz.vat.verify. Žádný kód zatím."
+    "note": "docs/NAVRHOVY-LIST-farma.md, krok 8b. API zdroj ověřen (MOJE daně SOAP), žádný kód zatím."
   },
   {
     "id": "invoice-extraction",

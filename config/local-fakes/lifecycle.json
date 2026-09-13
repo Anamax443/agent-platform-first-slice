@@ -4,5 +4,6 @@
   "document-executor-host": "ACTIVE",
   "email-executor": "ACTIVE",
   "mail-ingest": "ACTIVE",
-  "invoice-extractor": "ACTIVE"
+  "invoice-extractor": "ACTIVE",
+  "cz-company-verify": "ACTIVE"
 }

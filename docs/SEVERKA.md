@@ -153,7 +153,8 @@ agent, co dělá všechno:
   (HANDOFF 109) — pole podle VC §5: `companyId`, `bankAccount`, `totalWithVat`, `invoiceNumber`;
   DIČ/měna/položky vědomě mimo rozsah v1.
 - **`cz.company.verify`** (deterministický, žádné AI) — IČO a základní údaje proti ARES.
-  API zdroj ověřen 11. 9. 2026: `EkonomickeSubjektySluzba` (`GET
+  **Postaveno 13. 9. 2026, viz `## Pořadí` bod 5 níže pro detail.** API zdroj ověřen 11. 9. 2026:
+  `EkonomickeSubjektySluzba` (`GET
   https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/ekonomicke-subjekty/{ico}`) — bezplatné,
   oficiální (MF ČR). `Ico_T` je pevných 8 číslic, shoduje se s `invoice.extract`'s `companyId`
   validací beze změny. Klíčová pole: 404/`VYSTUP_SUBJEKT_NENALEZEN` = IČO neexistuje (business
@@ -850,7 +851,17 @@ nepřeřazoval** — zapsány zvlášť pod čarou, ne zapomenuté.
    sémantice (pouští provoz se sníženou důvěrou, nebo taky fail-closed jako `QUARANTINED`?),
    ne na dnešní rozhodnutí.
 5. **`cz.company.verify`** — API zdroj ověřen 11. 9. 2026 (ARES, bezplatné, viz
-   `## Připravované doménové COW` výše), zatím nepostaveno.
+   `## Připravované doménové COW` výše). **Postaveno 13. 9. 2026** (HANDOFF 132):
+   `src/components/cz-company-verify/handler.ts` + `src/adapters/ares.ts` (`AresAdapter`, fake +
+   `HttpAresAdapter` bez zabudovaného hostname — ARCH-DEP-001, real `baseUrl` je instalační
+   hodnota, dosud nikde nedosazená). `found`/`active` jsou záměrně nezávislé bity (`datumZaniku`
+   ≠ not-found — SEVERKA vzor "existuje, i když zaniklo"), `VYSTUP_SUBJEKT_NENALEZEN` je business
+   `SUCCEEDED found:false`, ne `FAILED` (stejný vzor jako `document.classify`'s `OTHER`).
+   `conformance/cz.company.verify/`, 7 fixtures, `tests/ctr.test.ts`'s `COMPONENTS` mapa. 405/405
+   testů, typecheck, arch, farm:check zelené (oba installations, `farm-bass443` i `local-fakes`).
+   **Zatím nezapojeno do žádného workflow ani do skutečného `HttpAresAdapter` volání** — Router ho
+   umí dispatchnout, nic ho zatím nevolá; produkční `baseUrl`/`HttpAresAdapter` wiring do
+   `apf-gateway` a nasazení jsou samostatný, pozdější krok, čeká na vlastníkovo rozhodnutí.
 6. **`cz.vat.verify`** — API zdroj ověřen 11. 9. 2026 (MOJE daně SOAP, bezplatné, zveřejněné účty
    = zdroj pro Import Gate ACCOUNT_VERIFICATION), zatím nepostaveno.
 7. **`bc.vendors`** — vnitřní protějšek k `cz.company.verify` (existující Vendor No. v BC, ne jen

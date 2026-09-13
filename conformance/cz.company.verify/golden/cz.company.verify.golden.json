@@ -1,0 +1,31 @@
+{
+  "canonical-found-active": {
+    "status": "SUCCEEDED",
+    "payload": { "ico": "27074358", "found": true, "active": true, "companyName": "Testovací Aktivní s.r.o.", "ceasedOn": null },
+    "provenance": { "producerComponent": "cz-company-verify" }
+  },
+  "canonical-found-ceased": {
+    "status": "SUCCEEDED",
+    "payload": { "ico": "87654321", "found": true, "active": false, "companyName": "Testovací Zaniklá a.s.", "ceasedOn": "2020-01-01" }
+  },
+  "boundary-not-found": {
+    "status": "SUCCEEDED",
+    "payload": { "ico": "00000019", "found": false, "active": false }
+  },
+  "injection-non-numeric-ico": {
+    "status": "FAILED",
+    "error": { "code": "SCHEMA_VALIDATION_FAILED", "class": "VALIDATION", "retryable": false }
+  },
+  "error-ares-timeout": {
+    "status": "FAILED",
+    "error": { "code": "DEPENDENCY_TIMEOUT", "class": "DEPENDENCY", "retryable": true }
+  },
+  "error-ares-unavailable": {
+    "status": "FAILED",
+    "error": { "code": "DEPENDENCY_UNAVAILABLE", "class": "DEPENDENCY", "retryable": true }
+  },
+  "error-ares-malformed": {
+    "status": "FAILED",
+    "error": { "code": "REGISTRY_RESPONSE_INVALID", "class": "VALIDATION", "retryable": false }
+  }
+}

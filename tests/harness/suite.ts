@@ -1,6 +1,7 @@
 // Conformance package loader (VERIFICATION-CONTRACT §5): fixtures, golden, errors.md per capability.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { AresMode } from "../../src/adapters/ares.js";
 import type { DmsMode, DmsStatusMode } from "../../src/adapters/dms.js";
 import type { RegistryMode } from "../../src/adapters/registry.js";
 import type { SmtpMode, SmtpStatusMode } from "../../src/adapters/smtp.js";
@@ -10,6 +11,7 @@ export type FixtureKind = "canonical" | "damaged" | "injection" | "boundary" | "
 
 export interface AdapterModes {
   registry?: RegistryMode;
+  ares?: AresMode;
   dms?: DmsMode;
   dmsStatus?: DmsStatusMode;
   smtp?: SmtpMode;
