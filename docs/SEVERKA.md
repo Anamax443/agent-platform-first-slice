@@ -251,6 +251,16 @@ jako u zbytku dokumentu: cílový obraz, ne rozhodnuté zadání. Rozšiřuje a 
   Obsahuje výsledná business data + odkazy na všechnu evidenci ze Žlabu, ze které vznikla, plus
   podpis nad tím vším. Jakmile je Konev zapečetěný, žádná další komponenta (ani Farmář, ani
   Mlékárna) nesmí jeho obsah změnit — jen ho buď přijme celý, nebo odmítne celý.
+  **Implementován jako testovaný primitiv 13. 9. 2026** (Posudek 14, HANDOFF 125) —
+  `src/platform/konev.ts`'s `BusinessObjectSealer`: `seal()` přijme jen `AggregateResult` s
+  `decision: "READY"` (strukturálně, ne jen disciplínou volajícího) a nezávisle si znovu ověří
+  každou odkazovanou evidenci proti Žlabu (tenant/integrita/lineage) v okamžiku zapečetění, ne
+  jen převezme, co si Dojička už myslela. `verify()` dělá dvě oddělené kontroly: shodu `rootHash`
+  s obsahem objektu samotného (tamper na Konvi) a živé přeověření každé odkazované evidence proti
+  Žlabu (tamper na evidenci **po** zapečetění) — druhé Konev's vlastní `rootHash` nemůže sám
+  odhalit, protože neobsahuje hashe evidence, jen jejich id. `tests/konev.test.ts`, 8 testů
+  (KONEV-001..008). **Zatím nenapojeno na žádnou reálnou Mlékárnu** — spotřebitel je zatím jen
+  testovací fixture.
 - **Mlékárna** — obecné jméno pro to, co je dnes konkrétně `BC Executor`: úzce oprávněný, „hloupý"
   write executor, který přijme zapečetěný Konev, ověří pečeť/fingerprint a zapíše ho do cílového
   systému (BC, ale stejně tak budoucí jiný systém) — nikdy nečte a nezpracovává nic mimo Konev
@@ -448,6 +458,16 @@ MŮŽE:                              NEMŮŽE:
 
 Žádné AI uvnitř — jednoúčelový robot přesně v duchu „Cena je z principu nízká pro ne-AI capability"
 (`## Positioning`). Vlastní, výhradní credential (BC Executor, nikdy Farmář ani jiná kráva).
+
+**P0 před BC live write (Posudek 14 bod 5, 13. 9. 2026):** dnešní `checkEffectFieldValidators()`
+(`src/platform/policy.ts`, `## Vrstvy` → `Policy Engine`) čte `validation.status: "passed"` **uvnitř
+business payloadu** — to je legitimní obecný policy mechanismus (a dnes jediný skutečně vynucený),
+ale **budoucí Mlékárna nesmí BC zápis autorizovat na základě tohoto tvrzení v payloadu.** Musí
+ověřit celý **Konev** (`BusinessObjectSealer.verify()` — `## Vrstvy` výš, HANDOFF 125): `rootHash`
++ platform signature + živý stav každé odkazované evidence. `validation.status` v payloadu zůstává
+užitečný pro capability, které Evidence/Žlab vůbec nepotřebují (menší riziko, jiná kategorie);
+BC/Mlékárna třída write capabilit (R3+, `### Risk profily řídí povinné testy` výš) má vždy ověřovat
+Konev, nikdy substituovat `checkEffectFieldValidators()` za tuhle kontrolu.
 
 **Vývojová/ověřovací fáze, rozhodnuto 11. 9. 2026 (vlastník):** dokud řetěz není hotový a ověřený,
 BC Executor se nestaví ani nezapojuje — poslední krok místo něj je **JSON Export** (stejně „hloupý",
@@ -790,6 +810,12 @@ nepřeřazoval** — zapsány zvlášť pod čarou, ne zapomenuté.
    testů (DOJ-001..009). **Zatím nenapojeno na skutečnou capabilitu** — `cz.company.verify`/
    `cz.vat.verify`/`bc.vendors` (body 5–7) jsou první krávy, co by do Žlabu měly reálně zapisovat;
    dojička sama je hotová a čeká na ně, ne naopak.
+8b. **Konev** (Posudek 14 bod 6, 13. 9. 2026 — "nejvyšší priorita projektu"). **Hotovo jako testovaný
+   primitiv 13. 9. 2026** (HANDOFF 125): `src/platform/konev.ts`'s `BusinessObjectSealer` —
+   `seal()` přijme jen `decision: "READY"` (strukturálně), znovu ověří evidenci proti Žlabu při
+   zapečetění (ne jen důvěra v `AggregateResult`), `verify()` odděleně kontroluje vlastní obsah
+   Konve a živý stav odkazované evidence. `tests/konev.test.ts`, 8 testů (KONEV-001..008). **Zatím
+   žádná reálná Mlékárna, co by Konev přijímala** — BC Executor pod ní ještě nestojí.
 9. **Compromised-farmer / composition attack suite** (Posudek 12 bod 12, viz `### Composition
    attack suite` výše) — testuje skládání víc krav dohromady (cizí-tenant evidence, zastaralá
    evidence, konfliktní fakta, nereagující kráva), ne jednotlivou COW.

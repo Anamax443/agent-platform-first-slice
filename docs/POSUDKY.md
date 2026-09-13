@@ -428,3 +428,36 @@ míra je teď o dva testované primitivy vyšší, než posudek počítal, proto
 Kód dnes: jen `docs/SEVERKA.md` (Ponocný/Safety Executor split, viz bod 2). Pořadí `## Pořadí`
 beze změny — Konev a napojení první reálné krávy (`cz.company.verify`/`cz.vat.verify`) zůstávají
 příští, ne composition attack suite (ta stojí až za nimi, jak `## Pořadí` bod 9 už řadí).
+
+## Posudek 14 — vlastník znovu nad `main` na GitHubu, oprava vlastního skóre, Konev jako doporučený příští krok (13. 9. 2026)
+
+**Zdroj:** vlastník (Milan), třetí kolo nad `main` po Posudku 13 — tentokrát čtené přímo na GitHubu
+včetně `evidence.ts`/`aggregator.ts`/testů, ne ze zastaralého snímku. Sám opravuje vlastní
+předchozí skóre: **implementovaný projekt 9,25/10** (z chybného odhadu v Posudku 13's zdrojovém
+materiálu), **cílová koncepce 9,65/10**. Router 9,6, ExecutorHost 9,5, Policy 9,3, Žlab/Evidence
+primitivum 9,2, Dojička primitivum 9,1, Argos 9,0, Lifecycle/certifikace 7,5, Office 4,0, **Konev
+~3** (v okamžiku psaní ještě nepostavený), Průsvitná stáj ~2, Ponocný ~1.
+
+| # | Bod | Dispozice | Poznámka |
+|---|---|---|---|
+| 1 | Žlab je dnes "platformní primitivum", ne "produkční durable evidence infrastructure" — chybí durable storage, transaction semantics, concurrent append, crash recovery, key rotation, backup/retention | **Z, přesně tak** | `EvidenceLedger` (`src/platform/evidence.ts`) drží stav v `Map`, ne v D1/Durable Object — správné odlišení "kryptograficky dobře navržená datová struktura" od "přežije 5 let provozu a obnovu ze zálohy". Durabilita je stejná kategorie práce jako `IdempotencyLedger` u `document-host`/`email-executor` (Durable Object), zatím neudělaná pro Žlab — nezařazeno do `## Pořadí`, čeká na první reálnou krávu, co by na tom stála |
+| 2 | Dojička je primitivum 9,1/10, ale "ještě nedojí nic reálného" — testováno jen na uměle vytvořené Evidenci, ne na výstupu skutečných `cz.company.verify`/`cz.vat.verify`/`bc.vendors` | **Z, potvrzeno, SEVERKA to už takhle říká** | `## Pořadí` bod 8 vlastní poznámka ("Zatím nenapojeno na skutečnou capabilitu") — žádné nové zjištění, jen důraz na to, že 9,5+ přijde až po reálném napojení |
+| 3 | Router/ExecutorHost zůstávají nejsilnější části, nic zásadního nepřestavovat | **Z, potvrzeno** | Beze změny od předchozích posudků |
+| 4 | Idempotency fingerprint (`stejný key + jiný payload` = `IDEMPOTENCY_CONFLICT`, ne duplicate) je "enterprise-grade" | **Z, potvrzeno** | Beze změny, Posudek 5/6 |
+| 5 | **P0 před BC live write:** `checkEffectFieldValidators()` čte `validation.status:"passed"` uvnitř business payloadu — budoucí Mlékárna nesmí BC zápis autorizovat na tomhle tvrzení, musí ověřit celý Konev (`rootHash`+podpis+živý stav evidence) | **P, přijato jako architektonické pravidlo** | Reálná, dosud nezapsaná mezera mezi dnešním obecným policy mechanismem (`policy.ts`, funguje správně pro to, k čemu je) a novou Evidence/Žlab architekturou. Zapsáno jako P0 poznámka do `### BC Executor musí být „hloupý"` — `checkEffectFieldValidators()` zůstává legitimní pro capability, které Evidence/Žlab nepotřebují; R3+/Mlékárna třída musí vždy ověřit Konev, nikdy tohle substituovat |
+| 6 | **Konev je teď nejvyšší priorita projektu** — bez zapečetěného `CertifiedBusinessObject` nemá smysl pokračovat na dalších konceptech; "jediný následující commit" by měl být Konev | **P, provedeno ve stejný den** | `src/platform/konev.ts`'s `BusinessObjectSealer` — `seal()` přijme jen `decision:"READY"` strukturálně, znovu ověří evidenci proti Žlabu při zapečetění (ne jen důvěra ve starší `AggregateResult`), `verify()` odděleně kontroluje obsah Konve a živý stav evidence. `tests/konev.test.ts`, 8 testů (KONEV-001..008), všechny zelené na první běh. Zapsáno do `docs/SEVERKA.md` (`### Tři role, ne dvě` Konev bullet, `## Pořadí` bod 8b) |
+| 7 | Composition attack suite (`COMPROMISED FARMER` end-to-end: vyměnit tenant/evidenceRef, replay expirované evidence, vyrobit vlastní evidence/podpis, přikázat BC Executor libovolný JSON) by měla přijít brzy, ne čekat dlouho | **Z, potvrzuje už zapsané pořadí** | `## Pořadí` bod 9, beze změny; několik scénářů (cizí tenant, tamper, konflikt, expirace) už dnes pokrývá `tests/dojicka.test.ts`/`tests/konev.test.ts` jako součást DOJ/KONEV rodin, ne jako samostatná "composition" sada — širší end-to-end suite (Farmář s plnou možností generovat dispatch) zůstává otevřená |
+| 8 | Ponocný split (Argos detekuje / Safety Executor jedná / Ponocný nezávisle hlídá Argose) je "mnohem lepší architektura" | **Z, potvrzuje Posudek 13** | Beze změny |
+| 9 | Doporučení: přestat vymýšlet další koncepty, postavit jeden vertikální řetěz (reálné PDF → invoice.extract → Žlab → ARES → Žlab → VAT → Žlab → BC Vendor READ → Žlab → Dojička → CertifiedInvoice → BC Executor → OUTPUT_TO_JSON) a rozbíjet ho útoky | **Z, shoduje se s `## Pořadí`** | Přesně řazení bodů 5–10 (`cz.company.verify`→`cz.vat.verify`→`bc.vendors`→attack suite→DRY_RUN); žádný nový koncept dnes nepřibyl mimo dokončení Konve (bod 6), který sám vlastník žádal |
+| 10 | `/status.json` generovaný CI (gitSha/testCount/testResult/capabilities/certificationStatus) by byl lepší než ruční README | **Z, dobrý nápad, nezařazeno** | Navazuje na (122)'s README/STATUS oprava; automatizace zdroje pravdy je logický další krok, ale samostatný od dnešního Konev commitu — čeká na vlastníkovo rozhodnutí, kdy na to dojde |
+
+**Verdikt vlastníka:** implementovaný projekt 9,25/10, cílová koncepce 9,65/10, čtyři největší
+překážky ke zbylým ~0,4 bodu: Konev (**hotovo dnes**) → build-bound `CertificationRecord` →
+skutečné krávy zapisující do Žlabu → compromised-farmer end-to-end test.
+
+### Co posudek nezměnil
+
+Kód dnes: `src/platform/konev.ts` + `tests/konev.test.ts` (bod 6, na vlastníkovu explicitní
+žádost "jediný následující commit"). `## Pořadí` pořadí bodů beze změny — Konev byl už zapsaný
+jako bod 8b, jen "nepostaveno" → "hotovo". Bod 5 (Konev vs. `checkEffectFieldValidators()`) je nové
+architektonické pravidlo, ne oprava dnešního kódu — žádná reálná policy dnes na tomhle nestojí.

@@ -2,6 +2,41 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-13 (125) — Konev implementován: BusinessObjectSealer, zapečetěný CertifiedBusinessObject nad Dojičkou
+
+Reakce na Posudek 14 (`docs/POSUDKY.md`), vlastníkovo explicitní doporučení "jediný následující
+commit": Konev byl v Posudku 13 ještě jen návrh, dnes je testovaný kód, poslední chybějící článek
+řetězu Žlab → Dojička → Konev → (budoucí) Mlékárna.
+
+Nová `src/platform/konev.ts`: `CertifiedBusinessObject` (`certifiedObjectId`/`tenantId`/
+`workflowId?`/`objectType`/`businessPayload`/`evidenceRefs[]`/`certifiedAt`/`rootHash`/`keyId`/
+`platformSignature`) a `BusinessObjectSealer` — `seal()` je jediná cesta, jak Konev vznikne:
+
+- **Přijme jen `decision: "READY"`** z `AggregateResult` (Dojička) — strukturálně, ne jen
+  disciplínou volajícího; `REVIEW`/`REJECT` se zapečetit nedá.
+- **Znovu ověří každou odkazovanou evidenci proti Žlabu v okamžiku zapečetění** (tenant, `ledger.
+  verify()`, `ledger.verifyLineage()`) — nedůvěřuje starší `AggregateResult`'s vlastnímu tvrzení,
+  stejný "ověř bezprostředně před rozhodným krokem" vzor jako `ExecutorHost`'s deadline kontrola.
+- `rootHash` = `sha256(canonicalize(...))` nad vlastním obsahem Konve (bez hashů evidence uvnitř) —
+  `verify()` proto dělá **dvě oddělené kontroly**: (1) vlastní obsah Konve nezměněn, (2) živé
+  přeověření každé odkazované evidence proti Žlabu právě teď — druhé Konev's vlastní `rootHash`
+  sám o sobě nemůže zachytit, protože neobsahuje hashe evidence, jen jejich id.
+- **Žádná update/delete metoda** — stejná disciplína jako `EvidenceLedger`/`Audit` (KONEV-008
+  reflexí).
+
+**`tests/konev.test.ts`, 8 testů (KONEV-001..008), všechny zelené na první běh:** READY → platný
+Konev; REVIEW/REJECT se zapečetit nedá; vrácené objekty jsou nezávislé kopie; tamper na obsahu
+Konve rozbije `verify()`; tamper na evidenci **po** zapečetění rozbije `verify()` i když je Konev
+samotný nedotčený; evidence tamperovaná **mezi** `aggregate()` a `seal()` je odmítnuta už při
+zapečetění, ne až později; sealer si sám nezávisle kontroluje tenant (cizí-tenant evidence
+podvržená mimo Dojičku je odmítnuta); append-only reflexe.
+
+**Zapsáno do `docs/SEVERKA.md`:** `### Tři role, ne dvě` Konev bullet, nový `## Pořadí` bod 8b,
+nová P0 poznámka do `### BC Executor musí být „hloupý"` (Posudek 14 bod 5 — budoucí Mlékárna musí
+ověřit Konev, ne `validation.status` uvnitř payloadu). **Zatím žádná reálná Mlékárna, co by Konev
+přijímala** — BC Executor pod ní ještě nestojí. 372/372 testů (364+8), typecheck, arch, farm:check
+zelené.
+
 ## 2026-09-13 (124) — Posudek 13 zalogován: opravena Ponocného definice, zachycen zastaralý posudek na Žlab/Dojička runtime
 
 Vlastník reagoval na formalizaci Žlab/Konev/Mlékárna/Průsvitná stáj/Ponocný (HANDOFF 119) se dvěma
