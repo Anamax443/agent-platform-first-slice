@@ -145,6 +145,9 @@ footer{margin:34px 0 8px;color:#557165;text-align:center;font-size:12px}
   .sidebar .navbtn span:not(.ico){display:inline}
   .sidebar-backdrop.open{display:block}
   .topbar{padding:0 12px;height:60px}
+  .topbar .pill,.topbar .spacer{display:none}
+  .tenant-chip{flex:1;min-width:0}
+  .tenant-chip small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   main{padding:16px 12px 24px}
   .hero{display:block}
   .hero .actions{margin-top:12px}
