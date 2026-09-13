@@ -2,6 +2,21 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-13 (133) — Průsvitná stáj (HANDOFF 129) nasazena na farm-bass443 — vlastník schválil vzhled
+
+Vlastník schválil vizuální náhled z HANDOFF (129) a požádal o nasazení ("stránky by měly nahradit
+to, co je tomuto projektu na maxferit.cz"). `node scripts/farm-deploy.mjs farm-bass443` (dry-run
+čistý, pak ostrý běh) — celý řetěz `apf-fakes → apf-document-host → apf-email-executor →
+apf-mail-ingest → apf-gateway → ai-farma-web`, přesně v tomhle pořadí kvůli service bindings.
+`apf-gateway` teď na `apf.maxferit.cz` (custom domain) servíruje novou IA (Přehled/Podatelna/
+Ohrada/Stáj/Argos/Výsledek/Deník) místo starého dvoujazyčného UI. Ověřeno po nasazení:
+`GET https://apf.maxferit.cz/farm` → `302` (Cloudflare Access redirect) — Access ochrana beze
+změny, nic nově veřejně přístupné. Ostatní čtyři deployables i `ai-farma-web` se přeinstalovaly
+beze změny kódu (farm-deploy.mjs nasazuje celou instalaci najednou, ne per-deployable).
+
+`cz.company.verify` (HANDOFF 132, commit `c030d60`) je součástí tohohle nasazení (byl v `src/`
+před deployem), ale zůstává nezapojený do žádného workflow — nasazení samo nic o tom nemění.
+
 ## 2026-09-13 (132) — cz.company.verify postaveno (ARES), první krok z HANDOFF 131's "ručně napřed"
 
 Vlastník zvolil (po diskuzi o "Kráva z GUI", HANDOFF 131) postavit `cz.company.verify`/
