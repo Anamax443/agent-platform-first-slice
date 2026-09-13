@@ -1,6 +1,9 @@
 
 const D=window.FARM_DATA;
 const app=document.getElementById('app');
+const ADMISSION_STEPS=['manifest validation','schema testy','security testy','tenant isolation test','credential isolation test','connectivity test','negative testy','timeout/retry test','replay/idempotency test','failure/recovery test','audit test','output contract test'];
+function admissionStep(i,label){return `<div class="admission-step"><span class="pill" id="astepPill${i}">WAIT</span><span>${label}</span></div>`}
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 
 app.innerHTML=`
 <div class="app-shell">
@@ -99,8 +102,23 @@ function pageStaj(){
  const cards=D.cows.map(c=>`<div class="cow"><h3><span>🐄 ${c.name}</span><span class="status ${c.state==='NEW'?'warn':'good'}">${c.state}</span></h3><div class="meta"><span class="pill">${c.risk}</span><span class="pill">${c.kind}</span><span class="pill good">${c.tests}</span></div><small style="color:var(--muted)">build-bound lifecycle · conformance</small></div>`).join('');
  return `
 <section class="page" id="staj">
-${hero('Stáj','Kravičky a co skutečně smí vykonat, seskupeno po modulu jako Ohrada — riziko a izolace jsou vlastní tvrzení komponenty, stav na kartě je to, co Router doopravdy vynucuje před každým dispatchem.','<button class="btn">Spustit self-testy</button>')}
-<div class="cow-grid">${cards}</div>
+${hero('Stáj','Kravičky a co skutečně smí vykonat, seskupeno po modulu jako Ohrada — riziko a izolace jsou vlastní tvrzení komponenty, stav na kartě je to, co Router doopravdy vynucuje před každým dispatchem.','<button class="btn">Spustit self-testy</button><button class="btn primary" id="addCowBtn">+ Přidat krávu</button>')}
+<div class="cow-grid" id="cowGrid">${cards}</div>
+<div class="card" id="addCowPanel" style="display:none;margin-top:14px">
+ <h3 style="margin-bottom:4px">Nová kráva</h3>
+ <p style="color:var(--muted);font-size:12px;margin:0 0 12px">Kráva se do Stáje nedostane kliknutím — musí projít Admission Gate. Kterýkoli krok FAIL → QUARANTINED, Planner ji ani neuvidí.</p>
+ <div class="toolbar" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:16px">
+  <input id="newCowName" type="text" placeholder="např. cz.insolvency.check" style="flex:1;min-width:220px">
+  <select id="newCowKind"><option>READ</option><option>WRITE</option><option>LLM</option></select>
+  <select id="newCowRisk"><option>R0</option><option selected>R1</option><option>R2</option><option>R3</option><option>R4</option></select>
+ </div>
+ <h3 style="margin-bottom:8px">Admission Gate</h3>
+ <div id="admissionSteps">${ADMISSION_STEPS.map((s,i)=>admissionStep(i,s)).join('')}</div>
+ <div class="actions" style="margin-top:14px">
+  <button class="btn primary" id="runAdmissionBtn">▶ Spustit admission</button>
+  <button class="btn" id="closeAddCowBtn">✕ Zavřít</button>
+ </div>
+</div>
 <div class="section-title"><h2>Živá ukázka: dokument prochází stájí</h2><span>krokování, Žlab, Evidence a Konev na jedné obrazovce</span></div>
 <div class="actions" style="margin-bottom:14px">
   <button class="btn primary" id="autoRun">▶ AUTO</button><button class="btn" id="stepRun">→ STEP</button><button class="btn" id="dryRun">DRY RUN</button><button class="btn" id="jsonRun">OUTPUT TO JSON</button><button class="btn" id="resetRun">↺ Reset</button>
@@ -245,6 +263,42 @@ function openMenu(){sidebarEl.classList.add('open');backdropEl.classList.add('op
 function closeMenu(){sidebarEl.classList.remove('open');backdropEl.classList.remove('open');hamburgerEl.setAttribute('aria-expanded','false')}
 hamburgerEl?.addEventListener('click',()=>{sidebarEl.classList.contains('open')?closeMenu():openMenu()});
 backdropEl?.addEventListener('click',closeMenu);
+
+/* Stáj → Přidat krávu (Admission Gate) */
+document.getElementById('addCowBtn')?.addEventListener('click',()=>{
+ const panel=document.getElementById('addCowPanel');
+ panel.style.display=panel.style.display==='none'?'block':'none';
+});
+document.getElementById('closeAddCowBtn')?.addEventListener('click',()=>{
+ document.getElementById('addCowPanel').style.display='none';
+});
+let admissionTimer=null;
+document.getElementById('runAdmissionBtn')?.addEventListener('click',()=>{
+ if(admissionTimer)return;
+ const btn=document.getElementById('runAdmissionBtn');
+ btn.disabled=true;
+ ADMISSION_STEPS.forEach((_,i)=>{const p=document.getElementById('astepPill'+i);p.textContent='WAIT';p.className='pill'});
+ let i=0;
+ admissionTimer=setInterval(()=>{
+  if(i>0){const prev=document.getElementById('astepPill'+(i-1));prev.textContent='PASS';prev.className='pill good'}
+  if(i>=ADMISSION_STEPS.length){clearInterval(admissionTimer);admissionTimer=null;btn.disabled=false;finishAdmission();return}
+  const p=document.getElementById('astepPill'+i);p.textContent='RUNNING';p.className='pill info';
+  i++;
+ },260);
+});
+function finishAdmission(){
+ const nameEl=document.getElementById('newCowName');
+ const name=nameEl.value.trim()||'cz.custom.verify';
+ const kind=document.getElementById('newCowKind').value;
+ const risk=document.getElementById('newCowRisk').value;
+ const tests=`${ADMISSION_STEPS.length}/${ADMISSION_STEPS.length}`;
+ D.cows.push({name,state:'ACTIVE',risk,kind,tests});
+ const div=document.createElement('div');
+ div.className='cow';
+ div.innerHTML=`<h3><span>🐄 ${esc(name)}</span><span class="status good">ACTIVE</span></h3><div class="meta"><span class="pill">${esc(risk)}</span><span class="pill">${esc(kind)}</span><span class="pill good">${esc(tests)}</span></div><small style="color:var(--muted)">build-bound lifecycle · conformance</small>`;
+ document.getElementById('cowGrid').prepend(div);
+ nameEl.value='';
+}
 
 document.getElementById('uploadDemo')?.addEventListener('click',()=>{
  alert('Demo: dokument by se zde vložil do Podatelny jako nový immutable artifact svázaný s tenantem.');

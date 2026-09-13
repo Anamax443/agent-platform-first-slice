@@ -33,6 +33,11 @@ body{
 button,input,select,textarea{font:inherit}
 select{background:#102119;color:#eaf6ef;border:1px solid var(--line);border-radius:11px;padding:8px 12px}
 select:hover{border-color:#37624f}
+input[type=text]{background:#0a1712;color:var(--text);border:1px solid var(--line);border-radius:11px;padding:8px 12px}
+input[type=text]:focus{outline:none;border-color:#37624f}
+.admission-step{display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid #14271f;font-size:13px}
+.admission-step:last-child{border-bottom:0}
+.admission-step .pill{min-width:70px;text-align:center;flex:none}
 button{cursor:pointer}
 a{color:inherit}
 .app-shell{min-height:100vh;display:grid;grid-template-columns:252px 1fr}
