@@ -18,8 +18,10 @@ app.innerHTML=`
     ${nav('office','▦','Office')}
     <div class="side-health"><span class="dot"></span> <span class="txt"><b>Farma zdravá</b><br><small style="color:var(--muted)">6/6 Workerů OK · build b153</small></span></div>
   </aside>
+  <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
   <div class="content">
     <header class="topbar">
+      <button class="hamburger" id="hamburgerBtn" aria-label="Otevřít menu" aria-expanded="false">☰</button>
       <div class="tenant-chip">🏢 <div><strong>${D.tenant.name}</strong><small>Tenant ${D.tenant.id}</small></div></div>
       <span class="pill good">● LIVE</span>
       <span class="pill">${D.tenant.region}</span>
@@ -39,17 +41,7 @@ app.innerHTML=`
       <footer>AI Farma — demo Průsvitné stáje · sekce Přehled/Podatelna/Ohrada/Stáj/Argos/Výsledek/Deník odpovídají skutečné IA apf-gateway (HANDOFF #129) · Office je plánované rozšíření mimo dnešní rebuild · demo data</footer>
     </main>
   </div>
-</div>
-<nav class="mobile-nav">
-  <button data-page="overview"><b>⌂</b>Přehled</button>
-  <button data-page="intake"><b>📬</b>Podatelna</button>
-  <button data-page="ohrada"><b>✓</b>Ohrada</button>
-  <button data-page="staj"><b>◫</b>Stáj</button>
-  <button data-page="argos"><b>🐕</b>Argos</button>
-  <button data-page="vysledek"><b>↯</b>Výsledek</button>
-  <button data-page="denik"><b>≡</b>Deník</button>
-  <button data-page="office"><b>▦</b>Office</button>
-</nav>`;
+</div>`;
 
 function nav(id,ico,label,active=false){return `<button class="navbtn ${active?'active':''}" data-page="${id}"><span class="ico">${ico}</span><span>${label}</span></button>`}
 function kpi(v,l,s=''){return `<div class="card kpi"><div class="value">${v}</div><div class="label">${l}</div><div class="sub">${s}</div></div>`}
@@ -217,28 +209,36 @@ function pageOffice(){return `
 ${hero('Office <span class="pill warn" style="font-size:12px;vertical-align:middle">PLÁN</span>','Tenanty, identity, tokeny a e-mailové aliasy. Identitu ověřuje IdP; Office mapuje ověřenou identitu, token nebo příchozí e-mail na tenant a oprávnění — mimo dnešní rebuild apf-gateway (HANDOFF #129), plánované rozšíření správy.','<button class="btn primary">+ Založit tenant</button>')}
 <div class="office-grid">
  <div class="card"><h2>Tenanty</h2><div class="tenant-row active"><b>T-000042 · AXIMA</b><small>ACTIVE · MFA REQUIRED_FOR_PRIVILEGED</small></div><div class="tenant-row"><b>T-000043 · Demo CZ</b><small>TESTING · MFA REQUIRED</small></div><div class="tenant-row"><b>T-000044 · Sandbox</b><small>SUSPENDED</small></div></div>
- <div class="card"><div style="display:flex;gap:10px;align-items:center"><h2 style="margin:0">AXIMA</h2><span class="pill good">ACTIVE</span><span class="pill">T-000042</span></div><div class="section-title"><h2>Identity</h2></div><table class="table"><thead><tr><th>Identita</th><th>Role</th><th>MFA</th><th>Stav</th></tr></thead><tbody><tr><td>milan@firma.cz</td><td>Tenant Admin</td><td><span class="status good">FIDO2</span></td><td>ACTIVE</td></tr><tr><td>ucetni@firma.cz</td><td>Accountant</td><td><span class="status good">TOTP</span></td><td>ACTIVE</td></tr></tbody></table><div class="section-title"><h2>Konektory</h2></div><div class="security-strip"><span class="pill good">BC READ ✓</span><span class="pill warn">BC WRITE DRY_RUN</span><span class="pill good">MAIL ✓</span><span class="pill good">ARES ✓</span></div></div>
+ <div class="card"><div style="display:flex;gap:10px;align-items:center"><h2 style="margin:0">AXIMA</h2><span class="pill good">ACTIVE</span><span class="pill">T-000042</span></div><div class="section-title"><h2>Identity</h2></div><table class="table"><thead><tr><th>Identita</th><th>Role</th><th>MFA</th><th>Stav</th></tr></thead><tbody><tr><td>milan@firma.cz</td><td>Tenant Admin</td><td><span class="status good">FIDO2</span></td><td>ACTIVE</td></tr><tr><td>ucetni@firma.cz</td><td>Accountant</td><td><span class="status good">TOTP</span></td><td>ACTIVE</td></tr></tbody></table><div class="section-title"><h2>Konektory</h2></div><div class="security-strip"><span class="pill good">BC READ ✓</span><span class="pill warn">BC WRITE DRY_RUN</span><span class="pill good">MAIL ✓</span><span class="pill good">ARES ✓</span></div><div class="section-title"><h2>Výchozí expirace (per tenant)</h2></div><div class="detail-grid"><div class="detail-box"><small>Nové tokeny</small><b>90 dní</b></div><div class="detail-box"><small>Nové e-mailové aliasy</small><b>bez expirace</b></div></div><div class="actions" style="margin-top:10px"><button class="btn" style="padding:5px 8px">Upravit výchozí expiraci</button></div></div>
 </div>
-<div class="section-title"><h2>Tokeny</h2><span>API přístup na tenant + scope, ne na uživatele</span></div>
-<div class="card"><table class="table"><thead><tr><th>Token</th><th>Scope</th><th>Tenant</th><th>Vytvořen</th><th>Poslední použití</th><th>Stav</th><th></th></tr></thead><tbody>
-<tr><td><code>tok_8f3c…</code></td><td>intake:write</td><td>T-000042</td><td>2026-08-01</td><td>dnes 09:12</td><td><span class="status good">ACTIVE</span></td><td><button class="btn" style="padding:5px 8px">Odebrat</button></td></tr>
-<tr><td><code>tok_5a90…</code></td><td>bc:read</td><td>T-000042</td><td>2026-07-14</td><td>včera 18:03</td><td><span class="status good">ACTIVE</span></td><td><button class="btn" style="padding:5px 8px">Odebrat</button></td></tr>
-<tr><td><code>tok_2b91…</code></td><td>bc:read</td><td>T-000043</td><td>2026-05-14</td><td>—</td><td><span class="status bad">REVOKED</span></td><td><button class="btn" style="padding:5px 8px" disabled>Odebrat</button></td></tr>
-</tbody></table><div class="actions" style="margin-top:12px"><button class="btn primary">+ Vytvořit token</button></div></div>
-<div class="section-title"><h2>E-mailové aliasy</h2><span>kam se má příchozí pošta zařadit v Podatelně</span></div>
-<div class="card"><table class="table"><thead><tr><th>Alias</th><th>Tenant</th><th>Kanál</th><th>Stav</th><th></th></tr></thead><tbody>
-<tr><td>faktury@t000042.aifarma.cz</td><td>T-000042 · AXIMA</td><td>Podatelna · e-mail</td><td><span class="status good">ACTIVE</span></td><td><button class="btn" style="padding:5px 8px">Přeřadit</button></td></tr>
-<tr><td>podatelna@t000043.aifarma.cz</td><td>T-000043 · Demo CZ</td><td>Podatelna · e-mail</td><td><span class="status good">ACTIVE</span></td><td><button class="btn" style="padding:5px 8px">Přeřadit</button></td></tr>
+<div class="section-title"><h2>Tokeny</h2><span>API přístup na tenant + scope, ne na uživatele — expirace se vynucuje per tenant</span></div>
+<div class="card"><table class="table"><thead><tr><th>Token</th><th>Scope</th><th>Tenant</th><th>Vytvořen</th><th>Expirace</th><th>Poslední použití</th><th>Stav</th><th></th></tr></thead><tbody>
+<tr><td><code>tok_8f3c…</code></td><td>intake:write</td><td>T-000042</td><td>2026-08-01</td><td>2026-10-30 <small class="dim">(za 47 dní)</small></td><td>dnes 09:12</td><td><span class="status good">ACTIVE</span></td><td><button class="btn" style="padding:5px 8px">Odebrat</button></td></tr>
+<tr><td><code>tok_5a90…</code></td><td>bc:read</td><td>T-000042</td><td>2026-07-14</td><td><span style="color:var(--warn)">2026-09-20 (za 7 dní)</span></td><td>včera 18:03</td><td><span class="status good">ACTIVE</span></td><td><button class="btn" style="padding:5px 8px">Odebrat</button></td></tr>
+<tr><td><code>tok_2b91…</code></td><td>bc:read</td><td>T-000043</td><td>2026-05-14</td><td><span style="color:var(--muted)">bez expirace</span></td><td>—</td><td><span class="status bad">REVOKED</span></td><td><button class="btn" style="padding:5px 8px" disabled>Odebrat</button></td></tr>
+</tbody></table><div class="actions" style="margin-top:12px;align-items:center;gap:10px"><span class="pill">Nová expirace: <b style="margin-left:4px">90 dní</b></span><button class="btn primary">+ Vytvořit token</button></div></div>
+<div class="section-title"><h2>E-mailové aliasy</h2><span>kam se má příchozí pošta zařadit v Podatelně — expirace uvolní alias zpět, když zákazník skončí</span></div>
+<div class="card"><table class="table"><thead><tr><th>Alias</th><th>Tenant</th><th>Kanál</th><th>Expirace</th><th>Stav</th><th></th></tr></thead><tbody>
+<tr><td>faktury@t000042.aifarma.cz</td><td>T-000042 · AXIMA</td><td>Podatelna · e-mail</td><td><span style="color:var(--muted)">bez expirace</span></td><td><span class="status good">ACTIVE</span></td><td><button class="btn" style="padding:5px 8px">Přeřadit</button></td></tr>
+<tr><td>podatelna@t000043.aifarma.cz</td><td>T-000043 · Demo CZ</td><td>Podatelna · e-mail</td><td>2026-12-31 <small class="dim">(pilotní smlouva)</small></td><td><span class="status good">ACTIVE</span></td><td><button class="btn" style="padding:5px 8px">Přeřadit</button></td></tr>
 </tbody></table><div class="actions" style="margin-top:12px"><button class="btn primary">+ Přiřadit alias</button></div></div>
 </section>`}
 
 function showPage(id){
  document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id===id));
- document.querySelectorAll('.navbtn,.mobile-nav button').forEach(b=>b.classList.toggle('active',b.dataset.page===id));
+ document.querySelectorAll('.navbtn').forEach(b=>b.classList.toggle('active',b.dataset.page===id));
  window.scrollTo({top:0,behavior:'smooth'});
+ closeMenu();
 }
 document.querySelectorAll('[data-page]').forEach(b=>b.addEventListener('click',()=>showPage(b.dataset.page)));
 document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>showPage(b.dataset.go)));
+
+/* Mobile hamburger menu (sidebar doubles as slide-in drawer under 760px) */
+const sidebarEl=document.querySelector('.sidebar'),backdropEl=document.getElementById('sidebarBackdrop'),hamburgerEl=document.getElementById('hamburgerBtn');
+function openMenu(){sidebarEl.classList.add('open');backdropEl.classList.add('open');hamburgerEl.setAttribute('aria-expanded','true')}
+function closeMenu(){sidebarEl.classList.remove('open');backdropEl.classList.remove('open');hamburgerEl.setAttribute('aria-expanded','false')}
+hamburgerEl?.addEventListener('click',()=>{sidebarEl.classList.contains('open')?closeMenu():openMenu()});
+backdropEl?.addEventListener('click',closeMenu);
 
 document.getElementById('uploadDemo')?.addEventListener('click',()=>{
  alert('Demo: dokument by se zde vložil do Podatelny jako nový immutable artifact svázaný s tenantem.');
