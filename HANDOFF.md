@@ -2,6 +2,25 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-13 (131) — SEVERKA: "Kráva z GUI" (no-code onboarding) — rozhodnutí zapsáno, nic implementováno
+
+Vlastník chce zakládat nové krávy z webového GUI, ne ručně v kódu: dodá jen kód volání ven
+(např. ARES/VAT klient), propojení (descriptor/schema/handler/policy/conformance/router
+registration/cow-catalog) má generovat nástroj. Tohle je přímo v rozsahu `## Cílová architektura
+pro standardizované přidávání COW`, kterou vlastník 8. 9. 2026 explicitně odložil ("čerpá se až
+bude evidence, ne teď dopředu") — tenhle požadavek tu výhradu pro tenhle jeden kus reviduje.
+
+Zapsáno jako nová `### Kráva z GUI` sekce v `docs/SEVERKA.md` (za `### Admission Gate`) —
+zachovává invarianty (nic ACTIVE bez gate, žádné živé zapojení bez rebuildu — Cloudflare Workers
+dynamický eval stejně nedovolí, `docs/BUILD.md:34`), ale nechává otevřené: kde generátor běží (nová
+`apf-*` služba s GitHub/Cloudflare/AI credentialy?), kde se credentialy drží, jestli GUI je uvnitř
+`apf-gateway` nebo samostatné, jestli mezi "gate zelený" a `wrangler deploy` zůstává lidský klik.
+
+**Nic z tohohle není implementováno** — čeká na vlastníkovo rozhodnutí o pořadí: stavět
+meta-nástroj (GUI + generátor) teď, před `cz.company.verify`/`cz.vat.verify` (`## Pořadí` body
+5–6, dnes další v pořadí a beze změny rozsahu), nebo napřed postavit ty dvě ručně podle
+dnešního postupu a meta-nástroj až pak.
+
 ## 2026-09-13 (130) — deploy/cloudflare/ai-farma-web: zákaznický marketing web nahrazen interaktivním demem Human Control Plane
 
 Vlastník donesl statický HTML/CSS/JS prototyp (mimo repo) s dotazem "tak by to mohlo vypadat, co?" —

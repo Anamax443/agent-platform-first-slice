@@ -671,6 +671,37 @@ který o přechodu do `CERTIFIED`/`ACTIVE` rozhoduje. **Implementováno jako tes
 HANDOFF 126) — zatím samostatně, nezapojeno do `LifecycleRegistry`/`Router.route()` na skutečné
 farmě (viz `## Pořadí` bod 4 níže pro důvod, proč to čeká na vlastníkovo rozhodnutí).
 
+### Kráva z GUI — generátor propojení, ne ruční zakládání (13. 9. 2026)
+
+Vlastníkovo rozhodnutí, revidující `## Cílová architektura pro standardizované přidávání COW`'s
+8. 9. 2026 výhradu „čerpá se až bude evidence [druhá reálná write-capabilita, druhý reálný tenant],
+ne teď dopředu" — pro tenhle jeden kus (GUI + generátor propojení) chce stavět už teď: „jak bude
+aplikace hotová, tak už nechci chodit do kódu, chci všechno obsluhovat z webové stránky ...
+případně bysme tam mohli využívat i tu vrstvu AI." Přispěvatel (vlastník) dodává jen doménový kus —
+kód volání ven (např. ARES/VAT klient) — a **veškeré propojení generuje nástroj, ne ruce**:
+`descriptor.json`, schémata, `handler.ts` s injektovaným adaptérem (vzor `### COW technický pas`
+výš a `document-validator`/`RegistryAdapter`), policy soubor(y), `conformance/<capability>/`
+kostra, zápis do `router.register()` (`src/slice.ts`), položka v `docs/cow-catalog.json`.
+
+**Co se nemění, i když se mění kdo píše soubory:**
+- Nic se nestane `ACTIVE` bez průchodu dnešní bránou (`npm run typecheck && test && arch &&
+  farm:check`, viz `### Admission Gate` výš) — generátor udělá commit/PR, gate ho otestuje stejně
+  neúprosně, ať psal soubory člověk nebo AI.
+- **Žádné živé zapojení kódu do běžícího Workeru bez rebuildu.** Cloudflare Workers dynamický
+  `new Function`/eval technicky nedovolují (`docs/BUILD.md:34` — proto i validátor schémat je
+  `@cfworker/json-schema`, ne Ajv) — i kdyby GUI posílalo kód rovnou za běhu, platforma by ho
+  nespustila. Nasazení zůstává samostatný `wrangler deploy` krok, i když ho GUI spustí jedním
+  kliknutím.
+- Build-bound `CertificationRecord`/`deriveLifecycleStatus()` (`## Pořadí` body 3–4) beze změny —
+  nová kráva začíná `NEW`, ne `ACTIVE`, dokud certifikace neproběhne na konkrétním `buildHash`.
+
+**Otevřené (cílový obraz, ne rozhodnuté):** kde generátor běží (nová `apf-*` služba s
+GitHub/Cloudflare/AI credentialy, mimo dnešních pět farm deployables?); jak a kde se ty
+credentialy drží (Office jako cílové místo pro tenhle typ správy zatím jen `## Vrstvy`'s target
+design, nepostaveno); jestli GUI žije uvnitř `apf-gateway` (za Cloudflare Access) nebo je to
+samostatný nástroj; a jestli mezi „gate zelený" a `wrangler deploy` zůstává explicitní lidský klik,
+nebo je to jedno tlačítko od formuláře k nasazení.
+
 ### Risk profily řídí povinné testy, ne autor COW
 
 `riskClass` v dnešním descriptoru (`LOW`/`MEDIUM` v repu) by se rozšířil na explicitní úroveň
