@@ -2,6 +2,15 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-13 (135) — SEVERKA: "Kráva z GUI" upřesněna — vstup smí být prompt, ne jen hotový kód
+
+Vlastník rozšířil HANDOFF (131)'s vizi: místo aby dodal hotový kód volání ven, mohl by jen popsat
+promptem co chce, a AI vrstva by dohledala dokumentaci/API sama (přesně postup ručně použitý u
+`cz.company.verify`: curl proti reálnému ares.gov.cz, ověření tvarů odpovědí, teprve pak adaptér)
+a napsala i doménovou logiku, ne jen propojení. Vlastník sám potvrdil, že to nic nemění na
+schvalovacím kolečku — zapsáno do `docs/SEVERKA.md`'s `### Kráva z GUI` sekce jako doplnění, žádná
+nová otevřená otázka, žádná změna invariantů (gate/build-bound/no-live-eval beze změny).
+
 ## 2026-09-13 (134) — incident: farm-deploy.mjs shipl prázdný ai-farma-web (404), opraveno do 10 minut
 
 Vlastníkovo hlášení "hamburger je divnej" vedlo k dohledání, že `ai-farma-web` po HANDOFF (133)

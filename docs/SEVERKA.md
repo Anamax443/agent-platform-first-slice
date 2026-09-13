@@ -696,6 +696,15 @@ kostra, zápis do `router.register()` (`src/slice.ts`), položka v `docs/cow-cat
 - Build-bound `CertificationRecord`/`deriveLifecycleStatus()` (`## Pořadí` body 3–4) beze změny —
   nová kráva začíná `NEW`, ne `ACTIVE`, dokud certifikace neproběhne na konkrétním `buildHash`.
 
+**Upřesnění 13. 9. 2026: vstup nemusí být hotový kód, může být prompt.** Vlastník si představuje i
+variantu, kdy nedodá kód volání ven sám, ale jen popíše promptem, co potřebuje ("ověření plátcovství
+DPH proti Finanční správě") — AI vrstva pak sama dohledá dokumentaci/API (přesně postup použitý
+ručně u `cz.company.verify`: curl proti reálnému `ares.gov.cz`, ověření tvaru 200/404/400 odpovědí,
+teprve pak napsaný adaptér), vytáhne potřebné údaje a napíše i doménový kus, ne jen propojení.
+**Nemění to nic z výše uvedeného** — je to jen posun v tom, kolik autorské práce dělá AI (od
+"propojení" po "propojení i doménová logika"), ne v tom, co se stane s výsledkem: pořád jen commit/
+PR, pořád stejná brána, pořád `NEW` až do certifikace na konkrétním buildu.
+
 **Otevřené (cílový obraz, ne rozhodnuté):** kde generátor běží (nová `apf-*` služba s
 GitHub/Cloudflare/AI credentialy, mimo dnešních pět farm deployables?); jak a kde se ty
 credentialy drží (Office jako cílové místo pro tenhle typ správy zatím jen `## Vrstvy`'s target
