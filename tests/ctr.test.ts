@@ -25,6 +25,7 @@ const COMPONENTS: Record<string, { caps: string[]; output: Record<string, string
   "email-executor": { caps: ["email.send"], output: { "email.send": "output.schema.json" } },
   "invoice-extractor": { caps: ["invoice.extract"], output: { "invoice.extract": "output.schema.json" } },
   "cz-company-verify": { caps: ["cz.company.verify"], output: { "cz.company.verify": "output.schema.json" } },
+  "cz-vat-verify": { caps: ["cz.vat.verify"], output: { "cz.vat.verify": "output.schema.json" } },
 };
 const MINIMUM: Record<string, number> = { canonical: 5, damaged: 1, injection: 1, boundary: 1 };
 const FULL_MINIMUM_CAPS = ["document.classify", "document.validate", "document.stamp", "mail.ingest", "email.send", "invoice.extract"];

@@ -5,6 +5,7 @@
 import { FakeArchiveAdapter } from "./adapters/archive.js";
 import { FakeAresAdapter, type AresAdapter } from "./adapters/ares.js";
 import { FakeDmsAdapter } from "./adapters/dms.js";
+import { FakeMojeDaneAdapter, type MojeDaneAdapter } from "./adapters/moje-dane.js";
 import { classifyByRules, FakeInvoiceExtractorAdapter, FakeLlmAdapter, KeywordClassifierAdapter, RulesInvoiceExtractorAdapter, type LlmAdapter } from "./adapters/llm.js";
 import { FakeRegistryAdapter, type RegistryAdapter } from "./adapters/registry.js";
 import { FakeSmtpAdapter } from "./adapters/smtp.js";
@@ -12,6 +13,7 @@ import * as classifier from "./components/document-classifier/handler.js";
 import * as extractor from "./components/invoice-extractor/handler.js";
 import * as validator from "./components/document-validator/handler.js";
 import * as companyVerify from "./components/cz-company-verify/handler.js";
+import * as vatVerify from "./components/cz-vat-verify/handler.js";
 import * as host from "./components/document-executor-host/stamp-handler.js";
 import { createArchiveHandler, ARCHIVE_CREDENTIAL, ARCHIVE_HANDLER_ID, type ArchiveDeps } from "./components/document-executor-host/archive-handler.js";
 import * as ingest from "./components/mail-ingest/handler.js";
@@ -69,6 +71,9 @@ export interface SliceOptions {
   /** Any AresAdapter: the fake in process (default), or HttpAresAdapter over the real ares.gov.cz protocol. */
   ares?: AresAdapter;
   aresTimeoutMs?: number;
+  /** Any MojeDaneAdapter: the fake in process (default), or HttpMojeDaneAdapter over the real SOAP protocol. */
+  mojeDane?: MojeDaneAdapter;
+  mojeDaneTimeoutMs?: number;
   /** Test harness: mutants per host (VC §6). */
   hostMutants?: HostMutants;
   emailHostMutants?: HostMutants;
@@ -99,6 +104,7 @@ export function createSlice(installation: Installation, secrets: SecretsSource, 
   const registry: RegistryAdapter = o.registry ?? new FakeRegistryAdapter();
   const archive = o.archive ?? new FakeArchiveAdapter();
   const ares: AresAdapter = o.ares ?? new FakeAresAdapter();
+  const mojeDane: MojeDaneAdapter = o.mojeDane ?? new FakeMojeDaneAdapter();
   const smtp = o.smtp ?? new FakeSmtpAdapter();
   const models = o.models ?? { llm: new FakeLlmAdapter(), keyword: new KeywordClassifierAdapter() };
   const extractModels = o.extractModels ?? { llm: new FakeInvoiceExtractorAdapter(), rules: new RulesInvoiceExtractorAdapter() };
@@ -192,6 +198,18 @@ export function createSlice(installation: Installation, secrets: SecretsSource, 
     ],
   });
   router.register({
+    descriptor: vatVerify.descriptor as never,
+    policies: { "cz.vat.verify": policy("cz.vat.verify") },
+    capabilities: [
+      {
+        name: "cz.vat.verify",
+        version: "1",
+        inputSchema: vatVerify.inputSchema,
+        handler: vatVerify.createVatVerifier({ mojeDane, clock, ...(o.mojeDaneTimeoutMs !== undefined ? { mojeDaneTimeoutMs: o.mojeDaneTimeoutMs } : {}) }),
+      },
+    ],
+  });
+  router.register({
     descriptor: host.descriptor as never,
     policies: { "document.stamp": policy("document.stamp"), "document.archive": policy("document.archive") },
     capabilities: [
@@ -251,6 +269,7 @@ export function createSlice(installation: Installation, secrets: SecretsSource, 
     registry,
     archive,
     ares,
+    mojeDane,
     smtp,
     models,
     recipients,

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AresMode } from "../../src/adapters/ares.js";
 import type { DmsMode, DmsStatusMode } from "../../src/adapters/dms.js";
+import type { MojeDaneMode } from "../../src/adapters/moje-dane.js";
 import type { RegistryMode } from "../../src/adapters/registry.js";
 import type { SmtpMode, SmtpStatusMode } from "../../src/adapters/smtp.js";
 import { projectRoot } from "./paths.js";
@@ -12,6 +13,7 @@ export type FixtureKind = "canonical" | "damaged" | "injection" | "boundary" | "
 export interface AdapterModes {
   registry?: RegistryMode;
   ares?: AresMode;
+  mojeDane?: MojeDaneMode;
   dms?: DmsMode;
   dmsStatus?: DmsStatusMode;
   smtp?: SmtpMode;

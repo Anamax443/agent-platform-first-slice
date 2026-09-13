@@ -17,6 +17,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.124.0",
     "@cfworker/json-schema": "^4.1.1",
+    "fast-xml-parser": "^5.11.1",
     "pdf-lib": "^1.17.1"
   },
   "devDependencies": {

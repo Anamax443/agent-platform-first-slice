@@ -162,7 +162,8 @@ agent, co dělá všechno:
   subjekt zanikl i když "existuje", `seznamRegistraci.stavZdrojeRes`/`stavZdrojeVr` = per-registr
   aktivní/neaktivní stav.
 - **`cz.vat.verify`** (deterministický, žádné AI) — stav plátce DPH a **zveřejněný bankovní účet
-  u Finanční správy**. API zdroj ověřen 11. 9. 2026: SOAP webová služba MOJE daně
+  u Finanční správy**. **Postaveno 13. 9. 2026, viz `## Pořadí` bod 6 níže pro detail.** API zdroj
+  ověřen 11. 9. 2026: SOAP webová služba MOJE daně
   (`https://adisrws.mfcr.cz/dpr/axis2/services/rozhraniCRPDPH.rozhraniCRPDPHSOAP`, operace
   `getStatusNespolehlivySubjektRozsirenyV2` — nejúplnější, jediná neuzavřená verze), bezplatné,
   oficiální. **`zverejneneUcty` (zveřejněné bankovní účty) je přímý zdroj dat pro Import Gate's
@@ -872,7 +873,24 @@ nepřeřazoval** — zapsány zvlášť pod čarou, ne zapomenuté.
    umí dispatchnout, nic ho zatím nevolá; produkční `baseUrl`/`HttpAresAdapter` wiring do
    `apf-gateway` a nasazení jsou samostatný, pozdější krok, čeká na vlastníkovo rozhodnutí.
 6. **`cz.vat.verify`** — API zdroj ověřen 11. 9. 2026 (MOJE daně SOAP, bezplatné, zveřejněné účty
-   = zdroj pro Import Gate ACCOUNT_VERIFICATION), zatím nepostaveno.
+   = zdroj pro Import Gate ACCOUNT_VERIFICATION). **Postaveno 13. 9. 2026** (HANDOFF 136):
+   `src/components/cz-vat-verify/handler.ts` + `src/adapters/moje-dane.ts` (`MojeDaneAdapter`, fake
+   + `HttpMojeDaneAdapter`, SOAP 1.1 přes `fast-xml-parser` — nová závislost). Protokol ověřen přímo
+   proti `adisrws.mfcr.cz` (curl, ne dokumentace): reálný `getStatusNespolehlivySubjektRozsirenyV2`
+   běh, reálný `NENALEZEN` běh, reálný SOAP Fault (HTTP 500 na neplatné tělo). **Protokolová
+   asymetrie oproti ARES:** `cz.company.verify`'s "neexistuje" je HTTP 404 (transportní signál,
+   adaptér ho promění na exception); MOJE daně's "neexistuje" (`NENALEZEN`) je obyčejné pole uvnitř
+   běžné 200 odpovědi — žádná exception, handler ho čte jako každé jiné pole. Stejný business
+   výsledek (`SUCCEEDED found:false`), dvě strukturálně jiné cesty, protože dva reálné protokoly
+   jsou strukturálně jiné — SEVERKA `## Připravované doménové COW`'s "tři různé protokoly, tři
+   různé adaptéry" se potvrdilo doslova. `HttpAresAdapter`/`baseUrl` bez zabudovaného hostname
+   (ARCH-DEP-001) narazilo znovu — tentokrát i na univerzální SOAP 1.1 envelope namespace
+   (`schemas.xmlsoap.org`), který ale není instalační hodnota (stejný pro každou SOAP zprávu na
+   světě) — vyřešeno malou, zdůvodněnou výjimkou v `scripts/arch-dep.mjs`
+   (`PROTOCOL_NAMESPACE_EXEMPT`, po vzoru existujícího `CLOCK_EXEMPT`), ne oslabením pravidla.
+   `conformance/cz.vat.verify/`, 8 fixtures. 419/419 testů, typecheck, arch, farm:check zelené
+   (obě instalace). **Zatím nezapojeno do žádného workflow ani do skutečného
+   `HttpMojeDaneAdapter` volání** — stejná výhrada jako `cz.company.verify` výš.
 7. **`bc.vendors`** — vnitřní protějšek k `cz.company.verify` (existující Vendor No. v BC, ne jen
    vnější potvrzení, že IČO existuje — HANDOFF 113), nepostaveno.
 8. **První deterministická dojička** (Posudek 11 bod 7 / Posudek 12 bod 9). **Hotovo jako testovaný

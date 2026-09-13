@@ -2,6 +2,49 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-13 (136) — cz.vat.verify postaveno (MOJE daně SOAP), druhá ruční kráva z HANDOFF 131
+
+Druhá a poslední z dvou kráv, co vlastník chtěl postavit ručně před meta-nástrojem (HANDOFF 131).
+SOAP/XML místo REST/JSON u ARES, o dost víc protokolových nuancí.
+
+**Protokol ověřen přímo** (curl proti `https://adisrws.mfcr.cz/dpr/axis2/services/rozhraniCRPDPH.
+rozhraniCRPDPHSOAP`, WSDL staženo a přečtené celé): reálný `getStatusNespolehlivySubjektRozsirenyV2`
+běh (Asseco DIČ 27074358 → `nespolehlivyPlatce="NE"`, 8 zveřejněných účtů, mix `standardniUcet`/
+`nestandardniUcet`), reálný `NENALEZEN` běh, reálný SOAP Fault (HTTP 500, `<soapenv:Fault>`, na
+neplatné tělo požadavku).
+
+**Nové:**
+- `src/adapters/moje-dane.ts` — `MojeDaneAdapter`/`FakeMojeDaneAdapter`/`HttpMojeDaneAdapter`.
+  Přidána závislost `fast-xml-parser` (^5.11.1, čistý JS, žádné node-specifické API — bezpečné pro
+  Workers) na SOAP odpověď; `npm audit` po instalaci beze změny (5 preexistujících zranitelností v
+  vitest/wrangler transitive deps, nic nového od fast-xml-parser).
+- **Protokolová asymetrie oproti ARES, zapsáno i do SEVERKY:** `cz.company.verify`'s "neexistuje"
+  je HTTP 404 (adaptér ho promění na exception). MOJE daně's `NENALEZEN` je obyčejné pole uvnitř
+  běžné 200 odpovědi — žádná exception, handler ho čte jako každé jiné pole. Stejný business
+  výsledek, dvě strukturálně jiné cesty, protože protokoly jsou jiné.
+- `src/components/cz-vat-verify/{descriptor,input.schema,output.schema,handler}` — `reliability`/
+  `found` nezávislé (jako `cz.company.verify`'s `found`/`active`), `riskClass: LOW`.
+- `src/slice.ts`, `config/{local-fakes,farm-bass443}/{profile,policy,lifecycle}` — stejný vzor jako
+  `cz.company.verify` (HANDOFF 132). Není to nasazení, jen build-time config.
+- `conformance/cz.vat.verify/` — 8 fixtures (2 canonical, 1 boundary, 1 injection, 4 error, včetně
+  `maintenance` módu pro statusCode 2 — plánovaná odstávka 0:00-0:10).
+
+**Dva reálné náhledy do `ARCH-DEP-001`'s hostname lintu, oba opraveny:**
+1. `dependsOn: ["moje-dane.lookup"]` neprošlo `capabilityName` patternem (žádné pomlčky povolené)
+   — přejmenováno na `"mojedane.lookup"`. Čistě syntaktická chyba, rychle opravená.
+2. Hostname lint chytil `adis.mfcr.cz` (SOAPAction/namespace, správně — instalační hodnota, řešeno
+   stejně jako `HttpAresAdapter`'s `baseUrl`: povinný, nezabudovaný konstruktor parametr) **a**
+   `schemas.xmlsoap.org` (univerzální SOAP 1.1 envelope namespace, špatně — není to instalační
+   hodnota, je to identický literál v každé SOAP zprávě na světě). Pro tenhle druhý případ přidána
+   malá, zdůvodněná výjimka do `scripts/arch-dep.mjs` (`PROTOCOL_NAMESPACE_EXEMPT`), po vzoru
+   existujícího `CLOCK_EXEMPT` ve stejném souboru — ne oslabení pravidla, jen rozšíření o kategorii,
+   kterou pravidlo samo nikdy nemělo chytat (protokolová konstanta, ne síťová adresa).
+
+**419/419 testů (405+14), typecheck, arch, farm:check zelené** (obě instalace). Zatím nezapojeno do
+žádného workflow ani do skutečného `HttpMojeDaneAdapter` volání. **Obě naplánované ruční krávy
+(HANDOFF 131) jsou hotové** — další rozhodnutí na vlastníkovi: zapojit je do reálného workflow,
+nebo začít stavět meta-nástroj (GUI + AI generátor propojení, HANDOFF 131/135).
+
 ## 2026-09-13 (135) — SEVERKA: "Kráva z GUI" upřesněna — vstup smí být prompt, ne jen hotový kód
 
 Vlastník rozšířil HANDOFF (131)'s vizi: místo aby dodal hotový kód volání ven, mohl by jen popsat

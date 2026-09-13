@@ -1,0 +1,70 @@
+[
+  {
+    "id": "canonical-reliable-with-account",
+    "kind": "canonical",
+    "description": "DIČ exists, reliability NE (spolehlivý plátce), one published account.",
+    "why": "Základní kladný případ — spolehlivý plátce se zveřejněným účtem je přesně to, co Import Gate's ACCOUNT_VERIFICATION potřebuje ověřit fakturu proti.",
+    "onFailure": "Spolehlivý plátce s účtem se nehlásí správně jako found:true/reliability:NE s neprázdným publishedAccounts — prověřit mapování zverejneneUcty.",
+    "payload": { "dic": "27074358" }
+  },
+  {
+    "id": "canonical-unreliable-no-account",
+    "kind": "canonical",
+    "description": "DIČ exists, reliability ANO (nespolehlivý plátce), no published accounts.",
+    "why": "Nespolehlivý plátce je business signál sám o sobě, nezávisle na tom, jestli má zveřejněné účty — capabilita nesmí obě věci plést dohromady.",
+    "onFailure": "Nespolehlivý plátce se hlásí jako reliability:NE, nebo prázdné publishedAccounts způsobí pád — obojí je špatně.",
+    "payload": { "dic": "99999999" }
+  },
+  {
+    "id": "boundary-not-found",
+    "kind": "boundary",
+    "description": "DIČ neexistuje v registru (nespolehlivyPlatce=NENALEZEN) — business výsledek uvnitř normální 200 odpovědi, ne HTTP chyba (na rozdíl od ARES).",
+    "why": "Na rozdíl od cz.company.verify (kde not-found je HTTP 404) tady not-found přijde jako běžná položka uvnitř úspěšné dávkové odpovědi — handler to nesmí splést s chybou jen proto, že protokol je jiný.",
+    "onFailure": "NENALEZEN se propaguje jako FAILED místo SUCCEEDED found:false — prověřit, že se s tímhle protokolem zachází jinak než s ARES, ne stejně mechanicky.",
+    "payload": { "dic": "1" }
+  },
+  {
+    "id": "injection-non-numeric-dic",
+    "kind": "injection",
+    "description": "A non-numeric string never reaches the handler or MOJE daně — closed by the input schema pattern.",
+    "why": "DIČ má uzavřený tvar (1-10 číslic, DICType) — cokoli jiného se musí zastavit na schema hranici, dřív než by šlo do SOAP těla.",
+    "onFailure": "Neplatný tvar DIČ prošel až k handleru — schema validace na routeru neběží, nebo je pattern moc volný.",
+    "payload": { "dic": "12345678; DROP TABLE" }
+  },
+  {
+    "id": "error-mojedane-timeout",
+    "kind": "error",
+    "description": "MOJE daně adapter times out — DEPENDENCY_TIMEOUT.",
+    "why": "Timeout je infrastrukturní stav, ne obchodní zamítnutí — volající podle toho ví, že retry dává smysl.",
+    "onFailure": "Timeout se vrací jako jiná chyba než DEPENDENCY_TIMEOUT.",
+    "adapters": { "mojeDane": "timeout" },
+    "payload": { "dic": "27074358" }
+  },
+  {
+    "id": "error-mojedane-unavailable",
+    "kind": "error",
+    "description": "MOJE daně adapter unreachable / SOAP Fault (HTTP 500) — DEPENDENCY_UNAVAILABLE.",
+    "why": "SOAP Fault je stejná rodina chyb jako timeout (DEPENDENCY_UNAVAILABLE) — nesmí se tvářit jako že DIČ neexistuje.",
+    "onFailure": "Nedostupnost se vrátila jako found:false místo DEPENDENCY_UNAVAILABLE — prověřit, že unavailable a not-found nejsou zaměněné (obzvlášť důležité tady, protože obojí je 'normální' tvar odpovědi z pohledu HTTP).",
+    "adapters": { "mojeDane": "unavailable" },
+    "payload": { "dic": "27074358" }
+  },
+  {
+    "id": "error-mojedane-maintenance",
+    "kind": "error",
+    "description": "statusCode 2 — plánovaná technologická odstávka (0:00-0:10 denně) — DEPENDENCY_UNAVAILABLE, ne jiná kategorie.",
+    "why": "Předvídatelné okno nedostupnosti je pořád DEPENDENCY_UNAVAILABLE, ne zvláštní kategorie — volající nemusí rozlišovat plánovanou odstávku od výpadku, jen že má zkusit znovu později.",
+    "onFailure": "Plánovaná odstávka se hlásí jinak než obecná nedostupnost — zbytečné rozlišení, které volajícímu nic nepřidává.",
+    "adapters": { "mojeDane": "maintenance" },
+    "payload": { "dic": "27074358" }
+  },
+  {
+    "id": "error-mojedane-malformed",
+    "kind": "error",
+    "description": "MOJE daně returns a schema-valid-looking but semantically broken body (reliability outside ANO/NE/NENALEZEN, publishedAccounts not an array).",
+    "why": "Odpověď MOJE daně je nedůvěryhodná data jako u kterékoli jiné integrace — handler musí odmítnout tvar mimo očekávaný kontrakt, ne ho slepě přeposlat.",
+    "onFailure": "Poškozená odpověď prošla jako platný výsledek — prověřit kontrolu tvaru v handleru.",
+    "adapters": { "mojeDane": "nonsense" },
+    "payload": { "dic": "27074358" }
+  }
+]

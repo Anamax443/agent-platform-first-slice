@@ -1,0 +1,29 @@
+{
+  "$id": "cz.vat.verify.output.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["dic", "reliability", "found", "publishedAccounts", "verifiedAt"],
+  "properties": {
+    "dic": { "type": "string", "pattern": "^[0-9]{1,10}$" },
+    "reliability": { "type": "string", "enum": ["ANO", "NE", "NENALEZEN"], "description": "Raw nespolehlivyPlatce z MOJE daně: ANO = nespolehlivý, NE = spolehlivý, NENALEZEN = DIČ neexistuje v registru." },
+    "found": { "type": "boolean", "description": "false pouze když reliability je NENALEZEN — business výsledek (SEVERKA), ne error." },
+    "companyName": { "type": ["string", "null"] },
+    "publishedAccounts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "cislo", "publishedOn", "endedOn"],
+        "properties": {
+          "kind": { "type": "string", "enum": ["standard", "other"] },
+          "cislo": { "type": "string" },
+          "predcisli": { "type": "string" },
+          "kodBanky": { "type": "string" },
+          "publishedOn": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+          "endedOn": { "type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$" }
+        }
+      }
+    },
+    "verifiedAt": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$" }
+  }
+}

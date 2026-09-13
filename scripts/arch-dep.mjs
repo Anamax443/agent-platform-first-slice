@@ -20,6 +20,12 @@ const STRING_LITERAL = /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\\n]|\\.
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/;
 // Labels of at least two characters and no `.at`/`.de`: `r.at` or `x.de` in a template literal are property accesses, not hosts.
 const HOSTNAME = /(?:^|[^A-Za-z0-9.-])[a-z0-9-]{2,}(?:\.[a-z0-9-]{2,})*\.(?:cz|sk|com|org|net|eu|io|dev|app|pl|uk|info)(?![A-Za-z0-9.-])/;
+// Fixed W3C/OASIS-era XML/SOAP namespace URIs: identical in every implementation of the protocol on
+// earth, never an address anything connects to, never bound to an installation (unlike a real service
+// host such as adis.mfcr.cz, which the hostname check is meant to catch and still does). Hit for real
+// building cz.vat.verify's SOAP envelope (13. 9. 2026) — stripped before the HOSTNAME test runs, same
+// idea as CLOCK_EXEMPT above for a different literal shape.
+const PROTOCOL_NAMESPACE_EXEMPT = ["http://schemas.xmlsoap.org/soap/envelope/"];
 
 /** Every value bound to an installation, read from config/<installation>/profile.json and policy/*.json. value -> origin. */
 export function installationValues(configDir = join(repoRoot, "config")) {
@@ -60,7 +66,9 @@ export function installationValues(configDir = join(repoRoot, "config")) {
 function literalFinding(text, values) {
   for (const [v, where] of values) if (text.includes(v)) return `installation value "${v}" (${where})`;
   if (EMAIL.test(text)) return "e-mail address";
-  if (HOSTNAME.test(text)) return "public hostname";
+  let sansProtocolNamespaces = text;
+  for (const ns of PROTOCOL_NAMESPACE_EXEMPT) sansProtocolNamespaces = sansProtocolNamespaces.split(ns).join("");
+  if (HOSTNAME.test(sansProtocolNamespaces)) return "public hostname";
   return undefined;
 }
 

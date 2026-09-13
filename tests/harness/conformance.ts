@@ -1,6 +1,7 @@
 // Conformance runner: one fresh slice per fixture, placeholders substituted, golden compared as a subset (semantic tier).
 import { expect } from "vitest";
 import { FakeAresAdapter } from "../../src/adapters/ares.js";
+import { FakeMojeDaneAdapter } from "../../src/adapters/moje-dane.js";
 import { FakeDmsAdapter } from "../../src/adapters/dms.js";
 import type { LlmAdapter } from "../../src/adapters/llm.js";
 import { FakeRegistryAdapter } from "../../src/adapters/registry.js";
@@ -25,10 +26,12 @@ export function sliceOptionsFor(adapters: AdapterModes | undefined, storage: { c
   return {
     registry: new FakeRegistryAdapter(adapters?.registry ?? "ok"),
     ares: new FakeAresAdapter(adapters?.ares ?? "ok"),
+    mojeDane: new FakeMojeDaneAdapter(adapters?.mojeDane ?? "ok"),
     dms: new FakeDmsAdapter(adapters?.dms ?? "ok", adapters?.dmsStatus ?? "ok"),
     smtp: new FakeSmtpAdapter(adapters?.smtp ?? "ok", adapters?.smtpStatus ?? "ok"),
     registryTimeoutMs: 30,
     aresTimeoutMs: 30,
+    mojeDaneTimeoutMs: 30,
     modelTimeoutMs: 30,
     ...(storage ? { artifactCapacityBytes: storage.capacityBytes } : {}),
   };

@@ -1,0 +1,32 @@
+{
+  "module": "cz-vat-verify",
+  "componentVersion": "0.1.0",
+  "runtime": "in-process",
+  "deploymentModel": "CLOUD_SINGLE_TENANT",
+  "tenantMode": "SINGLE",
+  "owner": "first-slice",
+  "dependsOn": ["mojedane.lookup"],
+  "verificationProfiles": ["PROVIDER", "MODULE_DEPENDENCY"],
+  "capabilities": [
+    {
+      "name": "cz.vat.verify",
+      "versions": ["1"],
+      "preferredVersion": "1",
+      "inputSchema": "cz.vat.verify.input.v1",
+      "outputSchema": "cz.vat.verify.output.v1",
+      "conformanceSuiteVersion": "1.0",
+      "conformanceTier": "semantic",
+      "executionMode": "sync",
+      "sideEffects": "none",
+      "trustClass": "deterministic",
+      "riskClass": "LOW",
+      "requiredScopes": ["cz.vat.verify"],
+      "usesLlm": false,
+      "idempotency": "natural",
+      "reversibility": "not-applicable",
+      "unknownOutcomeRecovery": "not-applicable",
+      "humanApproval": "none",
+      "errorCodes": ["DEPENDENCY_TIMEOUT", "DEPENDENCY_UNAVAILABLE", "REGISTRY_RESPONSE_INVALID"]
+    }
+  ]
+}

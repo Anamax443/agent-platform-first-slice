@@ -1,0 +1,9 @@
+{
+  "$id": "cz.vat.verify.input.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["dic"],
+  "properties": {
+    "dic": { "type": "string", "pattern": "^[0-9]{1,10}$", "description": "DIČ bez prefixu CZ (DICType z rozhraniCRPDPH WSDL) — volající strhává prefix, tahle capabilita ho nezná." }
+  }
+}

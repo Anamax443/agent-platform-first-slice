@@ -1,0 +1,40 @@
+{
+  "canonical-reliable-with-account": {
+    "status": "SUCCEEDED",
+    "payload": {
+      "dic": "27074358",
+      "reliability": "NE",
+      "found": true,
+      "companyName": "Testovací Spolehlivý s.r.o.",
+      "publishedAccounts": [{ "kind": "standard", "cislo": "1657960", "kodBanky": "0300", "publishedOn": "2020-01-01", "endedOn": null }]
+    }
+  },
+  "canonical-unreliable-no-account": {
+    "status": "SUCCEEDED",
+    "payload": { "dic": "99999999", "reliability": "ANO", "found": true, "companyName": "Testovací Nespolehlivý a.s.", "publishedAccounts": [] }
+  },
+  "boundary-not-found": {
+    "status": "SUCCEEDED",
+    "payload": { "dic": "1", "reliability": "NENALEZEN", "found": false, "publishedAccounts": [] }
+  },
+  "injection-non-numeric-dic": {
+    "status": "FAILED",
+    "error": { "code": "SCHEMA_VALIDATION_FAILED", "class": "VALIDATION", "retryable": false }
+  },
+  "error-mojedane-timeout": {
+    "status": "FAILED",
+    "error": { "code": "DEPENDENCY_TIMEOUT", "class": "DEPENDENCY", "retryable": true }
+  },
+  "error-mojedane-unavailable": {
+    "status": "FAILED",
+    "error": { "code": "DEPENDENCY_UNAVAILABLE", "class": "DEPENDENCY", "retryable": true }
+  },
+  "error-mojedane-maintenance": {
+    "status": "FAILED",
+    "error": { "code": "DEPENDENCY_UNAVAILABLE", "class": "DEPENDENCY", "retryable": true }
+  },
+  "error-mojedane-malformed": {
+    "status": "FAILED",
+    "error": { "code": "REGISTRY_RESPONSE_INVALID", "class": "VALIDATION", "retryable": false }
+  }
+}

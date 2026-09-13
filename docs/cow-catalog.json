@@ -40,8 +40,10 @@
     "tag": "CZ Registry",
     "title": "VAT COW",
     "description": "Deterministické ověření plátcovství DPH a zveřejněných bankovních účtů proti Finanční správě.",
-    "status": "plan",
-    "note": "docs/NAVRHOVY-LIST-farma.md, krok 8b. API zdroj ověřen (MOJE daně SOAP), žádný kód zatím."
+    "status": "live",
+    "modules": ["cz-vat-verify"],
+    "capabilities": ["cz.vat.verify"],
+    "note": "Postaveno 13. 9. 2026 (HANDOFF 136). Zatím nezapojeno do žádného workflow ani do skutečného HttpMojeDaneAdapter volání — Router ho umí dispatchnout, nic ho zatím nevolá."
   },
   {
     "id": "invoice-extraction",
