@@ -14,7 +14,7 @@ Kolem obou: gateway podepisující dispatch obálky Ed25519, capability router v
 
 Nic z toho není sdílený runtime. Vše v `src/platform` je lokální pro tento projekt; balíčkem se to stane až ve chvíli, kdy totéž potřebuje druhý projekt (foundation §9, P2).
 
-Dokumentový tok navíc běží **živě na Cloudflare** (`deploy/cloudflare/`, instalace `farm-bass443`, `apf.maxferit.cz`): tři samostatné Workery, skutečný podepsaný dispatch, skutečný model a skutečná kryptografická hranice mezi hosty — ne jen fakes v jednom procesu. E-mailový tok je tam zatím jen skeleton. Aktuální stav v [STATUS.html](STATUS.html), operátorský pohled na `/farm` přímo na živé instalaci.
+Dokumentový tok navíc běží **živě na Cloudflare** (`deploy/cloudflare/`, instalace `farm-bass443`, `apf.maxferit.cz`): tři samostatné Workery, skutečný podepsaný dispatch, skutečný model a skutečná kryptografická hranice mezi hosty — ne jen fakes v jednom procesu. Mailová větev (`mail.ingest`/`email.send`) je zapojená a nasazená na stejné úrovni jako `document.stamp` (HANDOFF 57–69). Aktuální stav v [HANDOFF.md](HANDOFF.md) (append-only, nejnovější záznam nahoru), operátorský pohled na `/farm` přímo na živé instalaci — [STATUS.html](STATUS.html) je snímek z počátku září a má prokazatelně zastaralá čísla.
 
 ## Stack
 
@@ -24,7 +24,7 @@ TypeScript, Node 20+, Vitest, `@cfworker/json-schema` (interpretační validáto
 
 ```bash
 npm ci
-npm test          # 13 souborů, 232 testů, 46 Test ID, názvy testů nesou Test ID
+npm test          # každá testovací rodina, názvy testů nesou Test ID — přesný počet rychle stárne, aktuální viz HANDOFF.md
 npm run typecheck
 npm run arch      # ARCH-DEP-001: komponenta neimportuje jinou komponentu ani vnitřnosti platformy; žádný přímý systémový čas
 ```

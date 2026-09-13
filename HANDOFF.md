@@ -2,6 +2,74 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-13 (122) — Doc drift oprava: README/SEVERKA tvrdily zastaralý stav mail.ingest/email.send, o 4 dny stará zastaralost odhalena a opravena
+
+Externí oponentura upozornila, že `README.md` tvrdí "232 testů" a "e-mail flow je skeleton", zatímco
+`HANDOFF.md` už dávno uvádí 348+/348. Při ověřování přímo v kódu (ne jen převzetím tvrzení) se
+zjistilo, že mezera je hlubší: `docs/SEVERKA.md`'s vlastní `## Vrstvy` řádky (**Execution Engine**,
+**Connector Layer**) samy tvrdily zastaralý stav — "`apf-mail-ingest`/`apf-email-executor` jsou
+skeleton, `501 NOT_WIRED`" a "durable idempotency jen na `apf-document-host`" — ačkoli obojí bylo
+opraveno **9. 9. 2026** (HANDOFF 57–69: `mail.ingest`/`email.send` zapojené a nasazené, `apf-email-
+executor` dostal vlastní `IdempotencyLedger`/`DurableIdempotencyStore` v HANDOFF (69)). HANDOFF
+(61) tuhle mezeru už 9. 9. přiznal jako "otevřený dluh dokumentace" u `STATUS.html`/`STATUS.en.html`
+— ale nikdo ji do teď nepromítl do `README.md` ani do `SEVERKA.md`, a **včera (12. 9.) jsem tu
+stejnou zastaralou tvrzení z `## Vrstvy` omylem přepsal do vlastní `## Pořadí` poznámky** (HANDOFF
+117) jako "dvě položky staré verze pořadí, dosud otevřené" — ověřeno teď přímo v kódu
+(`grep idempotency\|ExecutorHost( deploy/cloudflare/apf-email-executor/src/index.ts`), obě byly
+hotové už 4 dny.
+
+**Opraveno:**
+- `README.md`/`README.cs.md`: test count věta zbavena natvrdlo napsaného čísla (bude zas zastaralé
+  za týden) — odkazuje na `HANDOFF.md` místo toho; "e-mail flow je skeleton" nahrazeno popisem
+  skutečného stavu (zapojeno a nasazeno na úrovni `document.stamp`, HANDOFF 57–69); odkaz na
+  `STATUS.html`/`STATUS.en.html` doplněn o výhradu, že je to zastaralý snímek z počátku září, ne
+  živý dokument.
+- `docs/SEVERKA.md`: `## Vrstvy` řádky **Execution Engine** a **Connector Layer** přepsány na
+  ověřený aktuální stav; vlastní `## Pořadí` poznámka ze včerejška opravena (obě položky byly
+  hotové, ne otevřené).
+
+**`STATUS.html`/`STATUS.en.html` vědomě NEPŘEPSÁNY** — jsou to datované "stav po M4b" snímky
+(243 řádků HTML s historickou M0→M4b narací), ne živé dokumenty jako `HANDOFF.md`/`SEVERKA.md`;
+přepis na aktuální stav je podle rozhodnutí z (61) samostatný celek, ne součást tohohle. `README`
+teď na obě stránky odkazuje s explicitní výhradou zastaralosti, aby čtenář nevěřil číslům tam.
+
+Čistě dokumentační krok, žádný kód dnes (kód viz (121) níže, samostatná položka stejného dne).
+
+## 2026-09-13 (121) — Žlab/Evidence primitivum implementováno: append-only, hash-chained, platform-signed evidence store
+
+Reakce na vlastníkovo "hlavně mákni na tom co má hodnocení pod 9" — Evidence/provenance/Žlab (3/10)
+byla nejdůležitější below-9 položka a základ pro Dojičku/composition testy/CertificationRecord
+(všechny na Evidence staví). Nová `src/platform/evidence.ts`:
+
+- `Evidence` — `recordId`/`tenantId`/`workflowId?`/`operationId?`/`producerId`/`capabilityVersion`/
+  `buildHash`/`schemaVersion`/`inputField`/`inputValueHash`/`result`/`parentRefs[]`/`parentHashes[]`/
+  `observedAt`/`expiresAt?`/`recordHash`/`keyId`/`platformSignature` — přesně tvar navrhovaný v
+  `docs/SEVERKA.md` (Posudek 12 bod 11) a rozšířený o `parentRefs`/`parentHashes` (hashový graf).
+- `EvidenceLedger` (Žlab) — `append()` je jediná zapisovací cesta; **platforma sama** počítá
+  `recordHash` (`sha256(canonicalize(...))`) a `platformSignature` (Ed25519 nad `recordHash`,
+  `node:crypto` `sign`/`verify`, stejný primitiv jako `signing.ts`'s `Signer`, ale zobecněný na
+  libovolný canonical record místo pevného message+context tvaru) — volající (budoucí COW handler)
+  nikdy nedostane privátní klíč, takže nemůže podvrhnout ani hash ani podpis. `get()`/`forTenant()`
+  vrací vždy `structuredClone`, nikdy referenci na uložený (frozen) záznam. `verify()` přepočítá hash
+  a ověří podpis — detekuje úpravu obsahu i "útočník má přístup k DB a přepočítá hash, ale nemá
+  privátní klíč" scénář. `verifyLineage()` rekurzivně prochází `parentRefs` a porovnává uložený
+  `parentHashes` se **skutečným aktuálním** hashem předka — pokud se předek (i nepřímý) změnil po
+  zápisu, `brokenAt` ukáže přesně kde se řetěz zpřetrhal (Milanova "hashový graf" myšlenka:
+  "změna jednoho čísla na faktuře rozbije důvěryhodnost celého stromu směrem nahoru").
+- **Žádná update/delete metoda neexistuje** — stejná disciplína jako `Audit`/EVD-004 (reflection
+  test na `EvidenceLedger.prototype`).
+
+**`tests/zlab.test.ts`, 7 testů (ZLAB-001..007), všechny zelené:** append+verify čistý záznam;
+vrácené záznamy jsou nezávislé kopie (mutace nedosáhne úložiště); tamper na obsahu rozbije `verify()`;
+hash-only forgery (jiný klíč, stejné `keyId`) neprojde signature verifikací; append-only reflection;
+hashový graf — `verifyLineage` uspěje na čistém řetězu a přesně lokalizuje zlomený předek po
+simulovaném DB-level tamperingu; tenant-scoped `forTenant()` nikdy nevrátí cizí tenant.
+
+**Zatím nezapojeno** do žádné reálné capability/ExecutorHostu — je to samostatný, testovaný
+primitiv, ne live cesta. Další krok podle vlastníkova pořadí (odpovídá i `## Pořadí` v SEVERKA):
+první jednoduchá Dojička, co z tohohle skutečně čte, pak wiring do `checkEffectFieldValidators()`-
+stylu kontroly v `ExecutorHost`. 355/355 testů (348+7), typecheck, arch, farm:check zelené.
+
 ## 2026-09-12 (120) — SEVERKA: zdroje pro srovnání s enterprise konkurencí doplněny
 
 Vlastník poslal stejné srovnání jako v (119), tentokrát s reálnými URL zdroji (Microsoft Learn

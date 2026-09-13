@@ -14,7 +14,7 @@ Around both: a gateway that signs dispatch envelopes with Ed25519, a capability 
 
 Nothing here is a shared runtime. Everything under `src/platform` is local to this project; it becomes a package only after a second project needs the same thing (foundation §9, P2).
 
-The document flow also runs **live on Cloudflare** (`deploy/cloudflare/`, installation `farm-bass443`, `apf.maxferit.cz`): three separate Workers, a real signed dispatch, a real model, and a real cryptographic boundary between hosts — not just fakes in one process. The e-mail flow is still a skeleton there. See [STATUS.en.html](STATUS.en.html) for the current state and `/farm` on the live installation for an operator's view of it.
+The document flow also runs **live on Cloudflare** (`deploy/cloudflare/`, installation `farm-bass443`, `apf.maxferit.cz`): three separate Workers, a real signed dispatch, a real model, and a real cryptographic boundary between hosts — not just fakes in one process. The mail flow (`mail.ingest`/`email.send`) is wired and deployed at the same level as `document.stamp` (HANDOFF 57–69). See [HANDOFF.md](HANDOFF.md) for the current state (append-only, newest entry first) and `/farm` on the live installation for an operator's view of it — [STATUS.en.html](STATUS.en.html) is a point-in-time snapshot from early September and is known to be stale on exact counts.
 
 ## Stack
 
@@ -24,7 +24,7 @@ TypeScript, Node 20+, Vitest, `@cfworker/json-schema` (an interpreting validator
 
 ```bash
 npm ci
-npm test          # 13 files, 232 tests, 46 Test IDs, named by Test ID
+npm test          # every test family, named by Test ID — exact file/test count drifts fast, see HANDOFF.md for today's
 npm run typecheck
 npm run arch      # ARCH-DEP-001: no component imports another component or platform internals; no direct system clock
 ```
