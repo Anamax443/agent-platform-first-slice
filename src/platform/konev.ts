@@ -60,6 +60,18 @@ export class BusinessObjectSealer {
     if (input.result.decision !== "READY") {
       return { ok: false, reason: `cannot seal a ${input.result.decision} decision — only READY may become a Konev` };
     }
+    // Closes the gap between "evidence was bound to fieldHashes at aggregate() time" and "businessPayload
+    // is what actually gets signed here": re-hash every certified field from businessPayload itself and
+    // require it to match what the Dojička's READY decision was bound to. Without this, a caller could get
+    // READY against real fieldHashes and then seal a businessPayload with different values for those same
+    // fields — the evidence and signature would both still check out, over the wrong object (external
+    // review 2026-09-14, P0).
+    for (const [field, expectedHash] of Object.entries(input.result.fieldHashes)) {
+      const actualHash = sha256(canonicalize(input.businessPayload[field]));
+      if (actualHash !== expectedHash) {
+        return { ok: false, reason: `BUSINESS_OBJECT_CHANGED_AFTER_AGGREGATION: businessPayload.${field} does not match the value certified by the Dojička` };
+      }
+    }
     for (const recordId of input.result.evidenceRefs) {
       const record = this.ledger.get(recordId);
       if (!record) return { ok: false, reason: `evidence ${recordId} no longer exists in the ledger` };

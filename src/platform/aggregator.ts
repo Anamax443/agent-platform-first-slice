@@ -26,6 +26,16 @@ export interface AggregateResult {
   findings: AggregateFinding[];
   /** recordIds actually accepted into the decision (excludes anything that failed a check). */
   evidenceRefs: string[];
+  /** The exact fieldHashes this READY decision was bound to, restricted to fields that actually had
+   * surviving evidence (empty on REVIEW/REJECT — never sealed anyway). BusinessObjectSealer.seal()
+   * re-hashes its own businessPayload argument against this and refuses a mismatch
+   * (BUSINESS_OBJECT_CHANGED_AFTER_AGGREGATION) — without it, aggregate()'s binding check only ever
+   * proved evidence matched *some* fieldHashes the caller supplied here, never that the businessPayload
+   * later handed to seal() is the same object (found by external review 2026-09-14, the gap Posudek
+   * 15's P0-2 fix didn't close: that fix bound evidence to fieldHashes, but fieldHashes were never
+   * carried forward to the sealing step).
+   */
+  fieldHashes: Record<string, string>;
 }
 
 export interface RequiredEvidence {
@@ -148,8 +158,14 @@ export class EvidenceAggregator {
     }
 
     const evidenceRefs = [...byField.values()].flat().map((r) => r.recordId);
-    if (findings.length === 0) return { decision: "READY", findings, evidenceRefs };
+    if (findings.length === 0) {
+      // Safe to assert defined: a field only reaches here (in byField) with findings.length === 0 if
+      // its not_bound check above already passed, which requires input.fieldHashes[field] to exist.
+      const fieldHashes: Record<string, string> = {};
+      for (const field of byField.keys()) fieldHashes[field] = input.fieldHashes[field] as string;
+      return { decision: "READY", findings, evidenceRefs, fieldHashes };
+    }
     const decision: AggregateDecision = findings.some((f) => HARD_FAILURE.has(f.kind)) ? "REJECT" : "REVIEW";
-    return { decision, findings, evidenceRefs };
+    return { decision, findings, evidenceRefs, fieldHashes: {} };
   }
 }

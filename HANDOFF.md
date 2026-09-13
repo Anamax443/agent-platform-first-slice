@@ -2,6 +2,41 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-14 (141) — Posudek 16: nový P0 mezi Dojičkou a Konví opraven (`candidateHash`/`fieldHashes` binding), SEVERKA audit-provenance drift opraven
+
+**Pokyn vlastníka:** externí posudek nad `main` (156 commitů) — viz `docs/POSUDKY.md` Posudek 16 pro
+plný text. Přes `AskUserQuestion` zvolil "nejdřív ověřit všechny nálezy v kódu", pak "jasně" k
+zápisu posudku i k opravě P0 rovnou.
+
+**Nový P0 (jiný než Posudek 15's P0-2):** Posudek 15 svázalo Dojičku s `fieldHashes` při
+`aggregate()`, ale ta vazba nikdy nepokračovala do `seal()` — `BusinessObjectSealer.seal()` bral
+`businessPayload` čerstvě od volajícího a znovu ověřoval jen `evidenceRefs` (integrity/tenant/
+lineage), nikdy neporovnal, že `businessPayload`'s hodnoty odpovídají tomu, co Dojička skutečně
+certifikovala. Ověřeno přímo v kódu před opravou: `AggregateResult` (`aggregator.ts`) neslo jen
+`decision`/`findings`/`evidenceRefs`, žádný hash; `konev.ts:59` bral `businessPayload` bez jediné
+kontroly proti tomu.
+
+**Oprava:** `AggregateResult` nese nové `fieldHashes: Record<string,string>` — jen pole se skutečně
+dochovanou evidencí, prázdné na REVIEW/REJECT (nesealovatelné beztak). `BusinessObjectSealer.seal()`
+pro každé pole v `result.fieldHashes` přepočítá `sha256(canonicalize(businessPayload[field]))` a
+neshodu odmítne jako `BUSINESS_OBJECT_CHANGED_AFTER_AGGREGATION`. `tests/konev.test.ts` přepsán na
+reálné `sha256(canonicalize())` hashe (dřív placeholder řetězce jako `"hash-ico"`, co by novou
+kontrolu nikdy nesplnily) + nový `KONEV-009` (swap pole po READY → refused; pole mimo `required`
+beze změny prochází — doménová volba, ne mezera primitivu).
+
+**Zbytek posudku:** 6 nových P1 nálezů (workflowId optional v CBO řetězu, `CertificationRegistry`
+bere `requiredTests` od volajícího, evidence `expiresAt` určuje kráva ne policy, jediný signing
+klíč, žádná domain separation v podpisech, `rateLimit` dekorace) + rekonfirmace Posudku 15's P1-5/6/7
+(`ExecutorHost`/`Router` optional defaults) — všechny ověřeny v kódu, vědomě neopraveny, čekají na
+vlastníkovo rozhodnutí o pořadí. Plný rozpis a dispozice v Posudku 16.
+
+**Doc drift oprava:** `docs/SEVERKA.md`'s "Audit provenance" řádek pořád tvrdil "neopraveno", ale
+runtime (`auditClaimContradicts()`, HANDOFF 95/96) už od 11. 9. skutečně odmítá cizí `tenantId` s
+`403 TENANT_MISMATCH`. Řádek přepsán na "PARTIALLY MITIGATED" s přesným rozlišením co (95)/(96) kryje
+(tenantId proti journalu) vs. co pořád chybí (actorId/capability/kind nevázané na podepsaný dispatch).
+
+**Brány zelené:** typecheck, **421/421 testů** (+2 KONEV-009), arch, farm:check.
+
 ## 2026-09-13 (140) — self-test: dva dřív odložené nálezy (55-60/95/96/101) skutečně opraveny, ne jen znovu zdokumentovány
 
 **Pokyn vlastníka:** vlastník vložil živý self-test výpis `apf-document-host` (4 FAILED: `canonical-

@@ -500,3 +500,66 @@ Kód dnes: `src/platform/aggregator.ts` (oba P0), `tests/dojicka.test.ts` (+6 te
 každý se dvěma variantami), `tests/konev.test.ts` (aktualizováno na nové povinné `fieldHashes`).
 386/386 testů, typecheck, arch, farm:check zelené. P1-5/6/7 vědomě neopraveny — sahají do živého
 `ExecutorHost`/`Router`, čekají na vlastníkovo rozhodnutí, ne na dnešní jednostrannou úpravu.
+
+## Posudek 16 — externí review nad `main` (156 commitů), nový P0 mezi Dojičkou a Konví, potvrzeno v kódu a opraveno (14. 9. 2026)
+
+**Zdroj:** externí posudek nad `main` na GitHubu, tentokrát rozdělený na audit runtime kódu / nových
+bezpečnostních primitiv / webu / dokumentace zvlášť. Skóre: implementovaný projekt **9,0/10**,
+execution core **9,4/10**, cílová koncepce **9,7/10** — posudek explicitně nesnižuje skóre kvůli
+špatné architektuře, ale protože Posudek 15's oprava (P0-2: evidence vázaná na `fieldHashes` v
+Dojičce) poprvé dala co napadnout o krok dál, u Konve.
+
+Každý věcný nález ověřen přímo v kódu před zápisem sem (ne převzato z tvrzení), stejná disciplína
+jako Posudek 15.
+
+**Nový P0, potvrzeno a opraveno ve stejný den:**
+
+| # | Bod | Dispozice | Poznámka |
+|---|---|---|---|
+| P0 | `AggregateResult` (Dojička) nenesla dál žádný hash certifikovaných hodnot — `BusinessObjectSealer.seal()` bere `businessPayload` čerstvě od volajícího a znovu ověřuje jen `evidenceRefs` (integrity/tenant/lineage), nikdy neporovná, že `businessPayload`'s hodnoty odpovídají `fieldHashes`, které Dojička skutečně certifikovala. Teoreticky: `aggregate()` s pravými `fieldHashes` vrátí `READY`, ale `seal()` pak podepíše Konev s libovolným `businessPayload` — Evidence i podpis zůstanou kryptograficky v pořádku, jen nad jiným obsahem | **P, potvrzeno a opraveno** | Ověřeno přímo: `aggregator.ts` (`AggregateResult` mělo jen `decision`/`findings`/`evidenceRefs`) a `konev.ts:59` (`seal()` bralo `businessPayload` bez porovnání). Opraveno: `AggregateResult` nese `fieldHashes: Record<string,string>` (jen pole se skutečně dochovanou evidencí, prázdné na REVIEW/REJECT), `BusinessObjectSealer.seal()` teď pro každé pole v `result.fieldHashes` přepočítá `sha256(canonicalize(businessPayload[field]))` a odmítne neshodu jako `BUSINESS_OBJECT_CHANGED_AFTER_AGGREGATION`. Nové testy `KONEV-009` (swap pole po READY → refused; pole mimo `required` beze změny prochází — to je doménová volba, ne mezera primitivu) |
+
+**P1 nálezy, ověřeny — většina jsou přesná rekonfirmace toho, co Posudek 15 už zapsal a vlastník
+vědomě odložil (`ExecutorHost.policyFor`/idempotency optional, `Router` duplicitní registrace,
+`Router.seen` neomezené), zbytek je nový:**
+
+| # | Bod | Stav | Poznámka |
+|---|---|---|---|
+| P1-8 | `workflowId` je optional na obou stranách CBO řetězu (`Evidence`, `CertifiedBusinessObject`) — aggregator's `workflow_mismatch` kontrola běží jen když obě strany hodnotu mají | **Potvrzeno, odloženo** | `evidence.ts:22`, `konev.ts:24`. U obecného Evidence primitivu je optional rozumné; pro `Invoice → CertifiedInvoice → BC` řetěz konkrétně by měl být povinný, protože dvě faktury stejného tenanta mohou mít stejné IČO/DIČ/účet a samotný `inputValueHash` nerozliší, ke které patří. Čeká na první reálnou CBO cestu, ne na dnešní jednostrannou změnu obecného typu |
+| P1-9 | `CertificationRegistry.certify()` bere `requiredTests` od volajícího, ne z platformní `RiskProfile` — `certify({requiredTests: [], actualResults: {}})` projde jako PASS (`[].every(...) === true`) | **Potvrzeno, odloženo** | `certification.ts:60-61`. Třída sama poctivě přiznává "Not yet wired into LifecycleRegistry/Router" — dnes bez blast radius, ale musí se vyřešit před zapojením do Routeru: `requiredTests` má odvozovat platforma z risk profilu, ne přijímat od volajícího/COW |
+| P1-10 | `Evidence.expiresAt`/`EvidenceClaim.expiresAt` určuje kráva, EvidenceWriter ho jen převezme — kompromitovaná COW může tvrdit `expiresAt: 2099` a platforma to podepíše | **Potvrzeno, odloženo** | `evidence-writer.ts:11`. Správné rozdělení autority: kráva smí říct "toto jsem pozorovala", jak dlouho tomu věříme má určit policy (`min(requestedTTL, policy.maxEvidenceTTL)` per producer/typ), ne kráva sama |
+| P1-11 (= P1-3 Posudku 15, znovu potvrzeno) | Jediný signing klíč (`EvidenceSigningKey`) u Evidence i Konve, žádný keyring — rotace platformního klíče by odmítla starou evidenci i staré Konve | **Potvrzeno, odloženo** | `evidence.ts:120`, `konev.ts:108`. Beze změny oproti Posudku 15 — čeká na první skutečnou rotaci klíče |
+| P1-12 | Žádná domain separation v podpisech — Evidence i Konev podepisují holý hash stejným typem klíče, žádný `EVIDENCE:v1:`/`CBO:v1:` prefix | **Potvrzeno, odloženo** | `evidence.ts`/`konev.ts`, oba `sign(null, utf8Bytes(hash), ...)`. Kryptograficky dnes neprolomitelné (SHA-256), P2 hardening — levné a čisté, ale ne urgentní |
+| P1-13 | `Grant.rateLimit` je jen deklarace — `checkGrant()` kontroluje actor/scope/tenant, `rateLimit` nikdy nečte | **Potvrzeno, odloženo (Z, už zapsáno v SEVERKA jako nízká priorita)** | `policy.ts:13` (typ) vs. `policy.ts:47-51` (`checkGrant()`). Souhlas s dnešní prioritou (žádná live policy `rateLimit` nepoužívá), ale před veřejným multi-tenant intake by měl jít na P1 ostře — placebo control v bezpečnostní konfiguraci je horší než žádný |
+| P1-5/6/7 (Posudek 15, znovu potvrzeno beze změny) | `ExecutorHost.policyFor`/durable `idempotency` tiše optional; `Router.register()` nehlásí duplicitní `capability@version`; `Router.seen` neomezené pole | **Potvrzeno, NEOPRAVENO, stejné odůvodnění jako Posudek 15** | Sahají do živého `ExecutorHost`/`Router` (`apf-document-host`/`apf-email-executor`), vyžadují audit všech volacích míst před změnou chování, ne bodovou úpravu — vlastníkovo rozhodnutí, kdy na to dojde |
+
+**Nález navíc, který posudek sám nenašel — dokumentační drift:** `docs/SEVERKA.md`'s řádek "Audit
+provenance" pořád tvrdil "neopraveno", ale runtime (`auditClaimContradicts()`, HANDOFF 95/96,
+11. 9. 2026) už skutečně odmítá cizí `tenantId` s `403 TENANT_MISMATCH`. Posudek správně navrhl
+přesně dispozici "PARTIALLY MITIGATED" pro tenhle případ, jen nevěděl, že SEVERKA sama to ještě
+netvrdí. **Opraveno v SEVERKA.md ve stejný den** — řádek teď rozlišuje, co (95)/(96) skutečně kryje
+(tenantId proti journalu) od toho, co pořád chybí (actorId/capability/kind nejsou vázané na podepsaný
+dispatch).
+
+**Jedna věc v posudku byla zastaralá, ne chyba kódu:** tvrzení "Průsvitná stáj rebuild ještě
+nenasazen, čeká na schválení vzhledu" platilo pro HANDOFF (129), ale (138)/(139) — barva tváře a
+celý vizuální jazyk dema — už byly schváleny a nasazené. Posudek zřejmě četl repo těsně před
+těmihle dvěma commity; nejde o nález, jen o časování snapshotu.
+
+**Verdikt:** 9,0/10 dnes (implementovaný projekt), ~9,2–9,3/10 očekáváno po `candidateHash` opravě
+bez dalších features — přesně to, co se dnes stalo. Nejdůležitější věta z posudku, beze změny:
+"Dnes už umíme velmi dobře dokázat, že Evidence nebyla změněna. Teď musíme stejně tvrdě dokázat, že
+businessPayload, který zapečeťujeme do Konve, je přesně ten business objekt, pro který byly tyto
+Evidence ověřeny." — to je po dnešní opravě splněné pro pole, která Dojička skutečně certifikuje;
+zbytek punch listu (workflowId povinný pro CBO, durable Žlab, keyring, `CertificationRegistry`
+zapojení, `ExecutorHost`/`Router` startup-fail) zůstává vlastníkovo rozhodnutí o pořadí.
+
+### Co posudek nezměnil
+
+Kód dnes: `src/platform/aggregator.ts` (`fieldHashes` na `AggregateResult`), `src/platform/konev.ts`
+(`seal()`'s nová kontrola), `tests/konev.test.ts` (reálné `sha256(canonicalize())` hashe místo
+placeholder řetězců, +2 testy KONEV-009). 421/421 testů, typecheck, arch, farm:check zelené. P1-5/6/7
+z Posudku 15 zůstávají neopravené se stejným odůvodněním; nové P1-8..13 vědomě neopraveny, čekají na
+vlastníkovo rozhodnutí o pořadí (viz posudkův vlastní návrh pořadí: workflowId povinný → evidence TTL
+z policy → durable Žlab → signing keyring → `CertificationRegistry` z RiskProfile → zapojení do
+Lifecycle/Routeru → `ExecutorHost` R2+ vynutí durable idempotency+policy → `Router` startup-fail na
+duplicitu → limit `Router.seen` → compromised-Farmer E2E přes Žlab→Dojička→Konev).
