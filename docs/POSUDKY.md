@@ -391,3 +391,40 @@ Kód dnes změněn jen v bodě 3 — dokončení už rozjetého checkpointu (`fc
 shoda s touhle reflexí, ne reakce na ni. Zbytek (body 2, 4–12, Office) je dokumentační: zapsáno do
 `docs/SEVERKA.md`, čeká na vlastníkovo rozhodnutí o pořadí implementace bodů 4 (Evidence),
 6 (CertificationRecord), 5 (Lifecycle stavy) a Office samotného.
+
+## Posudek 13 — vlastníkovo shrnutí po Žlab/Dojička commitech, zastaralý na runtime stav, přesná korekce Ponocného (13. 9. 2026)
+
+**Zdroj:** vlastník (Milan), reakce na aktuální `main` po formalizaci Žlab/Konev/Mlékárna/Průsvitná
+stáj/Ponocný do SEVERKA (HANDOFF 119) — číslo commitů v posudku (147) neodpovídá tomu, co bylo
+skutečně na `main` v okamžiku psaní posudku.
+
+**Zastaralost, ověřená stejnou disciplínou jako Posudek 6/10 (přečten `git log`/`git ls-tree`, ne
+převzato z tvrzení):** posudek hodnotí "Žlab runtime 0–10 %", "Evidence runtime 10–20 %", "Dojička
+0 % runtime", "Konev 0 % runtime" a doporučuje "už nepřidávat další koncepty, dokud nezačne vznikat
+Žlab + Evidence v kódu". V okamžiku psaní posudku ale **`main` už měl 149 commitů**, a `src/
+platform/evidence.ts` (`EvidenceLedger`, `tests/zlab.test.ts`, 7 testů ZLAB-001..007, HANDOFF 121)
+i `src/platform/aggregator.ts` (`EvidenceAggregator`/Dojička, `tests/dojicka.test.ts`, 9 testů
+DOJ-001..009, HANDOFF 123) byly na `main` už od dvou commitů před touhle reflexí (`b1a49ec`,
+`38a85a1`) — potvrzeno `git ls-tree -r origin/main --name-only`. Nejpravděpodobnější důvod: posudek
+pracoval s prohlížečovým/cache snímkem GitHubu z okna před pushem, stejný jev jako Posudek 6's CDN
+zpoždění 9. 9. 2026 — ne chyba v kódu ani ignorování doporučení.
+
+| # | Bod | Dispozice | Poznámka |
+|---|---|---|---|
+| 1 | "Evidence/Žlab/Dojička/Konev jsou 0–20 % runtime, ne stavět další koncepty, dokud tohle nevznikne v kódu" | **O, na základě zastaralého snímku** | `EvidenceLedger` a `EvidenceAggregator` existují jako testovaný kód (16 testů) od `b1a49ec`/`38a85a1`, dva commity před touhle reflexí. Konev (zapečetěný `CertifiedBusinessObject`) je skutečně 0 % — správně, ale posudek to nerozlišil od Žlabu/Dojičky, které už jsou hotové |
+| 2 | Ponocný by neměl být enforcement arm Argose; přesná definice: "Argos hlídá farmu, Ponocný nezávisle hlídá, že Argos skutečně hlídá" — malý, nezávislý heartbeat/canary/dead-man's-switch; enforcement (quarantine/kill switch/emergency READ_ONLY) patří do samostatného konceptu | **P, přijato — moje vlastní interpretace z 12. 9. byla nepřesná** | `docs/SEVERKA.md` `## Vrstvy` řádek "Argos + Ponocný" (zapsaný 12. 9. 2026, HANDOFF 119, výslovně jako "nejlepší dostupná interpretace... neověřeno přímo s vlastníkem") mylně sloučil detekci hlídání s enforcementem. Opraveno: Ponocný je teď definován jako nezávislý heartbeat/canary nad Argosem samotným (chrání proti scénáři "Argos/cron spadne a nikdo si nevšimne"), enforcement přesunut do nového, oddělného řádku **Safety Executor** |
+| 3 | DRY_RUN zobecnění (schema→policy→validators→approval→idempotency, ale bez side effectu a bez write credentialu vůbec, ne jen `if dryRun return`) je správně zapsáno | **Z, potvrzeno** | Odpovídá `### DRY_RUN jako obecný princip pro write capability` (HANDOFF 118), beze změny |
+| 4 | Evidence kontrakt (`evidenceId`/`tenantId`/`capability`/`provider`/`inputField`/`inputValueHash`/`result`/`observedAt`/`expiresAt`/`buildHash`) + build-bound `CertificationRecord` jsou správný základ pro composition scénáře (změna IČO/účtu/buildu/tenanta invaliduje starou evidenci) | **Z, potvrzeno a už implementováno** | Přesně tvar `Evidence` v `src/platform/evidence.ts` (`b1a49ec`) — `CertificationRecord` sám zůstává nepostavený (SEVERKA `## Pořadí` bod 3) |
+| 5 | Office koncepčně hotové, chybí implementace | **Z, potvrzeno** | Beze změny od (117); implementace 0 % |
+
+**Verdikt vlastníka (jeho vlastní skóre, přepočítané s korekcí bodu 1 výš):** implementované jádro
+~9,1/10, cílová architektura ~9,6/10, realizace celé dnešní vize odhadem 65–70 % — tahle poslední
+míra je teď o dva testované primitivy vyšší, než posudek počítal, protože Žlab a Dojička nejsou
+0 %, ale hotové jako testovaný kód (Konev/Mlékárna/Office/Průsvitná stáj/Safety Executor zůstávají
+0 % beze změny).
+
+### Co posudek nezměnil
+
+Kód dnes: jen `docs/SEVERKA.md` (Ponocný/Safety Executor split, viz bod 2). Pořadí `## Pořadí`
+beze změny — Konev a napojení první reálné krávy (`cz.company.verify`/`cz.vat.verify`) zůstávají
+příští, ne composition attack suite (ta stojí až za nimi, jak `## Pořadí` bod 9 už řadí).

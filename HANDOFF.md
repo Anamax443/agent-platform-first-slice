@@ -2,6 +2,29 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-13 (124) — Posudek 13 zalogován: opravena Ponocného definice, zachycen zastaralý posudek na Žlab/Dojička runtime
+
+Vlastník reagoval na formalizaci Žlab/Konev/Mlékárna/Průsvitná stáj/Ponocný (HANDOFF 119) se dvěma
+věcmi: (1) věcná korekce role Ponocného, (2) shrnutí, které hodnotilo Žlab/Evidence/Dojička jako
+0–20 % runtime — ověřeno proti `git ls-tree -r origin/main` a `git log`: `main` má **149 commitů**,
+`src/platform/evidence.ts` i `src/platform/aggregator.ts` (+16 testů) byly na `main` už dva commity
+před touhle reflexí (`b1a49ec`, `38a85a1` — HANDOFF 121/123). Stejný jev jako Posudek 6's GitHub
+CDN zpoždění 9. 9. 2026 — posudek pracoval se snímkem staršího stavu, ne s chybou v kódu.
+
+**Ponocný, věcná korekce (přijato, moje vlastní zápis z 12. 9. byl nepřesný):** dřív zapsáno jako
+"enforcement arm Argose" (quarantine/kill switch/emergency READ_ONLY). Vlastník správně rozlišuje:
+**Argos hlídá farmu. Ponocný nezávisle hlídá, že Argos skutečně hlídá** — malý, nezávislý heartbeat/
+canary/dead-man's-switch nad Argosem samotným (chrání proti "gateway/cron spadne, Argos přestane
+tikat, nikdo si nevšimne", ne proti širším incidentům). Enforcement přesunut do nového, odděleného
+konceptu **Safety Executor** — automaticky jedná (quarantine/kill switch/READ_ONLY) na základě
+toho, co Argos nahlásí. Rozdělení předchází tomu, aby se Ponocný "rozrostl do druhého Argose" se
+stejnými failure modes.
+
+Zapsáno do `docs/POSUDKY.md` (Posudek 13, plná tabulka 5 bodů) a `docs/SEVERKA.md` (`## Vrstvy`
+řádek "Argos + Ponocný" rozdělen na dva — Ponocný přeformulován, nový řádek `Safety Executor`;
+`### Srovnání s enterprise konkurencí`'s Harness-signál odstavec opraven ze stejného důvodu).
+Čistě dokumentační krok, žádný kód dnes.
+
 ## 2026-09-13 (123) — Dojička implementována: deterministický evidence aggregator nad Žlabem
 
 Pokračování (121) — první jednoduchá dojička (Posudek 11 bod 7 / Posudek 12 bod 9), teď skutečně
