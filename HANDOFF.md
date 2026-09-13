@@ -2,6 +2,42 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-13 (139) — apf-gateway: vizuální jazyk dema (ai-farma-web) přenesen do CSS, žádná HTML/data změna
+
+HANDOFF (138)'s barevná paleta pořád nestačila — vlastník po dalším screenshotu (živý
+`apf.maxferit.cz`, dark green paleta už funkční, ale vzhledově pořád "ten starý admin nástroj"):
+nejdřív navrhoval úplně nahradit `apf-gateway` demem (`ai-farma-web`), po vysvětlení, že by tím
+zmizel reálný nástroj s ostrými daty (viz screenshot: reálné `faktura-tshydro-STAMPED.pdf` atd.),
+upřesnil: **"jde mi o vzhled, funkčnost zachovej ale vzhled změň"** → **"prostě vezmi demo a
+doplň mu propoje... měníme frontend, backend zůstává."**
+
+**Rozsah tenhle krok striktně dodržel:** žádná HTML struktura, žádný formulář (`action`/field
+names), žádná routa, žádná JS logika (`Deník` terminál, review decide, self-test trigger) se
+nezměnila — jen `APP_CSS`/`SHELL_CSS` (typografie, karty, tlačítka, pilulky, sidebar/topbar
+rozměry). Nulové riziko pro skutečná data/funkčnost, protože se nesahalo na nic, co je generuje
+nebo přijímá.
+
+**Konkrétní změny (vzorem `deploy/cloudflare/ai-farma-web/styles.css`):**
+- Font: `--font`/`--font-head` na `Inter,ui-sans-serif,system-ui,...` (dřív oddělený serif
+  `"Iowan Old Style"` pro nadpisy — přesně tohle nejspíš čtenář vnímal jako "starý"/admin-nástrojový
+  vzhled, ne konkrétní barva).
+- `.card`/`.stat`/`.p-card`: plochá `var(--panel)` → `linear-gradient(180deg,var(--panel),#091511)`
+  + velký měkký stín `0 18px 50px rgba(0,0,0,.30)` (dřív drobný `0 1px 2px...`) — demo's "hloubka".
+  `--radius-lg` 16→18px.
+  `--radius` (tlačítka) 10→11px.
+- `.btn-primary`: `#1f6d49`/`#2b895e` (demo's tmavší zelená na tlačítkách) místo zářivého
+  `--accent` (ten zůstává pro odkazy/zvýraznění/aktivní stav navigace — dvě různé role, jako
+  v demu).
+- `.app-top .meta`: přesně demo's `.pill` tvar (`border:1px solid #2b4c3d;background:#10241b`).
+- Sidebar 220px→252px, topbar 60px→68px/padding 14px→26px (demo's přesné rozměry).
+- `.navlink[aria-current="true"]`: `background:#153126` + `box-shadow:inset 3px 0 0 var(--accent)`
+  (demo's signature zelený pruh vlevo u aktivní položky) místo ploché `--accent-soft` výplně.
+- `code`: `color:#b9efd0` (demo's zelenkavý monospace tón).
+
+**Ověřeno vizuálně před nasazením** (stejná technika jako HANDOFF 138: `renderFarm()` mimo Worker
+runtime, dočasný test, Playwright screenshot lokálně, smazáno po použití). 419/419 testů,
+typecheck, arch, farm:check zelené. Nasazeno jen `apf-gateway`.
+
 ## 2026-09-13 (138) — apf-gateway: tmavá zelená paleta jako výchozí (ne prefers-color-scheme)
 
 HANDOFF (137)'s barevná oprava kníru nestačila — vlastník po screenshotu z živého
