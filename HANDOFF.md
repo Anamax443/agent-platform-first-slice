@@ -2,6 +2,20 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-13 (137) — Farmář maskot: obličej splýval s pozadím odznaku ("nějakej starej ksicht")
+
+Vlastník na živém `apf.maxferit.cz` (po HANDOFF 133 nasazení): "nějakej starej ksicht" u
+farmářova maskota na Přehledu. Root cause: `MASCOT_SVG.farmar`'s tvář (`circle fill="#f3dfc0"`)
+byla skoro identická s vlastním pozadím odznaku (`MASCOT_BG.prehled = "#f3e0c9"`) — tvář vizuálně
+zmizela, zůstal jen klobouk + oči + knír "vznášející se" bez viditelného obrysu obličeje. Kráva
+(`MASCOT_SVG.krava`) a pes (`MASCOT_SVG.argos`) tenhle problém nemají — jejich tvář (`#fff8ea`) je
+zřetelně světlejší než jejich vlastní pozadí odznaku (`#e6ded0`/`#e0d4c0`).
+
+**Oprava:** tvář přebarvena na `#fff3e2` (stejný kontrastní princip jako kráva/pes). Ověřeno
+vykreslením SVG lokálně (Playwright screenshot) před nasazením — tvář teď zřetelně vystupuje z
+pozadí. 419/419 testů, typecheck, arch, farm:check zelené. Nasazeno jen `apf-gateway` (přímo přes
+vygenerovaný config, ne celý `farm-deploy.mjs` řetěz — ostatní čtyři deployables se nezměnily).
+
 ## 2026-09-13 (136) — cz.vat.verify postaveno (MOJE daně SOAP), druhá ruční kráva z HANDOFF 131
 
 Druhá a poslední z dvou kráv, co vlastník chtěl postavit ručně před meta-nástrojem (HANDOFF 131).
