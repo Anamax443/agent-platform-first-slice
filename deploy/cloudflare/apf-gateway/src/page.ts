@@ -444,11 +444,16 @@ const DEPLOYABLE_ROLE: Record<string, string> = {
 /**
  * Ideas from docs/NAVRHOVY-LIST-farma.md that have no code yet (owner's request, 2026-09-07: "do seznamu agentů
  * dávej i nápady co mám v režimu návrh") — kept here by hand, in sync with the design doc, not parsed from it.
+ * Found stale 2026-09-14 (owner, over a screenshot: "to je taky tele" / "krávou se stane tele automaticky,
+ * pokud splňuje všechny atributy krávy"): cz.company.verify/cz.vat.verify sat here claiming "žádný kód" long
+ * after src/components/cz-company-verify, cz-vat-verify were actually built (HANDOFF c030d60/9e68529) — true
+ * code, tested, just not yet wired into any live Cloudflare deployable (only src/slice.ts, the Node harness
+ * root). Removed rather than relabeled: this list is the ONE hand-maintained "is it real" state left on the
+ * page, and it drifted the moment nobody remembered to update it by hand. Everything else (Stáj/Teletník) reads
+ * live Router state, never a list a human has to keep in sync — once these two are wired into apf-gateway,
+ * they appear in Teletník automatically, no entry here to remember to delete.
  */
-const PLANNED_DEPLOYABLES: { name: string; role: string }[] = [
-  { name: "cz.company.verify", role: "Ověří IČO v ARES (existence, právní forma, adresa) — krok 8b, návrh 7. 9. 2026, žádný kód" },
-  { name: "cz.vat.verify", role: "Ověří DPH plátcovství, nespolehlivého plátce a zveřejněný bankovní účet u Finanční správy — krok 8b, návrh 7. 9. 2026, žádný kód" },
-];
+const PLANNED_DEPLOYABLES: { name: string; role: string }[] = [];
 
 /** "Reachable" (HTTP 200 on /version) and "actually wired into the flow" are different claims — a skeleton answers fine but does nothing yet. */
 const workerReady = (d: DeployableStatus): boolean => d.ok && (d.body as Record<string, unknown> | null)?.wired !== false;

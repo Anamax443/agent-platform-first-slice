@@ -2,6 +2,32 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-14 (146) — `PLANNED_DEPLOYABLES` byl zastaralý: `cz.company.verify`/`cz.vat.verify` tvrdily "žádný kód" dávno po tom, co byly postavené
+
+**Pokyn vlastníka:** nad screenshotem sekce "Návrh — zatím nepostaveno" — "to je taky tele" a pak
+princip: "krávou se stane tele automaticky, pokud splňuje všechny atributy krávy".
+
+**Ověřeno v kódu, ne převzato:** `cz.company.verify`/`cz.vat.verify` MAJÍ reálný kód
+(`src/components/cz-company-verify/`, `cz-vat-verify/`, HANDOFF `c030d60`/`9e68529`) — jen nejsou
+zapojené do žádného živého Cloudflare deployable (pouze do `src/slice.ts`, Node harness root). Ruční
+seznam `PLANNED_DEPLOYABLES` v `page.ts` (komentář sám přiznává "kept here by hand, in sync with the
+design doc, not parsed from it") tvrdil "žádný kód" — nikdo ho po postavení kraviček neaktualizoval.
+
+**Oprava:** obě položky ze seznamu odstraněny (ne přeznačeny — "žádný kód" bylo prostě nepravdivé;
+nechat je tam s opraveným textem by znamenalo znovu udržovat ruční stav ručně). `PLANNED_DEPLOYABLES`
+teď prázdné pole, sekce "Návrh" se při prázdném poli sama nevykreslí (`cardSection()`'s existující
+ternary). Princip z vlastníkova pokynu platí už dnes pro Stáj/Teletník (žádný ruční seznam, čte se
+živý stav Routeru) — tohle byl poslední ruční seznam na stránce, co z toho vypadl.
+
+**Živě ověřeno** (`wrangler dev`, `local-fakes`): sekce "Návrh — zatím nepostaveno" i falešné
+"žádný kód" zmizely ze skutečně vykresleného `/farm`.
+
+**Zbývá (vlastníkovo rozhodnutí, ne dnes):** `cz.company.verify`/`cz.vat.verify` zapojit do
+`apf-gateway`'s `platform-wiring.ts` a nasadit — pak se automaticky objeví v Teletníku, bez zásahu
+do téhle stránky.
+
+**Brány zelené:** typecheck, 427/427 testů (beze změny — žádný test na tenhle statický seznam necílil), arch, farm:check.
+
 ## 2026-09-14 (145) — Teletník: nová záložka odděluje telata (nikdy necertifikováno) od zavedených krav ve Stáji
 
 **Pokyn vlastníka:** po vysvětlení, že Stáj dnes ukazuje ACTIVE i NEW kapability vedle sebe (jen
