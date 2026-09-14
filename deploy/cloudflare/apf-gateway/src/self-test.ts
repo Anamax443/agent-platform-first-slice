@@ -94,20 +94,32 @@ const stampGoldenLive: Record<string, Golden> = {
   "canonical-default-stamptext": withPayloadOverride(stampGoldenBase["canonical-default-stamptext"] as Golden, { stampText: "$prefix:STAMPED INVOICE " }),
 };
 
+// Found live 2026-09-14 while checking the new Admission Gate certification against real capabilities: same class
+// of issue as stampGoldenLive's dmsRef above, just never given the same override. archive-handler.ts's `ref` comes
+// straight from apf-fakes' refOf("arch", clientRef) = `arch-${sha256(clientRef).slice(0,12)}` — clientRef is the
+// dispatch's own idempotencyKey (a fresh newId() every self-test run), so archiveRef can never equal the Node
+// fixture's fixed "arch-1", on any live run, by design (identical reasoning to HANDOFF 55-60/95/96/101 for
+// dmsRef/stampText — this one was simply missed when those were fixed).
+const archiveGoldenBase = archiveGolden as Record<string, Golden>;
+const archiveGoldenLive: Record<string, Golden> = {
+  ...archiveGoldenBase,
+  "canonical-archive": withPayloadOverride(archiveGoldenBase["canonical-archive"] as Golden, { archiveRef: "$prefix:arch-" }),
+};
+
 const SUITES: { capability: string; worker: string; fixtures: Fixture[]; golden: Record<string, Golden> }[] = [
   { capability: "document.classify", worker: "apf-gateway", fixtures: classifyFixtures as Fixture[], golden: classifyGolden as Record<string, Golden> },
   { capability: "document.validate", worker: "apf-gateway", fixtures: validateFixtures as Fixture[], golden: validateGolden as Record<string, Golden> },
   // First capability of the invoice→verify→BC chain (SEVERKA.md ## Pořadí, VC §5's worked example) — in-process
   // on the gateway like classify/validate (no side effects, no credential to isolate).
   { capability: "invoice.extract", worker: "apf-gateway", fixtures: extractFixtures as Fixture[], golden: extractGolden as Record<string, Golden> },
-  // Next two capabilities of the invoice→verify→BC chain (SEVERKA.md "## Pořadí" bod 5-6, HANDOFF 145) — in-process
+  // Next two capabilities of the invoice→verify→BC chain (SEVERKA.md "## Pořadí" bod 5-6, HANDOFF 152) — in-process
   // on the gateway like classify/validate/extract, against FakeAresAdapter/FakeMojeDaneAdapter (no real
   // ares.gov.cz/adisrws.mfcr.cz baseUrl configured yet, same "not a live external call" scope as every other
   // fixture here that needs adapters.ares/mojeDane !== "ok" — this file's own comment above already skips those).
   { capability: "cz.company.verify", worker: "apf-gateway", fixtures: companyVerifyFixtures as Fixture[], golden: companyVerifyGolden as Record<string, Golden> },
   { capability: "cz.vat.verify", worker: "apf-gateway", fixtures: vatVerifyFixtures as Fixture[], golden: vatVerifyGolden as Record<string, Golden> },
   { capability: "document.stamp", worker: "apf-document-host", fixtures: stampFixtures as Fixture[], golden: stampGoldenLive },
-  { capability: "document.archive", worker: "apf-document-host", fixtures: archiveFixtures as Fixture[], golden: archiveGolden as Record<string, Golden> },
+  { capability: "document.archive", worker: "apf-document-host", fixtures: archiveFixtures as Fixture[], golden: archiveGoldenLive },
   // SEVERKA.md item 3, second real write-type: mail.ingest runs in-process on the gateway (no credential to
   // isolate), email.send is a genuine remote dispatch to apf-email-executor (PRINCIPAL, SEND_MODE=sandbox here —
   // self-test never flips that, so this never sends a real email). Both fixture suites individually verified
@@ -122,6 +134,19 @@ const SUITES: { capability: string; worker: string; fixtures: Fixture[]; golden:
  * subrequest-depth limit noted above). Derived from SUITES, never a separately maintained list that could
  * silently drift from what actually runs. */
 export const SELF_TEST_CAPABILITIES: readonly string[] = SUITES.map((s) => s.capability);
+
+/** Every fixture id a live self-test run can actually exercise for `capability` — excludes fixtures that need
+ * Node-only adapter chaos mode (self-test.ts's own `skipped` rows, computed statically here from the same
+ * `f.adapters || f.storage` test runSelfTest() uses at run time, no live run needed to know the list). This is
+ * the platform's own, non-caller-editable definition of "what must pass to certify this build" (Posudek 16
+ * P1-9, docs/POSUDKY.md: `CertificationRegistry.certify()`'s `requiredTests` must come from the platform's own
+ * conformance metadata, never from whoever calls admission). Empty for a capability with no known suite.
+ */
+export function requiredTestsFor(capability: string): string[] {
+  const suite = SUITES.find((s) => s.capability === capability);
+  if (!suite) return [];
+  return suite.fixtures.filter((f) => !(f.adapters || f.storage)).map((f) => f.id);
+}
 
 /** Which capability a scheduled self-test tick should run — deterministic from the tick's own timestamp
  * (`controller.scheduledTime`), no stored "which one is next" state between runs. Pure, so it's testable

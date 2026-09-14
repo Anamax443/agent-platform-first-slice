@@ -2,9 +2,13 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
-## 2026-09-14 (145) — cz.company.verify/cz.vat.verify zapojeny do živého apf-gateway Routeru (proti fakes, bez EvidenceWriter)
+## 2026-09-14 (152) — cz.company.verify/cz.vat.verify zapojeny do živého apf-gateway Routeru (proti fakes, bez EvidenceWriter)
 
-**Pokyn vlastníka:** "zapoj a commitni a pushni na git" — navazuje na (144). Před zápisem položena
+**Sloučeno s paralelní session (149-148 kolize čísel):** tahle větev i `origin/main` nezávisle
+očíslovaly nové záznamy od (142) — sloučeno tak, že tahle čtveřice (149-152) pokračuje až za jejich
+(148); obsah ani pořadí uvnitř každé strany se neměnil, jen čísla a křížové odkazy na ně.
+
+**Pokyn vlastníka:** "zapoj a commitni a pushni na git" — navazuje na (151). Před zápisem položena
 `AskUserQuestion` (na co se mají capability v provozu ptát — fake dvojice vs. reálné ares.gov.cz/
 adisrws.mfcr.cz vs. jen registrace bez evidence); odpověď "uptoyou", rozhodnutí tedy níže vlastní.
 
@@ -18,7 +22,7 @@ adisrws.mfcr.cz vs. jen registrace bez evidence); odpověď "uptoyou", rozhodnut
   `private readonly byId = new Map()`), "durable Žlab storage" je otevřený bod v Posudku 16's punch
   listu (`docs/POSUDKY.md:553-565`, explicitně "vlastníkovo rozhodnutí o pořadí"). Zapsat živou
   evidenci, co evikce DO může tiše ztratit, by bylo přesně to, co tenhle projekt jinde nikdy
-  netoleruje — (144)'s `evidence?: EvidenceWriter` zůstává v `platform-wiring.ts` nevyužité.
+  netoleruje — (151)'s `evidence?: EvidenceWriter` zůstává v `platform-wiring.ts` nevyužité.
 
 **Změny:**
 - `deploy/cloudflare/apf-gateway/src/platform-wiring.ts`: `COMPANY_VERIFY`/`VAT_VERIFY` konstanty,
@@ -43,9 +47,9 @@ workflow neexistuje), žádné skutečné `HttpAresAdapter`/`HttpMojeDaneAdapter
 vlastní hlavičkový komentář to říká výslovně), farm:check (obě instalace, včetně
 `tsc -p deploy/cloudflare/tsconfig.json`).
 
-## 2026-09-14 (144) — cz.company.verify/cz.vat.verify reálně zapisují do Žlabu (test/conformance harness), živý gateway zatím ne
+## 2026-09-14 (151) — cz.company.verify/cz.vat.verify reálně zapisují do Žlabu (test/conformance harness), živý gateway zatím ne
 
-**Pokyn vlastníka:** "jasne" na návrh z (143) — zapojit `EvidenceLedger.append()` do obou ověřovacích
+**Pokyn vlastníka:** "jasne" na návrh z (150) — zapojit `EvidenceLedger.append()` do obou ověřovacích
 kraviček, aby breakpoint měl co zobrazit, až vznikne.
 
 **Zjištění cestou:** `EvidenceWriter` (trusted-context-bound writer, přesně tenhle problém řeší) už
@@ -82,11 +86,11 @@ krok, stejná disciplína jako u (132)/(136).
 
 **Brány zelené:** typecheck, arch, **427/427 testů** (+6 CZV-EVD), farm:check (obě instalace).
 
-## 2026-09-14 (143) — SEVERKA: Průsvitná stáj zpřesněna — BREAKPOINT patří za krávu co píše do Žlabu, "přeléčení" = CORRECT retry, tvrdá závislost na napojení Žlabu
+## 2026-09-14 (150) — SEVERKA: Průsvitná stáj zpřesněna — BREAKPOINT patří za krávu co píše do Žlabu, "přeléčení" = CORRECT retry, tvrdá závislost na napojení Žlabu
 
 **Vlastníkův požadavek (diskuze, "uptoyou" na sepsání):** "musím být schopen po každé krávě
 zkontrolovat žlab a v případě, že žlab bude špatně tak předchozí krávu musíme přeléčit." Zpřesňuje
-`docs/BC-PURCHASE-INVOICE-POLE.md` (141/142)'s debugger diskuzi na konkrétní mechanismus.
+`docs/BC-PURCHASE-INVOICE-POLE.md` (141/149)'s debugger diskuzi na konkrétní mechanismus.
 
 **Závěr diskuze, zapsán do `SEVERKA.md`'s `Průsvitná stáj` řádku:**
 - `BREAKPOINT` nemá být obecné zastavení po každém kroku — patří konkrétně **za krok, co zapisuje
@@ -103,7 +107,7 @@ zkontrolovat žlab a v případě, že žlab bude špatně tak předchozí kráv
 
 Čistě dokumentační krok — žádný kód, žádná nová capabilita.
 
-## 2026-09-14 (142) — Nový `docs/BC-PURCHASE-INVOICE-POLE.md`: reálná pole BC API v2.0 `purchaseInvoices`/`purchaseInvoiceLines` ověřena proti oficiální dokumentaci
+## 2026-09-14 (149) — Nový `docs/BC-PURCHASE-INVOICE-POLE.md`: reálná pole BC API v2.0 `purchaseInvoices`/`purchaseInvoiceLines` ověřena proti oficiální dokumentaci
 
 **Pokyn vlastníka:** chce vědět, jaká pole pro zápis do BC skutečně potřebujeme, aby se proces dal
 postupně ladit — navazuje na `## Pořadí` bod 7 (diskuze o debuggeru/editaci kroků odbočila zpět
@@ -128,6 +132,241 @@ u ARES/MOJE daně (HANDOFF 111-112). Nový dokument mapuje BC pole proti tomu, c
 
 Zapsáno do `docs/SEVERKA.md ## Pořadí` bodu 7 jako odkaz. Čistě dokumentační krok — žádný kód,
 žádná nová capabilita.
+
+## 2026-09-14 (148) — Argosovy "VYŘEŠENO" e-maily zněly jako pokračující problém
+
+**Pokyn vlastníka:** reálný e-mail od Argose — "argosovy zprávy se mi nelíbí, nic z nich nepoznám",
+se screenshotem: předmět "2 vyřešené nálezy", tělo "VYŘEŠENO: document.stamp: self-test 12/14, 2
+kontrol selhává (trvalo 3 dní)".
+
+**Ověřeno v kódu:** `composeIncidentAlert()` (page.ts) pro vyřešený nález jen znovu vypíše
+`i.text` — text zamrzlý na tom, co nález říkal naposledy JEŠTĚ OTEVŘENÝ (počet selhávajících
+kontrol). Pod nadpisem "VYŘEŠENO:" to čtenáři zní přesně obráceně, než to znamená.
+
+**Oprava:** řádek teď říká `${i.text} — teď OK (trvalo ...)` — jasně odděluje "tohle byl problém" od
+"a už není". `tests/page.test.ts` — upravena existující asserce + nový regresní test přímo na
+uživatelův scénář ("document.stamp: self-test 12/14, 2 kontrol selhává" pod VYŘEŠENO musí obsahovat
+"teď OK").
+
+**Živě neověřováno přes reálný e-mail** (čistá textová funkce, bez Cloudflare runtime závislosti,
+`/farm/test-alert` by poslal další reálný e-mail — zbytečné navíc k testu, co přesně reprodukuje
+uživatelův string) — ověří se přirozeně při dalším vyřešeném nálezu.
+
+**Brány zelené:** typecheck, **435/435 testů** (+1), arch, farm:check.
+
+## 2026-09-14 (147) — Kravská dílna: první konverzační AI asistent na `/farm`, navrhuje soubory, nic sám nenasazuje
+
+**Pokyn vlastníka:** "ale já chci vytvářet na webovkách krávy/telata a s pomocí AI je uvádět do
+života" — cíl celé dnešní řady kroků (Nastavení → Teletník → tohle). Doplněno: "a telata i krávy by
+měly být editovatelné" (dílna nerozlišuje nová/existující jako dvě různé věci — jeden chat pro obojí,
+admin sám vloží existující kód, dokud není zapojené automatické stažení).
+
+**Bezpečnostní hranice (vlastníkova stálá pravidla, ne dnešní vynález):** asistent nikdy sám nic
+nenasazuje ani nezapisuje — jen navrhuje soubory v chatu. Živá farma se nemění tímhle chatem vůbec;
+skutečný kód jde přes commit/PR/testy/deploy jako cokoli jiného. Automatické zakládání GitHub PR
+vědomě NEpostaveno dnes — vyžadovalo by nový GitHub token jako secret na živém Workeru, což je
+samostatné rozhodnutí o důvěryhodnosti (další krok, ne dnešek).
+
+**Jak to funguje:**
+- `LlmAdapter.complete(prompt: string): Promise<string>` (src/adapters/llm.ts) je obecné rozhraní,
+  ne uzavřené na klasifikaci — jen `WorkersAiAdapter`/`AnthropicAdapter`'s výchozí `maxTokens` (16/64)
+  byly nastavené pro krátkou klasifikační odpověď. `modelAdapterFor()` (platform-wiring.ts) dostal
+  nový `maxTokens` parametr, dílna volá s 4000.
+- Nový `workshop.ts`: `WorkshopSession` (sessionId, messages[]), `newSession()`, `buildPrompt()`
+  (celá konverzace + systémový prompt s konvencemi platformy — descriptor.json tvar, handler.ts vzor
+  podle `cz.company.verify`, policy tvar, VC §5 minimum fixtures — zploštěné do jednoho stringu,
+  `complete()` nemá system/user rozdělení), `sendMessage()` (čistá, nikdy nemutuje vstup).
+- D1: `cow-workshop-session:<id>` řádky ve sdílené `audit` tabulce (stejný vzor jako
+  self-test-state/certification-state — žádná nová infrastruktura), `at` = updatedAt pro řazení
+  seznamu.
+- Nová stránka `/farm/workshop/<id>` (vlastní URL jako `/workflow/<id>` — rostoucí chat nepatří
+  předrenderovaný a skrytý do každého načtení `/farm`), nová záložka "Kravská dílna" na `/farm`
+  (formulář na novou konverzaci + seznam předchozích).
+
+**Testy:** nový `tests/workshop.test.ts` (7 testů — title ořezání, pořadí zpráv v promptu,
+konvence v promptu, `sendMessage()` nemutuje vstup, plná historie v promptu druhého kola).
+
+**Živě ověřeno** (`wrangler dev`, `local-fakes`): založení konverzace → 303 → `/farm/workshop/<id>`
+ukazuje Admin i Asistent zprávu (fake model odpoví "OTHER" — očekávané na `local-fakes`, žádný
+skutečný model), navazující zpráva se připojí (4 zprávy celkem), session se objeví v seznamu na
+`/farm`. Chybové cesty: prázdný text, chybějící pole, neznámé session id → 400/404.
+
+**Zbývá (vlastníkovo rozhodnutí o pořadí):** automatické založení GitHub PR z návrhu (potřebuje token
+jako secret), automatické stažení existujícího kódu krávy pro editační session (potřebuje GitHub read
+access), Podatelna copy (nový nález — "tváří se, že řešíme jen vytěžování dokumentů"), editovatelná
+cesta k hero obrázku v Nastavení + klikací otevření originálu.
+
+**Brány zelené:** typecheck, **434/434 testů** (+7), arch, farm:check.
+
+## 2026-09-14 (146) — `PLANNED_DEPLOYABLES` byl zastaralý: `cz.company.verify`/`cz.vat.verify` tvrdily "žádný kód" dávno po tom, co byly postavené
+
+**Pokyn vlastníka:** nad screenshotem sekce "Návrh — zatím nepostaveno" — "to je taky tele" a pak
+princip: "krávou se stane tele automaticky, pokud splňuje všechny atributy krávy".
+
+**Ověřeno v kódu, ne převzato:** `cz.company.verify`/`cz.vat.verify` MAJÍ reálný kód
+(`src/components/cz-company-verify/`, `cz-vat-verify/`, HANDOFF `c030d60`/`9e68529`) — jen nejsou
+zapojené do žádného živého Cloudflare deployable (pouze do `src/slice.ts`, Node harness root). Ruční
+seznam `PLANNED_DEPLOYABLES` v `page.ts` (komentář sám přiznává "kept here by hand, in sync with the
+design doc, not parsed from it") tvrdil "žádný kód" — nikdo ho po postavení kraviček neaktualizoval.
+
+**Oprava:** obě položky ze seznamu odstraněny (ne přeznačeny — "žádný kód" bylo prostě nepravdivé;
+nechat je tam s opraveným textem by znamenalo znovu udržovat ruční stav ručně). `PLANNED_DEPLOYABLES`
+teď prázdné pole, sekce "Návrh" se při prázdném poli sama nevykreslí (`cardSection()`'s existující
+ternary). Princip z vlastníkova pokynu platí už dnes pro Stáj/Teletník (žádný ruční seznam, čte se
+živý stav Routeru) — tohle byl poslední ruční seznam na stránce, co z toho vypadl.
+
+**Živě ověřeno** (`wrangler dev`, `local-fakes`): sekce "Návrh — zatím nepostaveno" i falešné
+"žádný kód" zmizely ze skutečně vykresleného `/farm`.
+
+**Zbývá (vlastníkovo rozhodnutí, ne dnes):** `cz.company.verify`/`cz.vat.verify` zapojit do
+`apf-gateway`'s `platform-wiring.ts` a nasadit — pak se automaticky objeví v Teletníku, bez zásahu
+do téhle stránky.
+
+**Brány zelené:** typecheck, 427/427 testů (beze změny — žádný test na tenhle statický seznam necílil), arch, farm:check.
+
+## 2026-09-14 (145) — Teletník: nová záložka odděluje telata (nikdy necertifikováno) od zavedených krav ve Stáji
+
+**Pokyn vlastníka:** po vysvětlení, že Stáj dnes ukazuje ACTIVE i NEW kapability vedle sebe (jen
+odlišené badge): "a neměla by to být samostatný teletník? co není hotová kráva je tele, ne?"
+
+**Pravidlo přesunu:** `derivedStatus === "NEW"` (Admission Gate nikdy neproběhla pro tenhle build) →
+tele → Teletník. **Cokoli jiného zůstává ve Stáji, včetně QUARANTINED** — kráva, co už jednou prošla
+certifikací a teď selhává, je nemocná kráva, ne tele; jen "nikdy ani nezkoušeno" se stěhuje.
+
+**Kód:** `penGrid` rozdělen na `penGridOf(caps)` (čistá funkce, beze změny vykreslování karty samotné)
++ dva filtry (`m.capabilities.filter(c => c.derivedStatus === "NEW")` / `!== "NEW"`). Nová záložka
+Teletník (ikona/MASCOT_BG sdílí kravský mascot s Stájí, jen jiná barva pozadí), počítadlo v navigaci
+jako u Ohrady. "Nová kráva" vysvětlující panel přesunut ze Stáje do Teletníku (tam teď reálně žijí
+nedokončené kapability). Stáj dostala poctivý prázdný stav ("zatím žádná zavedená kráva…") pro čerstvou
+farmu bez jediné certifikace — živě ověřeno, přesně tenhle stav na `local-fakes` nastal.
+
+**Nález při opravě testů:** existující `stajSection` řezy v `tests/page.test.ts` končily na
+`id="view-argos"` — vložení Teletníku MEZI Stáj a Argos způsobilo, že tenhle starý konec ticho
+pohltil celý nový Teletník obsah do "stajSection". Testy by prošly, i kdyby se rozdělení pokazilo
+(u `.not.toContain` assercí doslova vždy, bez ohledu na realitu). Opraveno na `id="view-teletnik"`
+jako správnou hranici + `expect(cardStart).toBeGreaterThan(-1)` guard tam, kde `.indexOf()` krmí
+`.slice()` do `.not.toContain()` (jediné rizikové místo, pozitivní assertions se same-guardují).
+Stejná disciplína jako Posudek 6 (nedůvěřovat, ověřit) — tentokrát nad vlastním testem, ne nad cizím.
+
+**Živě ověřeno** (`wrangler dev`, `local-fakes`, čerstvé D1 bez jediné certifikace): Stáj ukazuje
+prázdný stav, Teletník má všechny 4 nasazené kapability + count badge "4" v navigaci.
+
+**Brány zelené:** typecheck, **427/427 testů** (5 testů opraveno, 0 nových — čistě reorganizace
+existujícího pokrytí), arch, farm:check.
+
+## 2026-09-14 (144) — Nastavení: první runtime-editovatelné nastavení (model pro Kravskou dílnu), krok 1 k "přidat krávu z webu"
+
+**Pokyn vlastníka:** po screenshotu reálné `Průsvitná stáj` — "nevidím nastavení ani office" (potvrzeno
+v kódu: skutečně neexistuje, jen v `ai-farma-web` demu a v docs) → "nějak to vymysli, abychom mohli nové
+krávy zadávat z webovek farmy". Rozsah ujasněn: nová záložka s formulářem/chatem (kód API dotazu, prompt,
+nebo dokumentace), AI navrhne krávu podle standardů, výsledek se standardně otestuje na farmě. Na otázku
+"jaký AI model pro to" odpověď: "jaký bude nastaven v Nastavení… minimum bude AI zdarma, nikdy nebude
+bez AI" — tedy Nastavení muselo vzniknout jako první, samostatný krok, ne součástí dílny samotné.
+
+**Rozsah tohoto kroku (vědomě jen základ, ne celá Kravská dílna):** postaven celý řetěz pro JEDNO
+nastavení — od statického katalogu modelů, přes runtime přepínání, až po UI — aby na něm šla stavět
+Kravská dílna (další krok) a případná další nastavení bez opakování stejné práce.
+
+**Jak to funguje:**
+- `installation.ts`'s `profile.models` (dřív jen `document.classify`/`invoice.extract`) dostal nový klíč
+  `cow.workshop` (`platform-wiring.ts`'s `COW_WORKSHOP` — NENÍ dispatchovaná Router capabilita, žádný
+  descriptor/policy, jen recyklace existujícího "nikdy bez modelu, fail-closed, nedostupné možnosti se
+  ukážou s důvodem" mechanismu z `modelTable()`). Oba profily (`farm-bass443`, `local-fakes`) dostaly
+  odpovídající katalog — na farm-bass443 stejné 4 volby jako `document.classify` (Llama 8B/70B zdarma,
+  Claude Opus 5/Haiku 4.5 platí, oba za `cred:anthropic`, dnes nedostupné — secret ještě není nastavený).
+- `describeModels()` zobecněná o `capability`/`selectedKey` parametr (dřív natvrdo CLASSIFY) — třetí
+  volání stejné logiky (po CLASSIFY, EXTRACT), takže sdílená funkce místo další kopie sedí na vlastní
+  dosavadní konvenci repa ("duplikace do třetího použití"). Nový `modelAdapterFor()` vedle (jeden adaptér
+  z jedné volby, ne celá sada pro workflow strategie — pro Kravskou dílnu, budoucí krok).
+- **Runtime přepínání:** nová D1 řádka `settings:cow-workshop-model` (stejné `INSERT OR REPLACE`
+  fixed-row idiom jako `self-test-state`/`certification-state`) drží AKTUÁLNÍ volbu; `describeModels()`
+  ji čte jako `selectedKey`, ale zdroj pravdy pro "co vůbec existuje a je dostupné" zůstává statický
+  profil + secrets — Nastavení nemůže vynalézt nový provider ani obejít chybějící credential.
+- Nová záložka **Nastavení** na `/farm` (ikona, MASCOT_BG, `cowWorkshopModelForm()`) — rádiové tlačítko
+  na volbu, nedostupné šedě s důvodem, POST na nový `POST /farm/settings/cow-workshop-model`
+  (`index.ts`), který volbu ověří proti stejnému `describeModels()` (nejde uložit nedostupnou/neznámou
+  volbu) a teprve pak zapíše.
+
+**Testy:** `tests/page.test.ts` +2 nové (formulář s checked default; nedostupná volba zobrazená
+disabled s důvodem, nikdy tiše vynechaná) + 1 upravený (8 sekcí místo 7).
+
+**Živě ověřeno** (`wrangler dev`, `local-fakes`): Nastavení karta renderuje formulář se skutečnou
+jedinou volbou (`fake-llm`, checked); `POST` s platným klíčem → 303 a zápis do D1; s neznámým klíčem
+(`claude-opus-5`, na `local-fakes` neexistuje) → 400; bez klíče → 400.
+
+**Zbývá (další krok, ne dnes):** samotná Kravská dílna — chat/formulář, AI návrh nového modulu podle
+konvencí (`cz.vat.verify`/`cz.company.verify` jako vzor), založení branch + GitHub PR (`gh` ověřené,
+právo `repo`+`workflow`), lidský merge → normální deploy → živá certifikace přes dnešní Admission Gate.
+
+**Brány zelené:** typecheck, **427/427 testů**, arch, farm:check.
+
+## 2026-09-14 (143) — self-test: `document.archive`'s `canonical-archive` mělo stejnou live-golden mezeru jako `dmsRef`/`stampText`, jen nikdy nedostalo override
+
+**Nalezeno:** hned po nasazení (142) vlastník ukázal reálný `/farm` s `document.stamp`/`document.archive`
+self-test 15/18 a Admission Gate badge QUARANTINED. Ověřeno přímo diffem, ne odhadem:
+`canonical-invoice-stamp`/`canonical-default-stamptext` na opakovaný živý běh prošly (stará/stale
+D1 hodnota, self-test-state se neobnovuje samo mezi 30min cron tiky) — ale `canonical-archive` padalo
+znovu a spolehlivě: `$.payload.archiveRef: "arch-3fc4b3217615" != "arch-1"`.
+
+**Příčina:** stejná třída jako `dmsRef`/`stampText` (HANDOFF 55-60/95/96/101, `stampGoldenLive`) —
+`archive-handler.ts`'s `ref` jde přímo z `apf-fakes`'s `refOf("arch", clientRef) = arch-<sha256(clientRef).slice(0,12)>`,
+`clientRef` = dispatch's vlastní `idempotencyKey` (čerstvý `newId()` při každém self-test běhu), takže
+`archiveRef` nikdy nemůže sedět s Node fixture's pevným `"arch-1"`. `stampGoldenLive` v `self-test.ts`
+tenhle vzorec už měl pro `dmsRef`, jen na paralelní `archiveRef` se při té opravě zapomnělo.
+
+**Oprava:** nový `archiveGoldenLive` (`self-test.ts`), stejný `withPayloadOverride`/`$prefix:` vzorec
+— `archiveRef: "$prefix:arch-"`. `SUITES`'s `document.archive` entry teď ukazuje na `archiveGoldenLive`
+místo syrového `archiveGolden`.
+
+**Vedlejší efekt Admission Gate (142):** tenhle nález byl dřív jen tichý řádek v self-test kartě
+(„15/18", snadné přehlédnout); nová Admission Gate certifikace ho udělala viditelným jako červený
+QUARANTINED badge — přesně k tomu byl postavený.
+
+**Brány zelené:** typecheck, 425/425 testů (beze změny počtu — golden fixture, ne nová testovací
+jednotka), arch, farm:check.
+
+## 2026-09-14 (142) — Admission Gate zapojený reálně na živé `/farm`: P1-9 opraveno, `CertificationRegistry` skutečně certifikuje nasazený build
+
+**Pokyn vlastníka:** otázka "kde se zadává nová kráva s tím AI?" nad screenshotem Průsvitné stáje →
+zjištění, že reálný `apf-gateway` tenhle vstupní bod vůbec nemá (jen `ai-farma-web`'s statické demo
+se sample daty) → "tak to udělej!!!".
+
+**Co bylo reálně možné postavit:** `Router.register()` dnes přijímá kapability jen jako statický
+kód (`RegisteredComponent` sestavený při buildu), ne za běhu z formuláře — „Kráva z GUI" (AI
+vygeneruje a rovnou nasadí nový modul z promptu) zůstává vize (jen v docs, žádný kód). Auto-deploy
+AI-generovaného kódu na živou farmu bez lidského review by přímo porušil vlastníkovo pravidlo
+"nikdy nenasazuj netestované" i "AI z příkazové řádky nesmí zapínat věci na ostro". Reálně
+buildovatelné a poctivé: udělat Admission Gate skutečný pro to, co už je nasazené — přesně mezera,
+kterou Posudek 16 (HANDOFF 141) bod P1-9 pojmenoval.
+
+**Oprava P1-9:** `CertificationRegistry.certify()` (`src/platform/certification.ts`) teď odmítá
+`requiredTests: []` jako vždy FAIL (dřív `[].every(...) === true`, vacuous PASS) — obrana do
+hloubky. Skutečná oprava je ale v tom, kdo `certify()` volá: nová `requiredTestsFor(capability)`
+(`self-test.ts`) odvozuje povinné testy ze skutečné conformance sady dané kapability (fixture id,
+bez těch co potřebují adapter chaos mode), nikdy z parametru requestu — `/farm/certify` je jediný
+skutečný volající a nikdy nebere `requiredTests` z URL/body.
+
+**Nové:** `/farm/certify?capability=X` (POST) spustí živý self-test přesně jedné kapability a
+certifikaci uloží do D1 stejným vzorem jako `self-test-state` (fixed-row `INSERT OR REPLACE` +
+append-only historie `certification-check`), build-bound na `env.GIT_SHA`. `buildFarmModel()` čte
+poslední certifikaci per kapabilita, `deriveLifecycleStatus()` (6 stavů) počítá jen s certifikací
+PRO AKTUÁLNÍ build — certifikace ze staršího deploye se pořád ukáže (transparentnost), ale nikdy
+neprojde jako "tenhle build certifikovaný". UI na Stáji: druhý, jasně odlišený "Admission Gate"
+badge vedle skutečného `lifecycleStatus` (co doopravdy vynucuje Router), tlačítko "Spustit
+certifikaci" na každé kartě, poctivý panel "Nová kráva" — vysvětluje, že nová kráva pořád
+potřebuje reálný kód a deploy, tlačítko samo nic nezapíná.
+
+**Živě ověřeno** (ne jen typecheck/dry-run): `wrangler dev` nad `local-fakes`, `POST
+/farm/certify?capability=document.classify` → `document.classify` reálně certifikováno ACTIVE,
+18/18 povinných testů, `/farm` to ukazuje; `document.stamp` (worker mimo tenhle dev běh) → čistě
+404, žádný pád; chybějící `capability` parametr → 400.
+
+**Zbývá, vědomě mimo:** zip upload do Podatelny (vlastníkova volba pořadí — nejdřív dokončit
+tohle) a `MAX_UPLOAD_BYTES` (dnes natvrdo 4 MB v `index.ts`) by pak měl být editovatelný
+administrátorem, ne konstanta v kódu.
+
+**Brány zelené:** typecheck, **425/425 testů** (+1 CERT-009, +3 `requiredTestsFor`), arch,
+farm:check. Nenasazeno na `farm-bass443`.
 
 ## 2026-09-14 (141) — Posudek 16: nový P0 mezi Dojičkou a Konví opraven (`candidateHash`/`fieldHashes` binding), SEVERKA audit-provenance drift opraven
 

@@ -3,7 +3,9 @@
 // the page is evidence, not an app. Czech labels for the owner.
 import type { Artifact } from "../../../../src/platform/artifacts.js";
 import type { AuditRecord } from "../../../../src/platform/audit.js";
+import type { CertificationRecord, LifecycleStatus } from "../../../../src/platform/certification.js";
 import type { Instance } from "../../../../src/platform/journal.js";
+import type { WorkshopSession } from "./workshop.js";
 
 export interface FarmStats {
   totalProcessed: number;
@@ -99,6 +101,16 @@ export interface CapabilityRow {
   selfTest?: { passed: number; total: number };
   /** The individual fixtures behind that count — owner's request 2026-09-09: "chci vidět kontroly". */
   selfTestFixtures?: SelfTestFixtureState[];
+  /** Last real, live certification of this capability, ANY build (index.ts buildFarmModel) — shown even when
+   * stale (a previous deploy) so the operator can see "certified, but not for what's running now", never
+   * silently hidden. Posudek 16 P1-9 / docs/POSUDKY.md: made real 2026-09-14. */
+  certification?: CertificationRecord;
+  /** deriveLifecycleStatus() (src/platform/certification.ts) over certification + the real ACTIVE/QUARANTINED
+   * this same row's lifecycleStatus carries — the full 6-state Admission Gate vocabulary, shown ALONGSIDE
+   * lifecycleStatus (never replacing it): lifecycleStatus is what Router.route() actually enforces today,
+   * derivedStatus is what Admission Gate says should eventually gate it. Only counts a certification toward
+   * ACTIVE/CERTIFIED when its buildHash matches the currently running gitSha (build-bound, CERT-004). */
+  derivedStatus: LifecycleStatus;
 }
 
 export interface FarmModel {
@@ -114,6 +126,13 @@ export interface FarmModel {
   inbox: { pending: InboxItem[]; failed: InboxItem[]; batchLimit: number };
   workflows: string[];
   models: ModelsInfo;
+  /** Nastavení's own runtime-editable model choice for Kravská dílna (cow.workshop, index.ts COW_WORKSHOP) —
+   * never without a model (installation.ts's own guarantee): defaults to the installation's configured default
+   * (Workers AI, free) until an operator picks something else in Nastavení. Separate from `models` above
+   * (document.classify's per-document dropdown) on purpose — a different capability's own choice. */
+  cowWorkshopModels: ModelsInfo;
+  /** Newest first (index.ts listWorkshopSessions) — Kravská dílna's own session list. */
+  workshopSessions: WorkshopSession[];
   stats: FarmStats;
   /** When the self-test summary carried on deployables[].selfTest/capabilities[].selfTest was recorded —
    * undefined when self-test was never run on this farm yet. Doubles as the scheduled self-test's own
@@ -350,6 +369,8 @@ const ICONS = {
   argos: icon('<path d="M6 9c-1.2-.8-1.6-2.4 0-3.2.8.4 1.2 1.2 1.2 2M18 9c1.2-.8 1.6-2.4 0-3.2-.8.4-1.2 1.2-1.2 2"/><path d="M6 10.5a6 6 0 0 1 12 0c0 3.5-2.7 6-6 6s-6-2.5-6-6Z"/><circle cx="10" cy="11" r=".6" fill="currentColor" stroke="none"/><circle cx="14" cy="11" r=".6" fill="currentColor" stroke="none"/>'),
   vysledek: icon('<circle cx="12" cy="12" r="9"/><polyline points="8 12.5 10.8 15.3 16 9.5"/>'),
   denik: icon('<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/>'),
+  nastaveni: icon('<line x1="4" y1="6" x2="20" y2="6"/><circle cx="9" cy="6" r="2" fill="currentColor" stroke="none"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="15" cy="12" r="2" fill="currentColor" stroke="none"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="10" cy="18" r="2" fill="currentColor" stroke="none"/>'),
+  dilna: icon('<path d="M4 19l6-6"/><path d="M13.5 4.5c-1.6-.6-3.4-.2-4.6 1-1.5 1.5-1.7 3.7-.6 5.4l-6 6 1.8 1.8 6-6c1.7 1.1 3.9.9 5.4-.6 1.2-1.2 1.6-3 1-4.6l-3 3-2-2 3-3Z"/>'),
   diagram: icon('<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><line x1="8" y1="7.5" x2="10.5" y2="16.2"/><line x1="16" y1="7.5" x2="13.5" y2="16.2"/><line x1="8.5" y1="6" x2="15.5" y2="6"/>'),
   wheat: icon('<path d="M12 21V9"/><path d="M12 9c-2-2-2-4 0-6 2 2 2 4 0 6Z"/><path d="M12 13c-2.2-1.2-3-3-2.4-5.4 2.3.6 3.4 2 3 4.4Z"/><path d="M12 13c2.2-1.2 3-3 2.4-5.4-2.3.6-3.4 2-3 4.4Z"/><path d="M12 17c-2.2-1.2-3-3-2.4-5.4 2.3.6 3.4 2 3 4.4Z"/><path d="M12 17c2.2-1.2 3-3 2.4-5.4-2.3.6-3.4 2-3 4.4Z"/>'),
 };
@@ -373,7 +394,7 @@ const mascot = (which: keyof typeof MASCOT_SVG, bg: string, size: "lg" | "sm" = 
 // Dark, per-section-tinted badge backgrounds (owner's 13. 9. 2026 "dark demo as default" request) —
 // darkened versions of the old light tones, same hue families, so the mascot faces (light cream/white
 // fills) read with even more contrast than they did on the old light badges, not less.
-const MASCOT_BG: Record<"prehled" | "podatelna" | "ohrada" | "staj" | "argos" | "vysledek" | "denik", string> = {
+const MASCOT_BG: Record<"prehled" | "podatelna" | "ohrada" | "staj" | "argos" | "vysledek" | "denik" | "nastaveni" | "teletnik" | "dilna", string> = {
   prehled: "#2a2015",
   podatelna: "#16241c",
   ohrada: "#241f18",
@@ -381,6 +402,9 @@ const MASCOT_BG: Record<"prehled" | "podatelna" | "ohrada" | "staj" | "argos" | 
   argos: "#2a2116",
   vysledek: "#16241a",
   denik: "#1a2028",
+  nastaveni: "#241a28",
+  teletnik: "#1e2618",
+  dilna: "#1a2420",
 };
 /** Same round-badge treatment as mascot(), for the sections with no animal face of their own (Ohrada/
  * Výsledek/Deník/Podatelna) — a plain line icon() in a colored circle, so the whole nav rail reads as
@@ -394,6 +418,8 @@ const STATE_CLASS: Record<string, string> = {
   SUCCEEDED: "b-ok",
   ACTIVE: "b-ok",
   HEALTHY: "b-ok",
+  CERTIFIED: "b-ok",
+  NEW: "b-neutral",
   QUARANTINED: "b-crit",
   DOWN: "b-crit",
   FAILED: "b-crit",
@@ -423,11 +449,16 @@ const DEPLOYABLE_ROLE: Record<string, string> = {
 /**
  * Ideas from docs/NAVRHOVY-LIST-farma.md that have no code yet (owner's request, 2026-09-07: "do seznamu agentů
  * dávej i nápady co mám v režimu návrh") — kept here by hand, in sync with the design doc, not parsed from it.
+ * Found stale 2026-09-14 (owner, over a screenshot: "to je taky tele" / "krávou se stane tele automaticky,
+ * pokud splňuje všechny atributy krávy"): cz.company.verify/cz.vat.verify sat here claiming "žádný kód" long
+ * after src/components/cz-company-verify, cz-vat-verify were actually built (HANDOFF c030d60/9e68529) — true
+ * code, tested, just not yet wired into any live Cloudflare deployable (only src/slice.ts, the Node harness
+ * root). Removed rather than relabeled: this list is the ONE hand-maintained "is it real" state left on the
+ * page, and it drifted the moment nobody remembered to update it by hand. Everything else (Stáj/Teletník) reads
+ * live Router state, never a list a human has to keep in sync — once these two are wired into apf-gateway,
+ * they appear in Teletník automatically, no entry here to remember to delete.
  */
-const PLANNED_DEPLOYABLES: { name: string; role: string }[] = [
-  { name: "cz.company.verify", role: "Ověří IČO v ARES (existence, právní forma, adresa) — krok 8b, návrh 7. 9. 2026, žádný kód" },
-  { name: "cz.vat.verify", role: "Ověří DPH plátcovství, nespolehlivého plátce a zveřejněný bankovní účet u Finanční správy — krok 8b, návrh 7. 9. 2026, žádný kód" },
-];
+const PLANNED_DEPLOYABLES: { name: string; role: string }[] = [];
 
 /** "Reachable" (HTTP 200 on /version) and "actually wired into the flow" are different claims — a skeleton answers fine but does nothing yet. */
 const workerReady = (d: DeployableStatus): boolean => d.ok && (d.body as Record<string, unknown> | null)?.wired !== false;
@@ -490,13 +521,31 @@ const selfTestList = (fixtures: SelfTestFixtureState[] | undefined): string =>
 const selfTestDrilldown = (fixtures: SelfTestFixtureState[] | undefined, capability: string): string =>
   `${selfTestList(fixtures)}<form method="post" action="/farm/self-test?capability=${encodeURIComponent(capability)}"><button class="btn btn-sm" type="submit">Spustit jen ${esc(capability)}</button></form>`;
 
+/** Admission Gate's real, build-bound certification (Posudek 16 P1-9, index.ts certifyFromSelfTest) — separate
+ * badge from `lifecycleStatus` on purpose: lifecycleStatus is what Router.route() actually enforces today
+ * (ACTIVE/QUARANTINED from lifecycle.json), derivedStatus is Admission Gate's own opinion, never conflated
+ * with what's really gating dispatch. A certification from an OLDER build (buildHash != today's gitSha) still
+ * shows, marked stale, rather than silently vanishing after every deploy. */
+const certificationLine = (c: CapabilityRow, gitSha: string): string => {
+  const cert = c.certification;
+  const badge = stateBadge(c.derivedStatus);
+  if (!cert) return `<span title="Certifikace nikdy neproběhla pro tuhle kapabilitu">Admission Gate: ${badge} <span class="dim">nikdy certifikováno</span></span>`;
+  const passed = Object.values(cert.actualResults).filter((r) => r === "PASS").length;
+  const stale = cert.buildHash !== gitSha ? ` <span class="dim" title="Poslední certifikace patří jinému buildu (${esc(cert.buildHash)}), ne dnešnímu ${esc(gitSha)}">(starší build)</span>` : "";
+  const color = cert.decision === "PASS" ? "var(--ok)" : "var(--crit)";
+  return `<span title="Certifikace buildu ${esc(cert.buildHash)}, ${esc(shortAt(cert.certifiedAt))}">Admission Gate: ${badge} <span style="color:${color}">${passed}/${cert.requiredTests.length} povinných testů</span>${stale}</span>`;
+};
+
+const certifyForm = (capability: string): string =>
+  `<form method="post" action="/farm/certify?capability=${encodeURIComponent(capability)}"><button class="btn btn-sm" type="submit">Spustit certifikaci</button></form>`;
+
 /** One card of the Admission Gate pen: capability, its risk/isolation claim, live lifecycle, and — separately —
  * Argos's own live health opinion on top of it (HANDOFF 89), when there's an open finding to show. */
-const capabilityRow = (c: CapabilityRow, watchdog: WatchdogSnapshot, incidents: IncidentRecord[]): string => {
+const capabilityRow = (c: CapabilityRow, watchdog: WatchdogSnapshot, incidents: IncidentRecord[], gitSha: string): string => {
   const iso = isolationLabel(c.isolationClass ?? "");
   const argos = capabilityWatchdogLevel(c.capability, watchdog, incidents);
   const argosBadge = argos ? `<span title="Argosův živý nález, ne formální stav Admission Gate">Argos: ${stateBadge(argos)}</span>` : "";
-  return `<div class="p-card${c.lifecycleStatus === "QUARANTINED" ? " crit" : ""}"><div class="p-card-head"><code>${esc(c.capability)}</code>/v${esc(c.version)}${c.usesLlm ? ' <small title="volá jazykový model">🤖</small>' : ""}${stateBadge(c.lifecycleStatus)}</div><div class="p-card-meta"><span>riziko ${riskBadge(c.riskClass)}</span><span${iso.title ? ` title="${esc(iso.title)}"` : ""}>izolace <b>${esc(iso.label || "—")}</b></span><span>${esc(c.sideEffects ?? "—")}</span></div><div class="p-card-meta">${selfTestBadge(c.selfTest)}${argosBadge}</div>${selfTestDrilldown(c.selfTestFixtures, c.capability)}</div>`;
+  return `<div class="p-card${c.lifecycleStatus === "QUARANTINED" ? " crit" : ""}"><div class="p-card-head"><code>${esc(c.capability)}</code>/v${esc(c.version)}${c.usesLlm ? ' <small title="volá jazykový model">🤖</small>' : ""}${stateBadge(c.lifecycleStatus)}</div><div class="p-card-meta"><span>riziko ${riskBadge(c.riskClass)}</span><span${iso.title ? ` title="${esc(iso.title)}"` : ""}>izolace <b>${esc(iso.label || "—")}</b></span><span>${esc(c.sideEffects ?? "—")}</span></div><div class="p-card-meta">${selfTestBadge(c.selfTest)}${argosBadge}</div><div class="p-card-meta">${certificationLine(c, gitSha)}</div>${certifyForm(c.capability)}${selfTestDrilldown(c.selfTestFixtures, c.capability)}</div>`;
 };
 
 /** How long something lasted between two ISO timestamps, for a human reading a finding — minutes/hours/days,
@@ -748,7 +797,11 @@ export function composeIncidentAlert(newlyOpened: IncidentRecord[], newlyResolve
   }
   if (newlyResolved.length) {
     lines.push("VYŘEŠENO:");
-    for (const i of newlyResolved) lines.push(`  ${i.text} (trvalo ${humanDuration(i.firstSeenAt, i.resolvedAt as string)})`);
+    // i.text is frozen at whatever it said the LAST time the incident was still open (e.g. "self-test 12/14, 2
+    // kontrol selhává") — reused as-is here, a "VYŘEŠENO:" line reporting a failure count reads as if the
+    // problem still exists (owner's report 2026-09-14, over a real e-mail: "nic z nich nepoznám"). "— teď OK"
+    // makes explicit what changed: this WAS the finding, it is not anymore.
+    for (const i of newlyResolved) lines.push(`  ${i.text} — teď OK (trvalo ${humanDuration(i.firstSeenAt, i.resolvedAt as string)})`);
     lines.push("");
   }
   lines.push("— Argos, /farm");
@@ -791,6 +844,22 @@ const watchdogBanner = (snapshot: WatchdogSnapshot, incidents: IncidentRecord[])
   }`;
 };
 
+/** Nastavení's own model picker (Kravská dílna) — radio per choice, unavailable ones shown disabled with their
+ * reason (same "never silently skip an option" rule ModelChoice.unavailable already carries for the Podatelna
+ * dropdown), posts straight to index.ts's /farm/settings/cow-workshop-model. An `error` ModelsInfo (fail-closed:
+ * the capability's own configured default is itself unavailable) shows plainly rather than a broken form. */
+const cowWorkshopModelForm = (models: ModelsInfo): string => {
+  if ("error" in models) return `<p style="color:var(--crit)">Nelze načíst modely: ${esc(models.error)}</p>`;
+  const rows = models.choices
+    .map((c) => {
+      const disabled = c.unavailable ? " disabled" : "";
+      const reason = c.unavailable ? `<span class="dim" style="color:var(--crit)"> — nedostupné: ${esc(c.unavailable)}</span>` : "";
+      return `<label style="display:flex;gap:8px;align-items:center;padding:6px 0"><input type="radio" name="key" value="${esc(c.key)}"${c.isDefault ? " checked" : ""}${disabled}><span>${esc(c.label)}</span>${reason}</label>`;
+    })
+    .join("");
+  return `<form method="post" action="/farm/settings/cow-workshop-model">${rows}<button class="btn btn-primary btn-sm" type="submit" style="margin-top:8px">Uložit</button></form>`;
+};
+
 // -----------------------------------------------------------------------------------------------------------
 // Průsvitná stáj — nová IA (13. 9. 2026): Přehled · Podatelna · Ohrada · Stáj · Argos · Výsledek · Deník.
 // -----------------------------------------------------------------------------------------------------------
@@ -830,16 +899,24 @@ export function renderFarm(m: FarmModel): string {
     cardSection("Návrh — zatím nepostaveno, jen v docs/NAVRHOVY-LIST-farma.md", PLANNED_DEPLOYABLES.map(plannedCard).join(""));
 
   // Kapability seskupené po modulu jako ohrady (owner's request 2026-09-09: karty, ne řádky tabulky).
-  const penGrid = (() => {
+  // Teletník/Stáj split (owner's request 2026-09-14: "co není hotová kráva, je tele") — derivedStatus:"NEW"
+  // (Admission Gate never certified THIS build, certification.ts's deriveLifecycleStatus) means the capability
+  // has never been through admission at all, ever: a tele. QUARANTINED stays in Stáj on purpose — a capability
+  // that WAS certified and is now failing is a sick cow, not an uncertified calf; only "never even tried" moves.
+  const penGridOf = (caps: CapabilityRow[]): string => {
     const byModule = new Map<string, CapabilityRow[]>();
-    for (const c of m.capabilities) {
+    for (const c of caps) {
       if (!byModule.has(c.module)) byModule.set(c.module, []);
       (byModule.get(c.module) as CapabilityRow[]).push(c);
     }
     return [...byModule.entries()]
-      .map(([mod, caps]) => `<div class="pen"><div class="pen-label">${ICONS.staj}${esc(mod)}</div><div class="grid-cards">${caps.map((c) => capabilityRow(c, watchdog, incidents)).join("")}</div></div>`)
+      .map(([mod, ms]) => `<div class="pen"><div class="pen-label">${ICONS.staj}${esc(mod)}</div><div class="grid-cards">${ms.map((c) => capabilityRow(c, watchdog, incidents, m.gitSha)).join("")}</div></div>`)
       .join("");
-  })();
+  };
+  const teletnikCapabilities = m.capabilities.filter((c) => c.derivedStatus === "NEW");
+  const stajCapabilities = m.capabilities.filter((c) => c.derivedStatus !== "NEW");
+  const penGrid = penGridOf(stajCapabilities);
+  const teletnikGrid = penGridOf(teletnikCapabilities);
 
   // Owner's request 2026-09-08: what carries the link belongs in column 1, rows collapsed to a one-line summary
   // by default, click to see the steps — a document block is evidence to check, not to always read in full.
@@ -972,7 +1049,7 @@ export function renderFarm(m: FarmModel): string {
       id: "staj",
       icon: mascot("krava", MASCOT_BG.staj),
       label: "Stáj",
-      body: `<div class="pagehead"><h1>${mascot("krava", MASCOT_BG.staj, "lg")} Stáj</h1></div><p class="lede">Kravičky a co skutečně smí vykonat, seskupeno po modulu jako ohrada — riziko a izolace jsou vlastní tvrzení komponenty (descriptor), stav na kartě je to, co <b>Router doopravdy vynucuje</b> před každým dispatchem.</p>
+      body: `<div class="pagehead"><h1>${mascot("krava", MASCOT_BG.staj, "lg")} Stáj</h1></div><p class="lede">Zavedené krávy — kapability, co aspoň jednou prošly Admission Gate certifikací (klidně i s výsledkem FAIL, nemocná kráva je pořád kráva). Nové, nikdy necertifikované jsou v <a href="#teletnik">Teletníku</a>. Seskupeno po modulu jako ohrada — riziko a izolace jsou vlastní tvrzení komponenty (descriptor), stav na kartě je to, co <b>Router doopravdy vynucuje</b> před každým dispatchem.</p>
       <form class="toolbar" method="post" action="/farm/self-test">
         <span class="dim">„OK“ dokazuje jen, že proces odpovídá — self-test skutečně spustí kapability proti reálnému modelu a porovná s golden výsledkem${m.selfTestAt ? ` — naposledy proběhlo ${shortAt(m.selfTestAt)}` : " — ještě nikdy neproběhl"}</span>
         <span class="fill"></span>
@@ -980,7 +1057,16 @@ export function renderFarm(m: FarmModel): string {
       </form>
       ${stajCards}
       <h3 style="margin:18px 0 8px">Kapability (Admission Gate)</h3>
-      ${m.capabilities.length ? penGrid : '<p class="dim">zatím žádné (vzdálení Workeři neodpověděli)</p>'}`,
+      ${stajCapabilities.length ? penGrid : '<p class="dim">zatím žádná zavedená kráva — vše nasazené čeká na první certifikaci v Teletníku</p>'}`,
+    },
+    {
+      id: "teletnik",
+      icon: mascot("krava", MASCOT_BG.teletnik),
+      label: "Teletník",
+      count: teletnikCapabilities.length || undefined,
+      body: `<div class="pagehead"><h1>${mascot("krava", MASCOT_BG.teletnik, "lg")} Teletník</h1></div><p class="lede">Co není hotová kráva, je tele — kapabilita už nasazená v kódu, ale ještě nikdy neprošla Admission Gate certifikací pro tenhle build. Jakmile projde (i s výsledkem FAIL), přestává být tele a stěhuje se do <a href="#staj">Stáje</a> natrvalo.</p>
+      <div class="card" style="margin-bottom:14px"><h3 style="margin-bottom:4px">Nová kráva</h3><p class="dim" style="font-size:12px;margin:0">Nová kráva se sem nedostane kliknutím na téhle stránce — potřebuje reálný kód (nový modul, policy, položku v <code>config/${esc(m.installation)}/lifecycle.json</code>) a deploy, to zůstává lidský krok s vlastním commitem. Co „Spustit certifikaci“ u každé karty dělá doopravdy: spustí živý konformanční test proti přesně tomuhle nasazenému buildu (<code>${esc(m.gitSha)}</code>) a certifikaci uloží — <b>certifikace sama nic nezapíná</b>, „ACTIVE“ ve Stáji pořád znamená jen to, co doopravdy vynucuje Router z <code>lifecycle.json</code>.</p></div>
+      ${teletnikCapabilities.length ? teletnikGrid : '<p class="dim">žádná telata — všechno nasazené už aspoň jednou prošlo certifikací</p>'}`,
     },
     {
       id: "argos",
@@ -1030,6 +1116,35 @@ export function renderFarm(m: FarmModel): string {
       <div class="term" id="denik-term" aria-live="polite">${terminalSeed}</div>
       <h3 style="margin-top:16px">Stejná data jako tabulka</h3>
       <div class="gridwrap"><table><thead><tr><th>Čas</th><th>Druh</th><th>Instance</th><th>Capability</th><th>Detail</th></tr></thead><tbody>${denikRows}</tbody></table></div>`,
+    },
+    {
+      id: "nastaveni",
+      icon: iconBadge(ICONS.nastaveni, MASCOT_BG.nastaveni),
+      label: "Nastavení",
+      body: `<div class="pagehead"><h1>${iconBadge(ICONS.nastaveni, MASCOT_BG.nastaveni, "lg")} Nastavení</h1></div><p class="lede">Co se může měnit bez nového deploye, patří sem — první takové nastavení je model pro Kravskou dílnu.</p>
+      <div class="card"><h3 style="margin-bottom:4px">Kravská dílna — AI model</h3><p class="dim" style="font-size:12px;margin:0 0 12px">Používá se v Kravské dílně (návrh nové krávy z promptu/kódu/dokumentace). Vždy je vybraný nějaký model — minimum je Workers AI zdarma, nikdy žádný.</p>
+      ${cowWorkshopModelForm(m.cowWorkshopModels)}
+      </div>`,
+    },
+    {
+      id: "kravska-dilna",
+      icon: iconBadge(ICONS.dilna, MASCOT_BG.dilna),
+      label: "Kravská dílna",
+      count: m.workshopSessions.length || undefined,
+      body: `<div class="pagehead"><h1>${iconBadge(ICONS.dilna, MASCOT_BG.dilna, "lg")} Kravská dílna</h1></div><p class="lede">Popiš, co má nová (nebo upravovaná) kráva dělat — kód API dotazu, prompt, nebo přiložená dokumentace. Asistent se doptá na detaily a navrhne soubory podle konvencí platformy (vzor: <code>cz.company.verify</code>). <b>Nic se tím nenasazuje</b> — návrh projde přes commit/PR/testy jako každá jiná změna.</p>
+      <div class="card"><h3 style="margin-bottom:8px">Nová konverzace</h3>
+      <form method="post" action="/farm/workshop">
+        <textarea name="text" rows="4" placeholder="Např.: Potřebuju krávu, co ověří datovou schránku firmy podle IČO přes API ISDS..." required></textarea>
+        <button class="btn btn-primary" type="submit" style="margin-top:8px">Odeslat</button>
+      </form></div>
+      <h3 style="margin:18px 0 8px">Dřívější konverzace</h3>
+      ${
+        m.workshopSessions.length
+          ? `<div class="gridwrap"><table><thead><tr><th>Zadání</th><th>Zpráv</th><th>Naposledy</th></tr></thead><tbody>${m.workshopSessions
+              .map((s) => `<tr><td><a href="/farm/workshop/${esc(s.sessionId)}">${esc(s.title)}</a></td><td>${s.messages.length}</td><td class="dim mono">${shortAt(s.updatedAt)}</td></tr>`)
+              .join("")}</tbody></table></div>`
+          : '<p class="dim">zatím žádná</p>'
+      }`,
     },
   ];
 
@@ -1397,6 +1512,29 @@ const stepsTable = (steps: Instance["steps"]): string =>
         `<tr><td><b>${esc(s.stepId)}</b><br><small>${esc(s.capability)}/v${esc(s.capabilityVersion)}</small></td><td>${stateBadge(s.status)}</td><td>${s.attempt} / ${s.logicalAttempt}<br><small>${esc(s.strategy)}</small></td><td>${fmtResult(s)}</td></tr>`,
     )
     .join("")}</table>`;
+
+/** Kravská dílna's own chat page (its own URL, /farm/workshop/<id>, same pattern as /workflow/<id> — a growing
+ * transcript doesn't belong pre-rendered-and-hidden in every /farm load the way the tab-switched sections are).
+ * No markdown rendering (this codebase has no such library, deliberately) — esc() + white-space:pre-wrap keeps
+ * the AI's own "### FILE:" fenced blocks legible without a parser that could itself become an injection surface. */
+export function renderWorkshopSession(session: WorkshopSession): string {
+  const messages = session.messages
+    .map(
+      (m) =>
+        `<div class="card" style="margin-bottom:10px${m.role === "ai" ? ";border-color:var(--accent)" : ""}"><b>${m.role === "admin" ? "Admin" : "Asistent"}</b> <span class="dim">${shortAt(m.at)}</span><div style="white-space:pre-wrap;margin-top:6px">${esc(m.text)}</div></div>`,
+    )
+    .join("");
+  return shell(
+    `Kravská dílna — ${session.title}`,
+    `<div class="doc"><header><h1>🐄💬 ${esc(session.title)}</h1><small class="dim">založeno ${shortAt(session.createdAt)}, naposledy ${shortAt(session.updatedAt)}</small></header>
+    ${messages}
+    <form method="post" action="/farm/workshop/${esc(session.sessionId)}/message">
+      <textarea name="text" rows="4" placeholder="Odpověz asistentovi — uprav zadání, vlož kód/dokumentaci, nebo odpověz na doptání." required></textarea>
+      <button class="btn btn-primary" type="submit" style="margin-top:8px">Odeslat</button>
+    </form>
+    <nav style="margin-top:16px"><a href="/farm#kravska-dilna">Zpět do Kravské dílny</a></nav></div>`,
+  );
+}
 
 export function renderInstance(v: InstanceView): string {
   const i = v.instance;

@@ -842,12 +842,12 @@ nepřeřazoval** — zapsány zvlášť pod čarou, ne zapomenuté.
    7 testů (ZLAB-001..007). **`EvidenceWriter` (trusted-context-bound writer) hotov 13. 9. 2026**
    (HANDOFF 128, Posudek 15 P1-2) — `tenantId`/`workflowId`/`operationId` jen z `HandlerInput`, nikdy
    z krávina tvrzení. **`cz.company.verify`/`cz.vat.verify` reálně volají `EvidenceWriter.write()` od
-   14. 9. 2026** (HANDOFF 144) — `deps.evidence?.write(...)` na každém `SUCCEEDED` (FAILED/WAITING
+   14. 9. 2026** (HANDOFF 151) — `deps.evidence?.write(...)` na každém `SUCCEEDED` (FAILED/WAITING
    se nikdy nezapisují), `inputField` "companyId"/"vatId" podle `invoice.v1` názvosloví, `result` =
    ACTIVE/CEASED/NOT_FOUND (company) nebo přímo `reliability` ANO/NE/NENALEZEN (vat, beze změny —
    evidence.ts's vlastní příklad vocabulary). `tests/cz-verify-evidence.test.ts`, 6 testů
    (CZV-EVD-001..005). **`cz.company.verify`/`cz.vat.verify` samotné jsou od 14. 9. 2026 zapojené i
-   do živého `apf-gateway` Routeru** (HANDOFF 145, bod 5–6 níže) — dispatchovatelné a v self-testu na
+   do živého `apf-gateway` Routeru** (HANDOFF 152, bod 5–6 níže) — dispatchovatelné a v self-testu na
    `apf.maxferit.cz`. **Ale bez `EvidenceWriter`** — živé zapojení vědomě evidenci nezapisuje, dokud
    Žlab zůstává jen v paměti DO (durabilita je otevřený bod Posudku 16, vlastníkovo rozhodnutí o
    pořadí, `docs/POSUDKY.md:553-565`); zapsat živou evidenci, co evikce Durable Objectu může tiše
@@ -881,7 +881,7 @@ nepřeřazoval** — zapsány zvlášť pod čarou, ne zapomenuté.
    `SUCCEEDED found:false`, ne `FAILED` (stejný vzor jako `document.classify`'s `OTHER`).
    `conformance/cz.company.verify/`, 7 fixtures, `tests/ctr.test.ts`'s `COMPONENTS` mapa. 405/405
    testů, typecheck, arch, farm:check zelené (oba installations, `farm-bass443` i `local-fakes`).
-   **Zapojeno do živého `apf-gateway` Routeru 14. 9. 2026** (HANDOFF 145) — dispatchovatelné a v
+   **Zapojeno do živého `apf-gateway` Routeru 14. 9. 2026** (HANDOFF 152) — dispatchovatelné a v
    self-testu, proti `FakeAresAdapter` (žádný reálný `baseUrl` ještě není instalační hodnota,
    stejný "chybí reálný zdroj → fake fallback" vzor jako `buildAdapters()`'s `FakeLlmAdapter`).
    **Pořád mimo živou invoice→BC workflow definici a pořád bez skutečného `HttpAresAdapter`
@@ -904,14 +904,14 @@ nepřeřazoval** — zapsány zvlášť pod čarou, ne zapomenuté.
    světě) — vyřešeno malou, zdůvodněnou výjimkou v `scripts/arch-dep.mjs`
    (`PROTOCOL_NAMESPACE_EXEMPT`, po vzoru existujícího `CLOCK_EXEMPT`), ne oslabením pravidla.
    `conformance/cz.vat.verify/`, 8 fixtures. 419/419 testů, typecheck, arch, farm:check zelené
-   (obě instalace). **Zapojeno do živého `apf-gateway` Routeru 14. 9. 2026** (HANDOFF 145), proti
+   (obě instalace). **Zapojeno do živého `apf-gateway` Routeru 14. 9. 2026** (HANDOFF 152), proti
    `FakeMojeDaneAdapter` — stejná výhrada jako `cz.company.verify` výš (mimo živou workflow
    definici, žádné skutečné `HttpMojeDaneAdapter` volání, vlastníkovo rozhodnutí o dalším kroku).
 7. **`bc.vendors`** — vnitřní protějšek k `cz.company.verify` (existující Vendor No. v BC, ne jen
    vnější potvrzení, že IČO existuje — HANDOFF 113), nepostaveno. Pole, která `erp.post` bude
    potřebovat na `purchaseInvoices`/`purchaseInvoiceLines` (`vendorNumber` odsud jako jediné
    nenahraditelné), ověřena proti oficiální BC API v2.0 dokumentaci 14. 9. 2026 — viz
-   `docs/BC-PURCHASE-INVOICE-POLE.md` (HANDOFF 142).
+   `docs/BC-PURCHASE-INVOICE-POLE.md` (HANDOFF 149).
 8. **První deterministická dojička** (Posudek 11 bod 7 / Posudek 12 bod 9). **Hotovo jako testovaný
    primitiv 13. 9. 2026** (HANDOFF 121, opraveno HANDOFF 127): `src/platform/aggregator.ts`'s
    `EvidenceAggregator` — bez LLM, bez credentialu, bez zápisové cesty do Žlabu (jen čte); kontroluje

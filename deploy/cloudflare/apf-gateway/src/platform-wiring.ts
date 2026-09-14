@@ -34,13 +34,18 @@ export const CLASSIFY = "document.classify";
 export const EXTRACT = "invoice.extract";
 export const COMPANY_VERIFY = "cz.company.verify";
 export const VAT_VERIFY = "cz.vat.verify";
+/** Not a dispatched Router capability (no descriptor, no policy, nothing goes through checkGrant) — reuses
+ * installation.ts's `profile.models` keying purely to get its existing "never without a model, fail-closed,
+ * unavailable options shown with a reason" guarantee for Kravská dílna's own model choice, the same guarantee
+ * CLASSIFY/EXTRACT already have. */
+export const COW_WORKSHOP = "cow.workshop";
 /**
  * Capabilities the gateway itself provides; everything else is a host and stays "not wired" until its unit lands.
  * `mail.ingest` runs here too (not as a remote dispatch): it holds no credential to isolate and writes no external
  * system, only its own tenant's artifact store — the same reasoning that keeps document.classify/validate in-process.
  * Derived from each component's own descriptor (Agent Registry, SEVERKA.md item 4), not hand-duplicated — a
  * capability added to a descriptor without also touching this file used to risk silently misrouting to notWired.
- * cz.company.verify/cz.vat.verify (SEVERKA.md "## Pořadí" bod 5-6, HANDOFF 145) join in-process here for the same
+ * cz.company.verify/cz.vat.verify (SEVERKA.md "## Pořadí" bod 5-6, HANDOFF 152) join in-process here for the same
  * reason: sideEffects:none, no credential to isolate — same shape as document.classify/validate.
  */
 export const GATEWAY_CAPABILITIES: readonly string[] = [
@@ -85,21 +90,47 @@ export interface ModelsView {
   choices: ModelChoice[];
 }
 
-/** What the operator can pick from, with every unavailable option and its reason. Throws when the default itself is unavailable (fail-closed). */
-export function describeModels(installation: Installation, secrets: SecretsSource): ModelsView {
-  const t = modelTable(installation, secrets, CLASSIFY);
-  const options = installation.profile.models?.[CLASSIFY]?.options ?? {};
+/** What the operator can pick from, with every unavailable option and its reason. Throws when the capability's own
+ * configured default is unavailable (fail-closed) — that default is a build-time guarantee (installation.ts's
+ * "never without a model"), independent of `selectedKey`. `capability` defaults to CLASSIFY (document.classify's
+ * per-document model dropdown, the only caller before Kravská dílna needed a second one — installation.ts's
+ * `profile.models` was already keyed generically by capability, this just stopped hardcoding CLASSIFY here too).
+ * `selectedKey` marks a DIFFERENT option as `isDefault` in the returned view (e.g. Nastavení's own runtime pick,
+ * settings.ts, stored in D1) without touching what the fail-closed check above validates — an unset or
+ * no-longer-available `selectedKey` silently falls back to the capability's own configured default, never throws. */
+export function describeModels(installation: Installation, secrets: SecretsSource, capability: string = CLASSIFY, selectedKey?: string): ModelsView {
+  const t = modelTable(installation, secrets, capability);
+  const options = installation.profile.models?.[capability]?.options ?? {};
+  const effective = selectedKey && t.available[selectedKey] ? selectedKey : t.default;
   return {
-    default: t.default,
+    default: effective,
     choices: Object.entries(options).map(([key, o]) => ({
       key,
       label: o.label ?? `${o.provider} · ${o.model}`,
       provider: o.provider,
       model: o.model,
-      isDefault: key === t.default,
+      isDefault: key === effective,
       ...(t.unavailable[key] ? { unavailable: t.unavailable[key] } : {}),
     })),
   };
+}
+
+/** Resolves ONE model choice into a working LlmAdapter — unlike buildAdapters()/its invoice.extract twin below
+ * (every option of a capability, keyed for workflow strategy names), Kravská dílna's chat only ever needs a
+ * single adapter for whatever model Nastavení currently points at. `key` falls back to the capability's own
+ * configured default when absent, unavailable, or unknown (the same fail-closed guarantee modelTable() already
+ * makes for CLASSIFY/EXTRACT — a capability is never left without a usable model). */
+export function modelAdapterFor(installation: Installation, secrets: SecretsSource, ai: WorkersAiBinding, capability: string, key?: string, maxTokens?: number): { adapter: LlmAdapter; key: string } {
+  const t = modelTable(installation, secrets, capability);
+  const resolvedKey = key && t.available[key] ? key : t.default;
+  const opt = t.available[resolvedKey] as (typeof t.available)[string];
+  const adapter =
+    opt.provider === "workers-ai"
+      ? new WorkersAiAdapter(opt.model, ai, maxTokens)
+      : opt.provider === "anthropic"
+        ? new AnthropicAdapter(opt.model, opt.secret as string, { ...(opt.inferenceGeo ? { inferenceGeo: opt.inferenceGeo } : {}), ...(maxTokens ? { maxTokens } : {}) })
+        : new FakeLlmAdapter();
+  return { adapter, key: resolvedKey };
 }
 
 function buildAdapters(installation: Installation, secrets: SecretsSource, ai: WorkersAiBinding): Record<string, LlmAdapter> {
@@ -164,7 +195,7 @@ export interface WiringOptions {
   aresTimeoutMs?: number;
   /** Any MojeDaneAdapter: FakeMojeDaneAdapter (default) or HttpMojeDaneAdapter once a real adisrws.mfcr.cz
    * baseUrl is an installation value (SEVERKA.md "## Pořadí" bod 6, HANDOFF 136). Deliberately no `evidence`
-   * option here yet (HANDOFF 145) — the Žlab is still in-memory-only (POSUDKY.md Posudek 16 punch list,
+   * option here yet (HANDOFF 152) — the Žlab is still in-memory-only (POSUDKY.md Posudek 16 punch list,
    * "durable Žlab storage" still open, owner's call on ordering) — sealing live evidence that a Durable
    * Object eviction could silently lose would be exactly the kind of failure this platform's audit trail
    * is built never to allow. */

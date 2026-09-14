@@ -93,6 +93,15 @@ describe("CERT-007 deriveLifecycleStatus: the full state progression", () => {
   });
 });
 
+describe("CERT-009 a caller cannot self-certify PASS by declaring nothing required (Posudek 16 P1-9)", () => {
+  it("requiredTests: [] never certifies PASS, however empty actualResults is too", () => {
+    const registry = new CertificationRegistry(new FakeClock(START));
+    const record = registry.certify(input({ requiredTests: [], actualResults: {} }));
+    expect(record.decision).toBe("FAIL");
+    expect(registry.canActivate("cz-company-verify", "build-v1").ok).toBe(false);
+  });
+});
+
 describe("CERT-008 the registry has no update/delete surface beyond certify() itself", () => {
   it("CertificationRegistry exposes only certify/get/canActivate (plus the private key() helper)", () => {
     const methods = Object.getOwnPropertyNames(CertificationRegistry.prototype).filter((m) => m !== "constructor");
