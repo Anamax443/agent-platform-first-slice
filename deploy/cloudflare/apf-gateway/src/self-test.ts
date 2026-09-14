@@ -90,6 +90,18 @@ const stampGoldenLive: Record<string, Golden> = {
   "canonical-default-stamptext": withPayloadOverride(stampGoldenBase["canonical-default-stamptext"] as Golden, { stampText: "$prefix:STAMPED INVOICE " }),
 };
 
+// Found live 2026-09-14 while checking the new Admission Gate certification against real capabilities: same class
+// of issue as stampGoldenLive's dmsRef above, just never given the same override. archive-handler.ts's `ref` comes
+// straight from apf-fakes' refOf("arch", clientRef) = `arch-${sha256(clientRef).slice(0,12)}` — clientRef is the
+// dispatch's own idempotencyKey (a fresh newId() every self-test run), so archiveRef can never equal the Node
+// fixture's fixed "arch-1", on any live run, by design (identical reasoning to HANDOFF 55-60/95/96/101 for
+// dmsRef/stampText — this one was simply missed when those were fixed).
+const archiveGoldenBase = archiveGolden as Record<string, Golden>;
+const archiveGoldenLive: Record<string, Golden> = {
+  ...archiveGoldenBase,
+  "canonical-archive": withPayloadOverride(archiveGoldenBase["canonical-archive"] as Golden, { archiveRef: "$prefix:arch-" }),
+};
+
 const SUITES: { capability: string; worker: string; fixtures: Fixture[]; golden: Record<string, Golden> }[] = [
   { capability: "document.classify", worker: "apf-gateway", fixtures: classifyFixtures as Fixture[], golden: classifyGolden as Record<string, Golden> },
   { capability: "document.validate", worker: "apf-gateway", fixtures: validateFixtures as Fixture[], golden: validateGolden as Record<string, Golden> },
@@ -97,7 +109,7 @@ const SUITES: { capability: string; worker: string; fixtures: Fixture[]; golden:
   // on the gateway like classify/validate (no side effects, no credential to isolate).
   { capability: "invoice.extract", worker: "apf-gateway", fixtures: extractFixtures as Fixture[], golden: extractGolden as Record<string, Golden> },
   { capability: "document.stamp", worker: "apf-document-host", fixtures: stampFixtures as Fixture[], golden: stampGoldenLive },
-  { capability: "document.archive", worker: "apf-document-host", fixtures: archiveFixtures as Fixture[], golden: archiveGolden as Record<string, Golden> },
+  { capability: "document.archive", worker: "apf-document-host", fixtures: archiveFixtures as Fixture[], golden: archiveGoldenLive },
   // SEVERKA.md item 3, second real write-type: mail.ingest runs in-process on the gateway (no credential to
   // isolate), email.send is a genuine remote dispatch to apf-email-executor (PRINCIPAL, SEND_MODE=sandbox here —
   // self-test never flips that, so this never sends a real email). Both fixture suites individually verified

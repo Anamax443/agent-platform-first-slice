@@ -2,6 +2,31 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-14 (143) — self-test: `document.archive`'s `canonical-archive` mělo stejnou live-golden mezeru jako `dmsRef`/`stampText`, jen nikdy nedostalo override
+
+**Nalezeno:** hned po nasazení (142) vlastník ukázal reálný `/farm` s `document.stamp`/`document.archive`
+self-test 15/18 a Admission Gate badge QUARANTINED. Ověřeno přímo diffem, ne odhadem:
+`canonical-invoice-stamp`/`canonical-default-stamptext` na opakovaný živý běh prošly (stará/stale
+D1 hodnota, self-test-state se neobnovuje samo mezi 30min cron tiky) — ale `canonical-archive` padalo
+znovu a spolehlivě: `$.payload.archiveRef: "arch-3fc4b3217615" != "arch-1"`.
+
+**Příčina:** stejná třída jako `dmsRef`/`stampText` (HANDOFF 55-60/95/96/101, `stampGoldenLive`) —
+`archive-handler.ts`'s `ref` jde přímo z `apf-fakes`'s `refOf("arch", clientRef) = arch-<sha256(clientRef).slice(0,12)>`,
+`clientRef` = dispatch's vlastní `idempotencyKey` (čerstvý `newId()` při každém self-test běhu), takže
+`archiveRef` nikdy nemůže sedět s Node fixture's pevným `"arch-1"`. `stampGoldenLive` v `self-test.ts`
+tenhle vzorec už měl pro `dmsRef`, jen na paralelní `archiveRef` se při té opravě zapomnělo.
+
+**Oprava:** nový `archiveGoldenLive` (`self-test.ts`), stejný `withPayloadOverride`/`$prefix:` vzorec
+— `archiveRef: "$prefix:arch-"`. `SUITES`'s `document.archive` entry teď ukazuje na `archiveGoldenLive`
+místo syrového `archiveGolden`.
+
+**Vedlejší efekt Admission Gate (142):** tenhle nález byl dřív jen tichý řádek v self-test kartě
+(„15/18", snadné přehlédnout); nová Admission Gate certifikace ho udělala viditelným jako červený
+QUARANTINED badge — přesně k tomu byl postavený.
+
+**Brány zelené:** typecheck, 425/425 testů (beze změny počtu — golden fixture, ne nová testovací
+jednotka), arch, farm:check.
+
 ## 2026-09-14 (142) — Admission Gate zapojený reálně na živé `/farm`: P1-9 opraveno, `CertificationRegistry` skutečně certifikuje nasazený build
 
 **Pokyn vlastníka:** otázka "kde se zadává nová kráva s tím AI?" nad screenshotem Průsvitné stáje →
