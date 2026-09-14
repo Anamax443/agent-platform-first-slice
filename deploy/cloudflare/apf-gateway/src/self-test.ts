@@ -24,6 +24,10 @@ import emailFixtures from "../../../../conformance/email.send/fixtures/email.sen
 import emailGolden from "../../../../conformance/email.send/golden/email.send.golden.json" with { type: "json" };
 import extractFixtures from "../../../../conformance/invoice.extract/fixtures/invoice.extract.fixtures.json" with { type: "json" };
 import extractGolden from "../../../../conformance/invoice.extract/golden/invoice.extract.golden.json" with { type: "json" };
+import companyVerifyFixtures from "../../../../conformance/cz.company.verify/fixtures/cz.company.verify.fixtures.json" with { type: "json" };
+import companyVerifyGolden from "../../../../conformance/cz.company.verify/golden/cz.company.verify.golden.json" with { type: "json" };
+import vatVerifyFixtures from "../../../../conformance/cz.vat.verify/fixtures/cz.vat.verify.fixtures.json" with { type: "json" };
+import vatVerifyGolden from "../../../../conformance/cz.vat.verify/golden/cz.vat.verify.golden.json" with { type: "json" };
 import { sha256 } from "../../../../src/platform/artifacts.js";
 import type { ArtifactWriter } from "../../../../src/platform/artifacts.js";
 import type { Clock } from "../../../../src/platform/clock.js";
@@ -96,6 +100,12 @@ const SUITES: { capability: string; worker: string; fixtures: Fixture[]; golden:
   // First capability of the invoice→verify→BC chain (SEVERKA.md ## Pořadí, VC §5's worked example) — in-process
   // on the gateway like classify/validate (no side effects, no credential to isolate).
   { capability: "invoice.extract", worker: "apf-gateway", fixtures: extractFixtures as Fixture[], golden: extractGolden as Record<string, Golden> },
+  // Next two capabilities of the invoice→verify→BC chain (SEVERKA.md "## Pořadí" bod 5-6, HANDOFF 145) — in-process
+  // on the gateway like classify/validate/extract, against FakeAresAdapter/FakeMojeDaneAdapter (no real
+  // ares.gov.cz/adisrws.mfcr.cz baseUrl configured yet, same "not a live external call" scope as every other
+  // fixture here that needs adapters.ares/mojeDane !== "ok" — this file's own comment above already skips those).
+  { capability: "cz.company.verify", worker: "apf-gateway", fixtures: companyVerifyFixtures as Fixture[], golden: companyVerifyGolden as Record<string, Golden> },
+  { capability: "cz.vat.verify", worker: "apf-gateway", fixtures: vatVerifyFixtures as Fixture[], golden: vatVerifyGolden as Record<string, Golden> },
   { capability: "document.stamp", worker: "apf-document-host", fixtures: stampFixtures as Fixture[], golden: stampGoldenLive },
   { capability: "document.archive", worker: "apf-document-host", fixtures: archiveFixtures as Fixture[], golden: archiveGolden as Record<string, Golden> },
   // SEVERKA.md item 3, second real write-type: mail.ingest runs in-process on the gateway (no credential to

@@ -2,6 +2,47 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-14 (145) — cz.company.verify/cz.vat.verify zapojeny do živého apf-gateway Routeru (proti fakes, bez EvidenceWriter)
+
+**Pokyn vlastníka:** "zapoj a commitni a pushni na git" — navazuje na (144). Před zápisem položena
+`AskUserQuestion` (na co se mají capability v provozu ptát — fake dvojice vs. reálné ares.gov.cz/
+adisrws.mfcr.cz vs. jen registrace bez evidence); odpověď "uptoyou", rozhodnutí tedy níže vlastní.
+
+**Rozhodnutí a proč:**
+- **Adaptéry: `FakeAresAdapter`/`FakeMojeDaneAdapter` jako výchozí**, ne skutečné volání na české
+  státní API. Stejný vzor, jaký `platform-wiring.ts` už dnes používá pro `document.classify`/
+  `invoice.extract` (`buildAdapters()`'s pád na `FakeLlmAdapter`, když žádný reálný provider není
+  nakonfigurovaný) — ne nový precedent. Volání skutečné vládní infrastruktury z produkce je
+  nevratný krok, co jsem nechtěl protlačit tichým defaultem bez výslovného potvrzení.
+- **Žádný `EvidenceWriter` v živém zapojení.** Žlab je pořád jen v paměti DO (`EvidenceLedger`'s
+  `private readonly byId = new Map()`), "durable Žlab storage" je otevřený bod v Posudku 16's punch
+  listu (`docs/POSUDKY.md:553-565`, explicitně "vlastníkovo rozhodnutí o pořadí"). Zapsat živou
+  evidenci, co evikce DO může tiše ztratit, by bylo přesně to, co tenhle projekt jinde nikdy
+  netoleruje — (144)'s `evidence?: EvidenceWriter` zůstává v `platform-wiring.ts` nevyužité.
+
+**Změny:**
+- `deploy/cloudflare/apf-gateway/src/platform-wiring.ts`: `COMPANY_VERIFY`/`VAT_VERIFY` konstanty,
+  přidány do `GATEWAY_CAPABILITIES`/`gatewayCatalog()` (odvozeno z descriptoru, ne ručně
+  duplikováno — stejná disciplína jako zbytek souboru). `WiringOptions` nově `ares?`/`aresTimeoutMs?`/
+  `mojeDane?`/`mojeDaneTimeoutMs?`. Router registruje obě capability vedle `document.validate`.
+- `deploy/cloudflare/apf-gateway/src/self-test.ts`: obě capability přidány do `SUITES` (fixtures +
+  golden z `conformance/cz.company.verify/`, `conformance/cz.vat.verify/`) — živý self-test na
+  `apf.maxferit.cz` je od teď skutečně vyzkouší (chaos-mode fixtury automaticky přeskočeny, stejný
+  generický `f.adapters || f.storage` mechanismus jako u všech ostatních capabilit).
+- `docs/SEVERKA.md`: bod 2 (Žlab), bod 5 (`cz.company.verify`), bod 6 (`cz.vat.verify`) opraveny —
+  "Zatím nezapojeno do žádného workflow ani Routeru" byl zastaralý pro Router část, teď přesně
+  rozlišuje "zapojeno do Routeru/self-testu" vs. "pořád mimo live invoice workflow, pořád fake
+  adaptéry, pořád bez evidence".
+
+**Co pořád chybí (vědomě):** capability nejsou krokem žádné live `WorkflowDef` (invoice-intake
+workflow neexistuje), žádné skutečné `HttpAresAdapter`/`HttpMojeDaneAdapter` volání, žádná
+`EvidenceWriter` na živé instanci. Tři samostatná, pozdější, vlastníkova rozhodnutí.
+
+**Brány zelené:** typecheck, arch, **427/427 testů** (beze změny počtu — `platform-wiring.ts`/
+`self-test.ts` nemá Node test pokrytí, stejně jako zbytek `deploy/cloudflare` — self-test.ts's
+vlastní hlavičkový komentář to říká výslovně), farm:check (obě instalace, včetně
+`tsc -p deploy/cloudflare/tsconfig.json`).
+
 ## 2026-09-14 (144) — cz.company.verify/cz.vat.verify reálně zapisují do Žlabu (test/conformance harness), živý gateway zatím ne
 
 **Pokyn vlastníka:** "jasne" na návrh z (143) — zapojit `EvidenceLedger.append()` do obou ověřovacích

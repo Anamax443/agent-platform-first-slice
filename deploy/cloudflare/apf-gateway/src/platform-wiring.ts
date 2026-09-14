@@ -3,10 +3,14 @@
 // document.validate), and the transport the orchestrator talks to. Nothing installation-bound is written here.
 import { createPrivateKey, createPublicKey, generateKeyPairSync, type KeyObject } from "node:crypto";
 import { AnthropicAdapter } from "../../../../src/adapters/anthropic.js";
+import { FakeAresAdapter, type AresAdapter } from "../../../../src/adapters/ares.js";
 import { classifyByRules, FakeInvoiceExtractorAdapter, FakeLlmAdapter, KeywordClassifierAdapter, RulesInvoiceExtractorAdapter, type LlmAdapter } from "../../../../src/adapters/llm.js";
+import { FakeMojeDaneAdapter, type MojeDaneAdapter } from "../../../../src/adapters/moje-dane.js";
 import type { RegistryAdapter } from "../../../../src/adapters/registry.js";
 import { WorkersAiAdapter, type WorkersAiBinding } from "../../../../src/adapters/workers-ai.js";
 import * as classifier from "../../../../src/components/document-classifier/handler.js";
+import * as companyVerify from "../../../../src/components/cz-company-verify/handler.js";
+import * as vatVerify from "../../../../src/components/cz-vat-verify/handler.js";
 import hostDescriptor from "../../../../src/components/document-executor-host/descriptor.json" with { type: "json" };
 import * as extractor from "../../../../src/components/invoice-extractor/handler.js";
 import * as validator from "../../../../src/components/document-validator/handler.js";
@@ -28,18 +32,24 @@ import type { MessageEnvelope, ResultEnvelope } from "../../../../src/platform/t
 
 export const CLASSIFY = "document.classify";
 export const EXTRACT = "invoice.extract";
+export const COMPANY_VERIFY = "cz.company.verify";
+export const VAT_VERIFY = "cz.vat.verify";
 /**
  * Capabilities the gateway itself provides; everything else is a host and stays "not wired" until its unit lands.
  * `mail.ingest` runs here too (not as a remote dispatch): it holds no credential to isolate and writes no external
  * system, only its own tenant's artifact store — the same reasoning that keeps document.classify/validate in-process.
  * Derived from each component's own descriptor (Agent Registry, SEVERKA.md item 4), not hand-duplicated — a
  * capability added to a descriptor without also touching this file used to risk silently misrouting to notWired.
+ * cz.company.verify/cz.vat.verify (SEVERKA.md "## Pořadí" bod 5-6, HANDOFF 145) join in-process here for the same
+ * reason: sideEffects:none, no credential to isolate — same shape as document.classify/validate.
  */
 export const GATEWAY_CAPABILITIES: readonly string[] = [
   ...capabilityNamesOf(classifier.descriptor),
   ...capabilityNamesOf(validator.descriptor),
   ...capabilityNamesOf(ingest.descriptor),
   ...capabilityNamesOf(extractor.descriptor),
+  ...capabilityNamesOf(companyVerify.descriptor),
+  ...capabilityNamesOf(vatVerify.descriptor),
 ];
 /** Capabilities apf-document-host serves over a signed dispatch across a service binding (celek D). */
 export const DOCUMENT_HOST_CAPABILITIES: readonly string[] = capabilityNamesOf(hostDescriptor);
@@ -50,7 +60,14 @@ export const EMAIL_EXECUTOR_ORIGIN = "https://apf-email-executor.internal";
 
 /** Agent Registry (SEVERKA.md item 4): the gateway's own in-process catalog, for its `/capabilities` endpoint — no live Router round-trip needed, same reasoning as GATEWAY_CAPABILITIES above. */
 export function gatewayCatalog(): CapabilityRecord[] {
-  return [...catalogOf(classifier.descriptor), ...catalogOf(validator.descriptor), ...catalogOf(ingest.descriptor), ...catalogOf(extractor.descriptor)];
+  return [
+    ...catalogOf(classifier.descriptor),
+    ...catalogOf(validator.descriptor),
+    ...catalogOf(ingest.descriptor),
+    ...catalogOf(extractor.descriptor),
+    ...catalogOf(companyVerify.descriptor),
+    ...catalogOf(vatVerify.descriptor),
+  ];
 }
 
 export interface ModelChoice {
@@ -140,6 +157,19 @@ export interface WiringOptions {
   /** Result for a capability no deployable serves yet. */
   notWired: (message: MessageEnvelope, actorId: string) => Promise<ResultEnvelope>;
   modelTimeoutMs?: number;
+  /** Any AresAdapter: FakeAresAdapter (default — same "no real baseUrl configured yet" fallback shape as
+   * buildAdapters()'s FakeLlmAdapter below) or HttpAresAdapter once a real ares.gov.cz baseUrl is an
+   * installation value (SEVERKA.md "## Pořadí" bod 5, HANDOFF 132). */
+  ares?: AresAdapter;
+  aresTimeoutMs?: number;
+  /** Any MojeDaneAdapter: FakeMojeDaneAdapter (default) or HttpMojeDaneAdapter once a real adisrws.mfcr.cz
+   * baseUrl is an installation value (SEVERKA.md "## Pořadí" bod 6, HANDOFF 136). Deliberately no `evidence`
+   * option here yet (HANDOFF 145) — the Žlab is still in-memory-only (POSUDKY.md Posudek 16 punch list,
+   * "durable Žlab storage" still open, owner's call on ordering) — sealing live evidence that a Durable
+   * Object eviction could silently lose would be exactly the kind of failure this platform's audit trail
+   * is built never to allow. */
+  mojeDane?: MojeDaneAdapter;
+  mojeDaneTimeoutMs?: number;
 }
 
 export interface Wiring {
@@ -201,6 +231,38 @@ export function wirePlatform(o: WiringOptions): Wiring {
         version: "1",
         inputSchema: validator.inputSchema,
         handler: validator.createDocumentValidator({ artifacts: o.artifacts, registry: o.registry, clock: o.clock, crossCheck: classifyByRules, registryTimeoutMs: 5_000 }),
+      },
+    ],
+  });
+  router.register({
+    descriptor: companyVerify.descriptor as never,
+    policies: { [COMPANY_VERIFY]: policy(COMPANY_VERIFY) },
+    capabilities: [
+      {
+        name: COMPANY_VERIFY,
+        version: "1",
+        inputSchema: companyVerify.inputSchema,
+        handler: companyVerify.createCompanyVerifier({
+          ares: o.ares ?? new FakeAresAdapter(),
+          clock: o.clock,
+          ...(o.aresTimeoutMs !== undefined ? { aresTimeoutMs: o.aresTimeoutMs } : {}),
+        }),
+      },
+    ],
+  });
+  router.register({
+    descriptor: vatVerify.descriptor as never,
+    policies: { [VAT_VERIFY]: policy(VAT_VERIFY) },
+    capabilities: [
+      {
+        name: VAT_VERIFY,
+        version: "1",
+        inputSchema: vatVerify.inputSchema,
+        handler: vatVerify.createVatVerifier({
+          mojeDane: o.mojeDane ?? new FakeMojeDaneAdapter(),
+          clock: o.clock,
+          ...(o.mojeDaneTimeoutMs !== undefined ? { mojeDaneTimeoutMs: o.mojeDaneTimeoutMs } : {}),
+        }),
       },
     ],
   });

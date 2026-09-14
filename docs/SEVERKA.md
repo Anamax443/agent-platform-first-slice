@@ -846,12 +846,14 @@ nepřeřazoval** — zapsány zvlášť pod čarou, ne zapomenuté.
    se nikdy nezapisují), `inputField` "companyId"/"vatId" podle `invoice.v1` názvosloví, `result` =
    ACTIVE/CEASED/NOT_FOUND (company) nebo přímo `reliability` ANO/NE/NENALEZEN (vat, beze změny —
    evidence.ts's vlastní příklad vocabulary). `tests/cz-verify-evidence.test.ts`, 6 testů
-   (CZV-EVD-001..005). **Stále jen v `src/slice.ts` (testovací/conformance harness) — živý
-   `deploy/cloudflare/apf-gateway/src/platform-wiring.ts` tyhle dvě capability vůbec neregistruje v
-   Routeru (bod 5–6 níže: "Zatím nezapojeno do žádného workflow"), takže na `apf.maxferit.cz` se
-   dnes žádná evidence ještě nezapisuje.** `buildHash` je v `slice.ts` jen placeholder (`"slice-dev"`)
-   — skutečný zdroj (Cloudflare Version Metadata binding, needs verification) se řeší až při zapojení
-   do živého gatewaye, ne dřív.
+   (CZV-EVD-001..005). **`cz.company.verify`/`cz.vat.verify` samotné jsou od 14. 9. 2026 zapojené i
+   do živého `apf-gateway` Routeru** (HANDOFF 145, bod 5–6 níže) — dispatchovatelné a v self-testu na
+   `apf.maxferit.cz`. **Ale bez `EvidenceWriter`** — živé zapojení vědomě evidenci nezapisuje, dokud
+   Žlab zůstává jen v paměti DO (durabilita je otevřený bod Posudku 16, vlastníkovo rozhodnutí o
+   pořadí, `docs/POSUDKY.md:553-565`); zapsat živou evidenci, co evikce Durable Objectu může tiše
+   ztratit, by bylo přesně to, co tenhle projekt jinde nikdy netoleruje. `buildHash` zůstává jen
+   `src/slice.ts`'s testovací placeholder (`"slice-dev"`) — skutečný zdroj (Cloudflare Version
+   Metadata binding, needs verification) čeká na stejné rozhodnutí.
 3. **Build-bound `CertificationRecord`** — `Lifecycle` smí přepnout na `ACTIVE` jen když
    `CertificationRecord.PASS && certifiedBuildHash == runningBuildHash` (Posudek 12 bod 6, viz
    `### Admission Gate` výše). **Hotovo jako testovaný primitiv 13. 9. 2026** (HANDOFF 126):
@@ -879,9 +881,12 @@ nepřeřazoval** — zapsány zvlášť pod čarou, ne zapomenuté.
    `SUCCEEDED found:false`, ne `FAILED` (stejný vzor jako `document.classify`'s `OTHER`).
    `conformance/cz.company.verify/`, 7 fixtures, `tests/ctr.test.ts`'s `COMPONENTS` mapa. 405/405
    testů, typecheck, arch, farm:check zelené (oba installations, `farm-bass443` i `local-fakes`).
-   **Zatím nezapojeno do žádného workflow ani do skutečného `HttpAresAdapter` volání** — Router ho
-   umí dispatchnout, nic ho zatím nevolá; produkční `baseUrl`/`HttpAresAdapter` wiring do
-   `apf-gateway` a nasazení jsou samostatný, pozdější krok, čeká na vlastníkovo rozhodnutí.
+   **Zapojeno do živého `apf-gateway` Routeru 14. 9. 2026** (HANDOFF 145) — dispatchovatelné a v
+   self-testu, proti `FakeAresAdapter` (žádný reálný `baseUrl` ještě není instalační hodnota,
+   stejný "chybí reálný zdroj → fake fallback" vzor jako `buildAdapters()`'s `FakeLlmAdapter`).
+   **Pořád mimo živou invoice→BC workflow definici a pořád bez skutečného `HttpAresAdapter`
+   volání** — to je samostatný, pozdější krok, čeká na vlastníkovo rozhodnutí (reálné volání na
+   ares.gov.cz z produkce vs. fake dvojice přes `apf-fakes`).
 6. **`cz.vat.verify`** — API zdroj ověřen 11. 9. 2026 (MOJE daně SOAP, bezplatné, zveřejněné účty
    = zdroj pro Import Gate ACCOUNT_VERIFICATION). **Postaveno 13. 9. 2026** (HANDOFF 136):
    `src/components/cz-vat-verify/handler.ts` + `src/adapters/moje-dane.ts` (`MojeDaneAdapter`, fake
@@ -899,8 +904,9 @@ nepřeřazoval** — zapsány zvlášť pod čarou, ne zapomenuté.
    světě) — vyřešeno malou, zdůvodněnou výjimkou v `scripts/arch-dep.mjs`
    (`PROTOCOL_NAMESPACE_EXEMPT`, po vzoru existujícího `CLOCK_EXEMPT`), ne oslabením pravidla.
    `conformance/cz.vat.verify/`, 8 fixtures. 419/419 testů, typecheck, arch, farm:check zelené
-   (obě instalace). **Zatím nezapojeno do žádného workflow ani do skutečného
-   `HttpMojeDaneAdapter` volání** — stejná výhrada jako `cz.company.verify` výš.
+   (obě instalace). **Zapojeno do živého `apf-gateway` Routeru 14. 9. 2026** (HANDOFF 145), proti
+   `FakeMojeDaneAdapter` — stejná výhrada jako `cz.company.verify` výš (mimo živou workflow
+   definici, žádné skutečné `HttpMojeDaneAdapter` volání, vlastníkovo rozhodnutí o dalším kroku).
 7. **`bc.vendors`** — vnitřní protějšek k `cz.company.verify` (existující Vendor No. v BC, ne jen
    vnější potvrzení, že IČO existuje — HANDOFF 113), nepostaveno. Pole, která `erp.post` bude
    potřebovat na `purchaseInvoices`/`purchaseInvoiceLines` (`vendorNumber` odsud jako jediné
