@@ -2,6 +2,50 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-14 (147) — Kravská dílna: první konverzační AI asistent na `/farm`, navrhuje soubory, nic sám nenasazuje
+
+**Pokyn vlastníka:** "ale já chci vytvářet na webovkách krávy/telata a s pomocí AI je uvádět do
+života" — cíl celé dnešní řady kroků (Nastavení → Teletník → tohle). Doplněno: "a telata i krávy by
+měly být editovatelné" (dílna nerozlišuje nová/existující jako dvě různé věci — jeden chat pro obojí,
+admin sám vloží existující kód, dokud není zapojené automatické stažení).
+
+**Bezpečnostní hranice (vlastníkova stálá pravidla, ne dnešní vynález):** asistent nikdy sám nic
+nenasazuje ani nezapisuje — jen navrhuje soubory v chatu. Živá farma se nemění tímhle chatem vůbec;
+skutečný kód jde přes commit/PR/testy/deploy jako cokoli jiného. Automatické zakládání GitHub PR
+vědomě NEpostaveno dnes — vyžadovalo by nový GitHub token jako secret na živém Workeru, což je
+samostatné rozhodnutí o důvěryhodnosti (další krok, ne dnešek).
+
+**Jak to funguje:**
+- `LlmAdapter.complete(prompt: string): Promise<string>` (src/adapters/llm.ts) je obecné rozhraní,
+  ne uzavřené na klasifikaci — jen `WorkersAiAdapter`/`AnthropicAdapter`'s výchozí `maxTokens` (16/64)
+  byly nastavené pro krátkou klasifikační odpověď. `modelAdapterFor()` (platform-wiring.ts) dostal
+  nový `maxTokens` parametr, dílna volá s 4000.
+- Nový `workshop.ts`: `WorkshopSession` (sessionId, messages[]), `newSession()`, `buildPrompt()`
+  (celá konverzace + systémový prompt s konvencemi platformy — descriptor.json tvar, handler.ts vzor
+  podle `cz.company.verify`, policy tvar, VC §5 minimum fixtures — zploštěné do jednoho stringu,
+  `complete()` nemá system/user rozdělení), `sendMessage()` (čistá, nikdy nemutuje vstup).
+- D1: `cow-workshop-session:<id>` řádky ve sdílené `audit` tabulce (stejný vzor jako
+  self-test-state/certification-state — žádná nová infrastruktura), `at` = updatedAt pro řazení
+  seznamu.
+- Nová stránka `/farm/workshop/<id>` (vlastní URL jako `/workflow/<id>` — rostoucí chat nepatří
+  předrenderovaný a skrytý do každého načtení `/farm`), nová záložka "Kravská dílna" na `/farm`
+  (formulář na novou konverzaci + seznam předchozích).
+
+**Testy:** nový `tests/workshop.test.ts` (7 testů — title ořezání, pořadí zpráv v promptu,
+konvence v promptu, `sendMessage()` nemutuje vstup, plná historie v promptu druhého kola).
+
+**Živě ověřeno** (`wrangler dev`, `local-fakes`): založení konverzace → 303 → `/farm/workshop/<id>`
+ukazuje Admin i Asistent zprávu (fake model odpoví "OTHER" — očekávané na `local-fakes`, žádný
+skutečný model), navazující zpráva se připojí (4 zprávy celkem), session se objeví v seznamu na
+`/farm`. Chybové cesty: prázdný text, chybějící pole, neznámé session id → 400/404.
+
+**Zbývá (vlastníkovo rozhodnutí o pořadí):** automatické založení GitHub PR z návrhu (potřebuje token
+jako secret), automatické stažení existujícího kódu krávy pro editační session (potřebuje GitHub read
+access), Podatelna copy (nový nález — "tváří se, že řešíme jen vytěžování dokumentů"), editovatelná
+cesta k hero obrázku v Nastavení + klikací otevření originálu.
+
+**Brány zelené:** typecheck, **434/434 testů** (+7), arch, farm:check.
+
 ## 2026-09-14 (146) — `PLANNED_DEPLOYABLES` byl zastaralý: `cz.company.verify`/`cz.vat.verify` tvrdily "žádný kód" dávno po tom, co byly postavené
 
 **Pokyn vlastníka:** nad screenshotem sekce "Návrh — zatím nepostaveno" — "to je taky tele" a pak

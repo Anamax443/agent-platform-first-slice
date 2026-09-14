@@ -83,6 +83,7 @@ const model: FarmModel = {
   workflows: ["document-intake", "mail-intake"],
   models: { default: "llama-8b", choices: [{ key: "llama-8b", label: "Llama 8B", provider: "workers-ai", model: "@cf/meta/llama-3.1-8b", isDefault: true }] },
   cowWorkshopModels: { default: "llama-8b", choices: [{ key: "llama-8b", label: "Llama 8B", provider: "workers-ai", model: "@cf/meta/llama-3.1-8b", isDefault: true }] },
+  workshopSessions: [],
   stats: { totalProcessed: 12, processedToday: 3, avgProcessingMs: 4200, byType: [{ type: "INVOICE", count: 8 }] },
   selfTestAt: "2026-09-09T13:20:00Z",
   now: "2026-09-09T13:25:00Z",

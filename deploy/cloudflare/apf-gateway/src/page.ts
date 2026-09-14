@@ -5,6 +5,7 @@ import type { Artifact } from "../../../../src/platform/artifacts.js";
 import type { AuditRecord } from "../../../../src/platform/audit.js";
 import type { CertificationRecord, LifecycleStatus } from "../../../../src/platform/certification.js";
 import type { Instance } from "../../../../src/platform/journal.js";
+import type { WorkshopSession } from "./workshop.js";
 
 export interface FarmStats {
   totalProcessed: number;
@@ -130,6 +131,8 @@ export interface FarmModel {
    * (Workers AI, free) until an operator picks something else in Nastavení. Separate from `models` above
    * (document.classify's per-document dropdown) on purpose — a different capability's own choice. */
   cowWorkshopModels: ModelsInfo;
+  /** Newest first (index.ts listWorkshopSessions) — Kravská dílna's own session list. */
+  workshopSessions: WorkshopSession[];
   stats: FarmStats;
   /** When the self-test summary carried on deployables[].selfTest/capabilities[].selfTest was recorded —
    * undefined when self-test was never run on this farm yet. Doubles as the scheduled self-test's own
@@ -367,6 +370,7 @@ const ICONS = {
   vysledek: icon('<circle cx="12" cy="12" r="9"/><polyline points="8 12.5 10.8 15.3 16 9.5"/>'),
   denik: icon('<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/>'),
   nastaveni: icon('<line x1="4" y1="6" x2="20" y2="6"/><circle cx="9" cy="6" r="2" fill="currentColor" stroke="none"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="15" cy="12" r="2" fill="currentColor" stroke="none"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="10" cy="18" r="2" fill="currentColor" stroke="none"/>'),
+  dilna: icon('<path d="M4 19l6-6"/><path d="M13.5 4.5c-1.6-.6-3.4-.2-4.6 1-1.5 1.5-1.7 3.7-.6 5.4l-6 6 1.8 1.8 6-6c1.7 1.1 3.9.9 5.4-.6 1.2-1.2 1.6-3 1-4.6l-3 3-2-2 3-3Z"/>'),
   diagram: icon('<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><line x1="8" y1="7.5" x2="10.5" y2="16.2"/><line x1="16" y1="7.5" x2="13.5" y2="16.2"/><line x1="8.5" y1="6" x2="15.5" y2="6"/>'),
   wheat: icon('<path d="M12 21V9"/><path d="M12 9c-2-2-2-4 0-6 2 2 2 4 0 6Z"/><path d="M12 13c-2.2-1.2-3-3-2.4-5.4 2.3.6 3.4 2 3 4.4Z"/><path d="M12 13c2.2-1.2 3-3 2.4-5.4-2.3.6-3.4 2-3 4.4Z"/><path d="M12 17c-2.2-1.2-3-3-2.4-5.4 2.3.6 3.4 2 3 4.4Z"/><path d="M12 17c2.2-1.2 3-3 2.4-5.4-2.3.6-3.4 2-3 4.4Z"/>'),
 };
@@ -390,7 +394,7 @@ const mascot = (which: keyof typeof MASCOT_SVG, bg: string, size: "lg" | "sm" = 
 // Dark, per-section-tinted badge backgrounds (owner's 13. 9. 2026 "dark demo as default" request) —
 // darkened versions of the old light tones, same hue families, so the mascot faces (light cream/white
 // fills) read with even more contrast than they did on the old light badges, not less.
-const MASCOT_BG: Record<"prehled" | "podatelna" | "ohrada" | "staj" | "argos" | "vysledek" | "denik" | "nastaveni" | "teletnik", string> = {
+const MASCOT_BG: Record<"prehled" | "podatelna" | "ohrada" | "staj" | "argos" | "vysledek" | "denik" | "nastaveni" | "teletnik" | "dilna", string> = {
   prehled: "#2a2015",
   podatelna: "#16241c",
   ohrada: "#241f18",
@@ -400,6 +404,7 @@ const MASCOT_BG: Record<"prehled" | "podatelna" | "ohrada" | "staj" | "argos" | 
   denik: "#1a2028",
   nastaveni: "#241a28",
   teletnik: "#1e2618",
+  dilna: "#1a2420",
 };
 /** Same round-badge treatment as mascot(), for the sections with no animal face of their own (Ohrada/
  * Výsledek/Deník/Podatelna) — a plain line icon() in a colored circle, so the whole nav rail reads as
@@ -1117,6 +1122,26 @@ export function renderFarm(m: FarmModel): string {
       ${cowWorkshopModelForm(m.cowWorkshopModels)}
       </div>`,
     },
+    {
+      id: "kravska-dilna",
+      icon: iconBadge(ICONS.dilna, MASCOT_BG.dilna),
+      label: "Kravská dílna",
+      count: m.workshopSessions.length || undefined,
+      body: `<div class="pagehead"><h1>${iconBadge(ICONS.dilna, MASCOT_BG.dilna, "lg")} Kravská dílna</h1></div><p class="lede">Popiš, co má nová (nebo upravovaná) kráva dělat — kód API dotazu, prompt, nebo přiložená dokumentace. Asistent se doptá na detaily a navrhne soubory podle konvencí platformy (vzor: <code>cz.company.verify</code>). <b>Nic se tím nenasazuje</b> — návrh projde přes commit/PR/testy jako každá jiná změna.</p>
+      <div class="card"><h3 style="margin-bottom:8px">Nová konverzace</h3>
+      <form method="post" action="/farm/workshop">
+        <textarea name="text" rows="4" placeholder="Např.: Potřebuju krávu, co ověří datovou schránku firmy podle IČO přes API ISDS..." required></textarea>
+        <button class="btn btn-primary" type="submit" style="margin-top:8px">Odeslat</button>
+      </form></div>
+      <h3 style="margin:18px 0 8px">Dřívější konverzace</h3>
+      ${
+        m.workshopSessions.length
+          ? `<div class="gridwrap"><table><thead><tr><th>Zadání</th><th>Zpráv</th><th>Naposledy</th></tr></thead><tbody>${m.workshopSessions
+              .map((s) => `<tr><td><a href="/farm/workshop/${esc(s.sessionId)}">${esc(s.title)}</a></td><td>${s.messages.length}</td><td class="dim mono">${shortAt(s.updatedAt)}</td></tr>`)
+              .join("")}</tbody></table></div>`
+          : '<p class="dim">zatím žádná</p>'
+      }`,
+    },
   ];
 
   const navHtml = views
@@ -1483,6 +1508,29 @@ const stepsTable = (steps: Instance["steps"]): string =>
         `<tr><td><b>${esc(s.stepId)}</b><br><small>${esc(s.capability)}/v${esc(s.capabilityVersion)}</small></td><td>${stateBadge(s.status)}</td><td>${s.attempt} / ${s.logicalAttempt}<br><small>${esc(s.strategy)}</small></td><td>${fmtResult(s)}</td></tr>`,
     )
     .join("")}</table>`;
+
+/** Kravská dílna's own chat page (its own URL, /farm/workshop/<id>, same pattern as /workflow/<id> — a growing
+ * transcript doesn't belong pre-rendered-and-hidden in every /farm load the way the tab-switched sections are).
+ * No markdown rendering (this codebase has no such library, deliberately) — esc() + white-space:pre-wrap keeps
+ * the AI's own "### FILE:" fenced blocks legible without a parser that could itself become an injection surface. */
+export function renderWorkshopSession(session: WorkshopSession): string {
+  const messages = session.messages
+    .map(
+      (m) =>
+        `<div class="card" style="margin-bottom:10px${m.role === "ai" ? ";border-color:var(--accent)" : ""}"><b>${m.role === "admin" ? "Admin" : "Asistent"}</b> <span class="dim">${shortAt(m.at)}</span><div style="white-space:pre-wrap;margin-top:6px">${esc(m.text)}</div></div>`,
+    )
+    .join("");
+  return shell(
+    `Kravská dílna — ${session.title}`,
+    `<div class="doc"><header><h1>🐄💬 ${esc(session.title)}</h1><small class="dim">založeno ${shortAt(session.createdAt)}, naposledy ${shortAt(session.updatedAt)}</small></header>
+    ${messages}
+    <form method="post" action="/farm/workshop/${esc(session.sessionId)}/message">
+      <textarea name="text" rows="4" placeholder="Odpověz asistentovi — uprav zadání, vlož kód/dokumentaci, nebo odpověz na doptání." required></textarea>
+      <button class="btn btn-primary" type="submit" style="margin-top:8px">Odeslat</button>
+    </form>
+    <nav style="margin-top:16px"><a href="/farm#kravska-dilna">Zpět do Kravské dílny</a></nav></div>`,
+  );
+}
 
 export function renderInstance(v: InstanceView): string {
   const i = v.instance;

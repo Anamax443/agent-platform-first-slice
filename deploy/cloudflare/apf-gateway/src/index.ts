@@ -37,6 +37,7 @@ import {
   renderFarm,
   renderInstance,
   renderSelfTest,
+  renderWorkshopSession,
   type ArgosAlertHealth,
   type AuditLogRow,
   type CapabilityRow,
@@ -52,8 +53,9 @@ import {
   type SelfTestRow,
   type Wired,
 } from "./page.js";
-import { COW_WORKSHOP, describeModels, gatewayCatalog, wirePlatform, type Wiring } from "./platform-wiring.js";
+import { COW_WORKSHOP, describeModels, gatewayCatalog, modelAdapterFor, wirePlatform, type Wiring } from "./platform-wiring.js";
 import { runSelfTest, requiredTestsFor, selfTestCapabilityForTick, SELF_TEST_CAPABILITIES, SELF_TEST_WORKFLOW_ID } from "./self-test.js";
+import { newSession, sendMessage, type WorkshopSession } from "./workshop.js";
 import { D1_AUDIT_DDL, DDL, SqliteArtifacts, SqliteAudit, SqliteJournal, SqliteReviewTaskStore } from "./store.js";
 import { visuallyStamp } from "./visual-stamp.js";
 
@@ -298,6 +300,34 @@ async function setCowWorkshopModelKey(env: Env, key: string, now: string): Promi
   await env.AUDIT.prepare("INSERT OR REPLACE INTO audit (audit_id, at, kind, correlation_id, workflow_id, tenant_id, actor_id, capability, json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
     .bind(SETTINGS_COW_WORKSHOP_MODEL_AUDIT_ID, now, "settings", null, null, null, "operator", null, JSON.stringify({ key }))
     .run();
+}
+
+// Kravská dílna sessions (owner's request 2026-09-14) — one D1 row per session, kind "cow-workshop-session",
+// audit_id = sessionId (so a single session is a direct-key read, same as certification-state's per-capability
+// key), never mutated in place from outside sendMessage()'s own append-only history. No separate table: this IS
+// what the shared `audit` table is for (self-test-state/certification-state/settings already use it the same
+// way) — a session is just a JSON blob keyed by its own id, nothing relational about it.
+const WORKSHOP_SESSION_KIND = "cow-workshop-session";
+const workshopSessionAuditId = (sessionId: string): string => `${WORKSHOP_SESSION_KIND}:${sessionId}`;
+
+async function saveWorkshopSession(env: Env, session: WorkshopSession): Promise<void> {
+  await ensureD1Audit(env.AUDIT);
+  await env.AUDIT.prepare("INSERT OR REPLACE INTO audit (audit_id, at, kind, correlation_id, workflow_id, tenant_id, actor_id, capability, json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .bind(workshopSessionAuditId(session.sessionId), session.updatedAt, WORKSHOP_SESSION_KIND, null, null, null, "operator", null, JSON.stringify(session))
+    .run();
+}
+
+async function getWorkshopSession(env: Env, sessionId: string): Promise<WorkshopSession | undefined> {
+  await ensureD1Audit(env.AUDIT);
+  const row = await env.AUDIT.prepare("SELECT json FROM audit WHERE audit_id = ?").bind(workshopSessionAuditId(sessionId)).first<{ json: string }>();
+  return row ? (JSON.parse(row.json) as WorkshopSession) : undefined;
+}
+
+/** Newest first — the session list Kravská dílna's own tab shows. */
+async function listWorkshopSessions(env: Env): Promise<WorkshopSession[]> {
+  await ensureD1Audit(env.AUDIT);
+  const rows = await env.AUDIT.prepare("SELECT json FROM audit WHERE kind = ? ORDER BY at DESC").bind(WORKSHOP_SESSION_KIND).all<{ json: string }>();
+  return (rows.results ?? []).map((r) => JSON.parse(r.json) as WorkshopSession);
 }
 
 const WATCHDOG_INCIDENT_KIND = "watchdog-incident";
@@ -1252,7 +1282,7 @@ async function inboxDetail(env: Env): Promise<{ pending: InboxItem[]; failed: In
  */
 async function buildFarmModel(env: Env, instanceLimit: number, instanceWindow: string): Promise<FarmModel> {
   const now = iso(new SystemClock().now());
-  const [documentHost, emailExecutor, mailIngest, fakes, instances, log, inbox, stats, documentHostCaps, emailExecutorCaps, selfTestSummary, alertHealth, openWorkflowProblems, recentAuditTenantMismatches, certifications, cowWorkshopModelKey] = await Promise.all([
+  const [documentHost, emailExecutor, mailIngest, fakes, instances, log, inbox, stats, documentHostCaps, emailExecutorCaps, selfTestSummary, alertHealth, openWorkflowProblems, recentAuditTenantMismatches, certifications, cowWorkshopModelKey, workshopSessions] = await Promise.all([
     deployableInfo(env.DOCUMENT_HOST, "https://apf-document-host.internal"),
     deployableInfo(env.EMAIL_EXECUTOR, "https://apf-email-executor.internal"),
     deployableInfo(env.MAIL_INGEST, "https://apf-mail-ingest.internal"),
@@ -1269,6 +1299,7 @@ async function buildFarmModel(env: Env, instanceLimit: number, instanceWindow: s
     recentAuditTenantMismatchCount(env, windowSince("24h", new SystemClock()) as string),
     latestCertifications(env),
     latestCowWorkshopModelKey(env),
+    listWorkshopSessions(env),
   ]);
   // Admission Gate visibility (HANDOFF 70/71): the same LifecycleRegistry the Router enforces, read here only —
   // this page never writes it. Quarantining a module still means editing config/<installation>/lifecycle.json
@@ -1328,6 +1359,7 @@ async function buildFarmModel(env: Env, instanceLimit: number, instanceWindow: s
     workflows: [...WORKFLOW_NAMES],
     models: modelsOf(env),
     cowWorkshopModels: cowWorkshopModelsOf(env, cowWorkshopModelKey),
+    workshopSessions,
     stats,
     selfTestAt: selfTestSummary?.updatedAt,
     now,
@@ -1478,6 +1510,45 @@ export default {
       if (choice.unavailable) return new Response(`model ${key} is unavailable: ${choice.unavailable}`, { status: 400 });
       await setCowWorkshopModelKey(env, key, iso(new SystemClock().now()));
       return Response.redirect(new URL("/farm#nastaveni", url).toString(), 303);
+    }
+
+    // Kravská dílna (owner's request 2026-09-14): a conversational drafting assistant, never a code-execution or
+    // deploy surface — see workshop.ts's own header comment. Model comes from Nastavení's own runtime choice
+    // (never a param here, same closed loop as certifyFromSelfTest's requiredTests: the caller can't override it).
+    if (url.pathname === "/farm/workshop" && request.method === "POST") {
+      const form = await request.formData().catch(() => new FormData());
+      const text = form.get("text");
+      if (typeof text !== "string" || !text.trim()) return new Response("text required", { status: 400 });
+      const clock = new SystemClock();
+      const session = newSession(text, clock);
+      const modelKey = await latestCowWorkshopModelKey(env);
+      const { adapter } = modelAdapterFor(installation, secretsOf(env), env.AI, COW_WORKSHOP, modelKey, 4000);
+      const withReply = await sendMessage(session, text, adapter, clock);
+      await saveWorkshopSession(env, withReply);
+      return Response.redirect(new URL(`/farm/workshop/${withReply.sessionId}`, url).toString(), 303);
+    }
+
+    const workshopMessage = /^\/farm\/workshop\/(cow-[A-Za-z0-9]+)\/message$/.exec(url.pathname);
+    if (workshopMessage && request.method === "POST") {
+      const sessionId = workshopMessage[1] as string;
+      const session = await getWorkshopSession(env, sessionId);
+      if (!session) return new Response("unknown session", { status: 404 });
+      const form = await request.formData().catch(() => new FormData());
+      const text = form.get("text");
+      if (typeof text !== "string" || !text.trim()) return new Response("text required", { status: 400 });
+      const clock = new SystemClock();
+      const modelKey = await latestCowWorkshopModelKey(env);
+      const { adapter } = modelAdapterFor(installation, secretsOf(env), env.AI, COW_WORKSHOP, modelKey, 4000);
+      const withReply = await sendMessage(session, text, adapter, clock);
+      await saveWorkshopSession(env, withReply);
+      return Response.redirect(new URL(`/farm/workshop/${sessionId}`, url).toString(), 303);
+    }
+
+    const workshopView = /^\/farm\/workshop\/(cow-[A-Za-z0-9]+)$/.exec(url.pathname);
+    if (workshopView && request.method === "GET") {
+      const session = await getWorkshopSession(env, workshopView[1] as string);
+      if (!session) return new Response("unknown session", { status: 404 });
+      return html(renderWorkshopSession(session));
     }
 
     // Manual verification for the Argos alert wiring (HANDOFF 85) — "never deploy untested" for a real external

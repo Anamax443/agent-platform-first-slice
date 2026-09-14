@@ -103,15 +103,15 @@ export function describeModels(installation: Installation, secrets: SecretsSourc
  * single adapter for whatever model Nastavení currently points at. `key` falls back to the capability's own
  * configured default when absent, unavailable, or unknown (the same fail-closed guarantee modelTable() already
  * makes for CLASSIFY/EXTRACT — a capability is never left without a usable model). */
-export function modelAdapterFor(installation: Installation, secrets: SecretsSource, ai: WorkersAiBinding, capability: string, key?: string): { adapter: LlmAdapter; key: string } {
+export function modelAdapterFor(installation: Installation, secrets: SecretsSource, ai: WorkersAiBinding, capability: string, key?: string, maxTokens?: number): { adapter: LlmAdapter; key: string } {
   const t = modelTable(installation, secrets, capability);
   const resolvedKey = key && t.available[key] ? key : t.default;
   const opt = t.available[resolvedKey] as (typeof t.available)[string];
   const adapter =
     opt.provider === "workers-ai"
-      ? new WorkersAiAdapter(opt.model, ai)
+      ? new WorkersAiAdapter(opt.model, ai, maxTokens)
       : opt.provider === "anthropic"
-        ? new AnthropicAdapter(opt.model, opt.secret as string, { ...(opt.inferenceGeo ? { inferenceGeo: opt.inferenceGeo } : {}) })
+        ? new AnthropicAdapter(opt.model, opt.secret as string, { ...(opt.inferenceGeo ? { inferenceGeo: opt.inferenceGeo } : {}), ...(maxTokens ? { maxTokens } : {}) })
         : new FakeLlmAdapter();
   return { adapter, key: resolvedKey };
 }
