@@ -2,6 +2,27 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-14 (143) — SEVERKA: Průsvitná stáj zpřesněna — BREAKPOINT patří za krávu co píše do Žlabu, "přeléčení" = CORRECT retry, tvrdá závislost na napojení Žlabu
+
+**Vlastníkův požadavek (diskuze, "uptoyou" na sepsání):** "musím být schopen po každé krávě
+zkontrolovat žlab a v případě, že žlab bude špatně tak předchozí krávu musíme přeléčit." Zpřesňuje
+`docs/BC-PURCHASE-INVOICE-POLE.md` (141/142)'s debugger diskuzi na konkrétní mechanismus.
+
+**Závěr diskuze, zapsán do `SEVERKA.md`'s `Průsvitná stáj` řádku:**
+- `BREAKPOINT` nemá být obecné zastavení po každém kroku — patří konkrétně **za krok, co zapisuje
+  do Žlabu** (`cz.company.verify`/`cz.vat.verify`/`bc.vendors`/dojička/Konev), dřív než jeho výstup
+  spotřebuje další krok. Zastavit se *před* spotřebováním, ne po, se vyhýbá mnohem těžšímu problému
+  (invalidovat a znovu spustit celý zbytek řetězu za pozdě opraveným krokem).
+- Žlab je čistě append-only (`evidence.ts:79`, ZLAB-005 — žádná update/delete metoda) — "přeléčit
+  krávu" tedy nikdy neznamená opravit záznam, jen **znovu spustit tu krávu**. Tenhle mechanismus už
+  existuje: `resumeAfterReview()`'s `CORRECT` větev (`orchestrator.ts:199-207`), jen spuštěná ručně
+  na breakpointu místo automaticky po selhání — nový spouštěč, žádný nový mechanismus.
+- **Tvrdá závislost, blokuje jakoukoli implementaci:** Žlab dnes není zapojený do žádné capability
+  (`## Pořadí` bod 2) — než bude na breakpointu co zobrazit, `cz.company.verify`/`cz.vat.verify`/
+  budoucí `bc.vendors` musí nejdřív reálně volat `ledger.append()`. Nezávislý, dřívější krok.
+
+Čistě dokumentační krok — žádný kód, žádná nová capabilita.
+
 ## 2026-09-14 (142) — Nový `docs/BC-PURCHASE-INVOICE-POLE.md`: reálná pole BC API v2.0 `purchaseInvoices`/`purchaseInvoiceLines` ověřena proti oficiální dokumentaci
 
 **Pokyn vlastníka:** chce vědět, jaká pole pro zápis do BC skutečně potřebujeme, aby se proces dal
