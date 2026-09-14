@@ -892,7 +892,10 @@ nepřeřazoval** — zapsány zvlášť pod čarou, ne zapomenuté.
    (obě instalace). **Zatím nezapojeno do žádného workflow ani do skutečného
    `HttpMojeDaneAdapter` volání** — stejná výhrada jako `cz.company.verify` výš.
 7. **`bc.vendors`** — vnitřní protějšek k `cz.company.verify` (existující Vendor No. v BC, ne jen
-   vnější potvrzení, že IČO existuje — HANDOFF 113), nepostaveno.
+   vnější potvrzení, že IČO existuje — HANDOFF 113), nepostaveno. Pole, která `erp.post` bude
+   potřebovat na `purchaseInvoices`/`purchaseInvoiceLines` (`vendorNumber` odsud jako jediné
+   nenahraditelné), ověřena proti oficiální BC API v2.0 dokumentaci 14. 9. 2026 — viz
+   `docs/BC-PURCHASE-INVOICE-POLE.md` (HANDOFF 142).
 8. **První deterministická dojička** (Posudek 11 bod 7 / Posudek 12 bod 9). **Hotovo jako testovaný
    primitiv 13. 9. 2026** (HANDOFF 121, opraveno HANDOFF 127): `src/platform/aggregator.ts`'s
    `EvidenceAggregator` — bez LLM, bez credentialu, bez zápisové cesty do Žlabu (jen čte); kontroluje

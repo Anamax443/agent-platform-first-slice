@@ -2,6 +2,32 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-14 (142) — Nový `docs/BC-PURCHASE-INVOICE-POLE.md`: reálná pole BC API v2.0 `purchaseInvoices`/`purchaseInvoiceLines` ověřena proti oficiální dokumentaci
+
+**Pokyn vlastníka:** chce vědět, jaká pole pro zápis do BC skutečně potřebujeme, aby se proces dal
+postupně ladit — navazuje na `## Pořadí` bod 7 (diskuze o debuggeru/editaci kroků odbočila zpět
+k `bc.vendors`).
+
+Ověřeno přímo v oficiální Microsoft Learn dokumentaci (Get/Create `purchaseInvoices`, Create
+`purchaseInvoiceLines`, BC API v2.0) — reálné request/response příklady, stejná disciplína jako
+u ARES/MOJE daně (HANDOFF 111-112). Nový dokument mapuje BC pole proti tomu, co farma dnes má
+(`invoice.extract` v1, 4 pole) a co je jen navržené (`invoice.v1`, `NAVRHOVY-LIST-farma.md` krok 8a).
+
+**Klíčová zjištění:**
+- `vendorNumber` je jediné pole, bez kterého se zápis vůbec nedá odeslat — a farma ho dnes nemá;
+  je to přesně `bc.vendors` (bod 7), potvrzuje prioritu, ne nový nález.
+- BC **přepočítává celkové částky z řádků, ne z hlavičkového pole** — faktura zapsaná jen se
+  souhrnnými částkami z hlavičky (bez `purchaseInvoiceLines`) vznikne s nulovým součtem.
+  Vyžaduje aspoň jeden souhrnný řádek, i pro summary-only zápis.
+- `companyId` (IČO) a `bankAccount` z dnešního `invoice.extract` **nejdou přímo do BC** — IČO je jen
+  vyhledávací klíč pro `bc.vendors`, bankovní účet je vstup do Import Gate's `ACCOUNT_VERIFICATION`,
+  ne BC write pole.
+- Otevřené, needs verification: mapování DUZP → `postingDate` (žádné samostatné DUZP pole v ověřené
+  dokumentaci nenalezeno) a `taxCode` (BC kód sazby, instalačně specifický, ne holé procento DPH).
+
+Zapsáno do `docs/SEVERKA.md ## Pořadí` bodu 7 jako odkaz. Čistě dokumentační krok — žádný kód,
+žádná nová capabilita.
+
 ## 2026-09-14 (141) — Posudek 16: nový P0 mezi Dojičkou a Konví opraven (`candidateHash`/`fieldHashes` binding), SEVERKA audit-provenance drift opraven
 
 **Pokyn vlastníka:** externí posudek nad `main` (156 commitů) — viz `docs/POSUDKY.md` Posudek 16 pro
