@@ -541,7 +541,14 @@ describe("composeIncidentAlert() — Argos's e-mail content (HANDOFF 85, oponent
     expect(alert?.subject).toContain("🟢");
     expect(alert?.subject).toContain("1 vyřešený nález");
     expect(alert?.body).toContain("VYŘEŠENO:");
-    expect(alert?.body).toContain("6 instancí čeká v Ohradě (trvalo 17 min)");
+    expect(alert?.body).toContain("6 instancí čeká v Ohradě — teď OK (trvalo 17 min)");
+  });
+
+  it("owner 2026-09-14, over a real e-mail: 'nic z nich nepoznám' — a resolved line naming a failure count must say so is now OK, not just repeat the old failure text under VYŘEŠENO", () => {
+    const alert = composeIncidentAlert([], [resolvedAfter("document.stamp: self-test 12/14, 2 kontrol selhává", "2026-09-11T08:00:00Z", "2026-09-14T08:00:00Z")]);
+    const resolvedLine = alert?.body.split("\n").find((l) => l.includes("document.stamp"));
+    expect(resolvedLine).toContain("2 kontrol selhává");
+    expect(resolvedLine).toContain("teď OK");
   });
 
   it("both new and resolved findings in the same run appear in the same e-mail, each under its own heading", () => {

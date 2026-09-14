@@ -2,6 +2,27 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-14 (148) — Argosovy "VYŘEŠENO" e-maily zněly jako pokračující problém
+
+**Pokyn vlastníka:** reálný e-mail od Argose — "argosovy zprávy se mi nelíbí, nic z nich nepoznám",
+se screenshotem: předmět "2 vyřešené nálezy", tělo "VYŘEŠENO: document.stamp: self-test 12/14, 2
+kontrol selhává (trvalo 3 dní)".
+
+**Ověřeno v kódu:** `composeIncidentAlert()` (page.ts) pro vyřešený nález jen znovu vypíše
+`i.text` — text zamrzlý na tom, co nález říkal naposledy JEŠTĚ OTEVŘENÝ (počet selhávajících
+kontrol). Pod nadpisem "VYŘEŠENO:" to čtenáři zní přesně obráceně, než to znamená.
+
+**Oprava:** řádek teď říká `${i.text} — teď OK (trvalo ...)` — jasně odděluje "tohle byl problém" od
+"a už není". `tests/page.test.ts` — upravena existující asserce + nový regresní test přímo na
+uživatelův scénář ("document.stamp: self-test 12/14, 2 kontrol selhává" pod VYŘEŠENO musí obsahovat
+"teď OK").
+
+**Živě neověřováno přes reálný e-mail** (čistá textová funkce, bez Cloudflare runtime závislosti,
+`/farm/test-alert` by poslal další reálný e-mail — zbytečné navíc k testu, co přesně reprodukuje
+uživatelův string) — ověří se přirozeně při dalším vyřešeném nálezu.
+
+**Brány zelené:** typecheck, **435/435 testů** (+1), arch, farm:check.
+
 ## 2026-09-14 (147) — Kravská dílna: první konverzační AI asistent na `/farm`, navrhuje soubory, nic sám nenasazuje
 
 **Pokyn vlastníka:** "ale já chci vytvářet na webovkách krávy/telata a s pomocí AI je uvádět do

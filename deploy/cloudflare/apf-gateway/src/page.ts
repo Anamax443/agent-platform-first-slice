@@ -797,7 +797,11 @@ export function composeIncidentAlert(newlyOpened: IncidentRecord[], newlyResolve
   }
   if (newlyResolved.length) {
     lines.push("VYŘEŠENO:");
-    for (const i of newlyResolved) lines.push(`  ${i.text} (trvalo ${humanDuration(i.firstSeenAt, i.resolvedAt as string)})`);
+    // i.text is frozen at whatever it said the LAST time the incident was still open (e.g. "self-test 12/14, 2
+    // kontrol selhává") — reused as-is here, a "VYŘEŠENO:" line reporting a failure count reads as if the
+    // problem still exists (owner's report 2026-09-14, over a real e-mail: "nic z nich nepoznám"). "— teď OK"
+    // makes explicit what changed: this WAS the finding, it is not anymore.
+    for (const i of newlyResolved) lines.push(`  ${i.text} — teď OK (trvalo ${humanDuration(i.firstSeenAt, i.resolvedAt as string)})`);
     lines.push("");
   }
   lines.push("— Argos, /farm");
