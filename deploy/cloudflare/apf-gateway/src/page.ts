@@ -3,6 +3,7 @@
 // the page is evidence, not an app. Czech labels for the owner.
 import type { Artifact } from "../../../../src/platform/artifacts.js";
 import type { AuditRecord } from "../../../../src/platform/audit.js";
+import type { CertificationRecord, LifecycleStatus } from "../../../../src/platform/certification.js";
 import type { Instance } from "../../../../src/platform/journal.js";
 
 export interface FarmStats {
@@ -99,6 +100,16 @@ export interface CapabilityRow {
   selfTest?: { passed: number; total: number };
   /** The individual fixtures behind that count — owner's request 2026-09-09: "chci vidět kontroly". */
   selfTestFixtures?: SelfTestFixtureState[];
+  /** Last real, live certification of this capability, ANY build (index.ts buildFarmModel) — shown even when
+   * stale (a previous deploy) so the operator can see "certified, but not for what's running now", never
+   * silently hidden. Posudek 16 P1-9 / docs/POSUDKY.md: made real 2026-09-14. */
+  certification?: CertificationRecord;
+  /** deriveLifecycleStatus() (src/platform/certification.ts) over certification + the real ACTIVE/QUARANTINED
+   * this same row's lifecycleStatus carries — the full 6-state Admission Gate vocabulary, shown ALONGSIDE
+   * lifecycleStatus (never replacing it): lifecycleStatus is what Router.route() actually enforces today,
+   * derivedStatus is what Admission Gate says should eventually gate it. Only counts a certification toward
+   * ACTIVE/CERTIFIED when its buildHash matches the currently running gitSha (build-bound, CERT-004). */
+  derivedStatus: LifecycleStatus;
 }
 
 export interface FarmModel {
@@ -394,6 +405,8 @@ const STATE_CLASS: Record<string, string> = {
   SUCCEEDED: "b-ok",
   ACTIVE: "b-ok",
   HEALTHY: "b-ok",
+  CERTIFIED: "b-ok",
+  NEW: "b-neutral",
   QUARANTINED: "b-crit",
   DOWN: "b-crit",
   FAILED: "b-crit",
@@ -490,13 +503,31 @@ const selfTestList = (fixtures: SelfTestFixtureState[] | undefined): string =>
 const selfTestDrilldown = (fixtures: SelfTestFixtureState[] | undefined, capability: string): string =>
   `${selfTestList(fixtures)}<form method="post" action="/farm/self-test?capability=${encodeURIComponent(capability)}"><button class="btn btn-sm" type="submit">Spustit jen ${esc(capability)}</button></form>`;
 
+/** Admission Gate's real, build-bound certification (Posudek 16 P1-9, index.ts certifyFromSelfTest) — separate
+ * badge from `lifecycleStatus` on purpose: lifecycleStatus is what Router.route() actually enforces today
+ * (ACTIVE/QUARANTINED from lifecycle.json), derivedStatus is Admission Gate's own opinion, never conflated
+ * with what's really gating dispatch. A certification from an OLDER build (buildHash != today's gitSha) still
+ * shows, marked stale, rather than silently vanishing after every deploy. */
+const certificationLine = (c: CapabilityRow, gitSha: string): string => {
+  const cert = c.certification;
+  const badge = stateBadge(c.derivedStatus);
+  if (!cert) return `<span title="Certifikace nikdy neproběhla pro tuhle kapabilitu">Admission Gate: ${badge} <span class="dim">nikdy certifikováno</span></span>`;
+  const passed = Object.values(cert.actualResults).filter((r) => r === "PASS").length;
+  const stale = cert.buildHash !== gitSha ? ` <span class="dim" title="Poslední certifikace patří jinému buildu (${esc(cert.buildHash)}), ne dnešnímu ${esc(gitSha)}">(starší build)</span>` : "";
+  const color = cert.decision === "PASS" ? "var(--ok)" : "var(--crit)";
+  return `<span title="Certifikace buildu ${esc(cert.buildHash)}, ${esc(shortAt(cert.certifiedAt))}">Admission Gate: ${badge} <span style="color:${color}">${passed}/${cert.requiredTests.length} povinných testů</span>${stale}</span>`;
+};
+
+const certifyForm = (capability: string): string =>
+  `<form method="post" action="/farm/certify?capability=${encodeURIComponent(capability)}"><button class="btn btn-sm" type="submit">Spustit certifikaci</button></form>`;
+
 /** One card of the Admission Gate pen: capability, its risk/isolation claim, live lifecycle, and — separately —
  * Argos's own live health opinion on top of it (HANDOFF 89), when there's an open finding to show. */
-const capabilityRow = (c: CapabilityRow, watchdog: WatchdogSnapshot, incidents: IncidentRecord[]): string => {
+const capabilityRow = (c: CapabilityRow, watchdog: WatchdogSnapshot, incidents: IncidentRecord[], gitSha: string): string => {
   const iso = isolationLabel(c.isolationClass ?? "");
   const argos = capabilityWatchdogLevel(c.capability, watchdog, incidents);
   const argosBadge = argos ? `<span title="Argosův živý nález, ne formální stav Admission Gate">Argos: ${stateBadge(argos)}</span>` : "";
-  return `<div class="p-card${c.lifecycleStatus === "QUARANTINED" ? " crit" : ""}"><div class="p-card-head"><code>${esc(c.capability)}</code>/v${esc(c.version)}${c.usesLlm ? ' <small title="volá jazykový model">🤖</small>' : ""}${stateBadge(c.lifecycleStatus)}</div><div class="p-card-meta"><span>riziko ${riskBadge(c.riskClass)}</span><span${iso.title ? ` title="${esc(iso.title)}"` : ""}>izolace <b>${esc(iso.label || "—")}</b></span><span>${esc(c.sideEffects ?? "—")}</span></div><div class="p-card-meta">${selfTestBadge(c.selfTest)}${argosBadge}</div>${selfTestDrilldown(c.selfTestFixtures, c.capability)}</div>`;
+  return `<div class="p-card${c.lifecycleStatus === "QUARANTINED" ? " crit" : ""}"><div class="p-card-head"><code>${esc(c.capability)}</code>/v${esc(c.version)}${c.usesLlm ? ' <small title="volá jazykový model">🤖</small>' : ""}${stateBadge(c.lifecycleStatus)}</div><div class="p-card-meta"><span>riziko ${riskBadge(c.riskClass)}</span><span${iso.title ? ` title="${esc(iso.title)}"` : ""}>izolace <b>${esc(iso.label || "—")}</b></span><span>${esc(c.sideEffects ?? "—")}</span></div><div class="p-card-meta">${selfTestBadge(c.selfTest)}${argosBadge}</div><div class="p-card-meta">${certificationLine(c, gitSha)}</div>${certifyForm(c.capability)}${selfTestDrilldown(c.selfTestFixtures, c.capability)}</div>`;
 };
 
 /** How long something lasted between two ISO timestamps, for a human reading a finding — minutes/hours/days,
@@ -837,7 +868,7 @@ export function renderFarm(m: FarmModel): string {
       (byModule.get(c.module) as CapabilityRow[]).push(c);
     }
     return [...byModule.entries()]
-      .map(([mod, caps]) => `<div class="pen"><div class="pen-label">${ICONS.staj}${esc(mod)}</div><div class="grid-cards">${caps.map((c) => capabilityRow(c, watchdog, incidents)).join("")}</div></div>`)
+      .map(([mod, caps]) => `<div class="pen"><div class="pen-label">${ICONS.staj}${esc(mod)}</div><div class="grid-cards">${caps.map((c) => capabilityRow(c, watchdog, incidents, m.gitSha)).join("")}</div></div>`)
       .join("");
   })();
 
@@ -980,6 +1011,7 @@ export function renderFarm(m: FarmModel): string {
       </form>
       ${stajCards}
       <h3 style="margin:18px 0 8px">Kapability (Admission Gate)</h3>
+      <div class="card" style="margin-bottom:14px"><h3 style="margin-bottom:4px">Nová kráva</h3><p class="dim" style="font-size:12px;margin:0">Nová kráva se do Stáje nedostane kliknutím na téhle stránce — potřebuje reálný kód (nový modul, policy, položku v <code>config/${esc(m.installation)}/lifecycle.json</code>) a deploy, to zůstává lidský krok s vlastním commitem. Co „Spustit certifikaci“ u každé karty dělá doopravdy: spustí živý konformanční test proti přesně tomuhle nasazenému buildu (<code>${esc(m.gitSha)}</code>) a certifikaci uloží — <b>certifikace sama nic nezapíná</b>, „ACTIVE“ tady pořád znamená jen to, co doopravdy vynucuje Router z <code>lifecycle.json</code>.</p></div>
       ${m.capabilities.length ? penGrid : '<p class="dim">zatím žádné (vzdálení Workeři neodpověděli)</p>'}`,
     },
     {

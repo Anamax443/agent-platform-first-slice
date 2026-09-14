@@ -2,6 +2,49 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-14 (142) — Admission Gate zapojený reálně na živé `/farm`: P1-9 opraveno, `CertificationRegistry` skutečně certifikuje nasazený build
+
+**Pokyn vlastníka:** otázka "kde se zadává nová kráva s tím AI?" nad screenshotem Průsvitné stáje →
+zjištění, že reálný `apf-gateway` tenhle vstupní bod vůbec nemá (jen `ai-farma-web`'s statické demo
+se sample daty) → "tak to udělej!!!".
+
+**Co bylo reálně možné postavit:** `Router.register()` dnes přijímá kapability jen jako statický
+kód (`RegisteredComponent` sestavený při buildu), ne za běhu z formuláře — „Kráva z GUI" (AI
+vygeneruje a rovnou nasadí nový modul z promptu) zůstává vize (jen v docs, žádný kód). Auto-deploy
+AI-generovaného kódu na živou farmu bez lidského review by přímo porušil vlastníkovo pravidlo
+"nikdy nenasazuj netestované" i "AI z příkazové řádky nesmí zapínat věci na ostro". Reálně
+buildovatelné a poctivé: udělat Admission Gate skutečný pro to, co už je nasazené — přesně mezera,
+kterou Posudek 16 (HANDOFF 141) bod P1-9 pojmenoval.
+
+**Oprava P1-9:** `CertificationRegistry.certify()` (`src/platform/certification.ts`) teď odmítá
+`requiredTests: []` jako vždy FAIL (dřív `[].every(...) === true`, vacuous PASS) — obrana do
+hloubky. Skutečná oprava je ale v tom, kdo `certify()` volá: nová `requiredTestsFor(capability)`
+(`self-test.ts`) odvozuje povinné testy ze skutečné conformance sady dané kapability (fixture id,
+bez těch co potřebují adapter chaos mode), nikdy z parametru requestu — `/farm/certify` je jediný
+skutečný volající a nikdy nebere `requiredTests` z URL/body.
+
+**Nové:** `/farm/certify?capability=X` (POST) spustí živý self-test přesně jedné kapability a
+certifikaci uloží do D1 stejným vzorem jako `self-test-state` (fixed-row `INSERT OR REPLACE` +
+append-only historie `certification-check`), build-bound na `env.GIT_SHA`. `buildFarmModel()` čte
+poslední certifikaci per kapabilita, `deriveLifecycleStatus()` (6 stavů) počítá jen s certifikací
+PRO AKTUÁLNÍ build — certifikace ze staršího deploye se pořád ukáže (transparentnost), ale nikdy
+neprojde jako "tenhle build certifikovaný". UI na Stáji: druhý, jasně odlišený "Admission Gate"
+badge vedle skutečného `lifecycleStatus` (co doopravdy vynucuje Router), tlačítko "Spustit
+certifikaci" na každé kartě, poctivý panel "Nová kráva" — vysvětluje, že nová kráva pořád
+potřebuje reálný kód a deploy, tlačítko samo nic nezapíná.
+
+**Živě ověřeno** (ne jen typecheck/dry-run): `wrangler dev` nad `local-fakes`, `POST
+/farm/certify?capability=document.classify` → `document.classify` reálně certifikováno ACTIVE,
+18/18 povinných testů, `/farm` to ukazuje; `document.stamp` (worker mimo tenhle dev běh) → čistě
+404, žádný pád; chybějící `capability` parametr → 400.
+
+**Zbývá, vědomě mimo:** zip upload do Podatelny (vlastníkova volba pořadí — nejdřív dokončit
+tohle) a `MAX_UPLOAD_BYTES` (dnes natvrdo 4 MB v `index.ts`) by pak měl být editovatelný
+administrátorem, ne konstanta v kódu.
+
+**Brány zelené:** typecheck, **425/425 testů** (+1 CERT-009, +3 `requiredTestsFor`), arch,
+farm:check. Nenasazeno na `farm-bass443`.
+
 ## 2026-09-14 (141) — Posudek 16: nový P0 mezi Dojičkou a Konví opraven (`candidateHash`/`fieldHashes` binding), SEVERKA audit-provenance drift opraven
 
 **Pokyn vlastníka:** externí posudek nad `main` (156 commitů) — viz `docs/POSUDKY.md` Posudek 16 pro

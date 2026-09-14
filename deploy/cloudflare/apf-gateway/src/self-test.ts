@@ -113,6 +113,19 @@ const SUITES: { capability: string; worker: string; fixtures: Fixture[]; golden:
  * silently drift from what actually runs. */
 export const SELF_TEST_CAPABILITIES: readonly string[] = SUITES.map((s) => s.capability);
 
+/** Every fixture id a live self-test run can actually exercise for `capability` — excludes fixtures that need
+ * Node-only adapter chaos mode (self-test.ts's own `skipped` rows, computed statically here from the same
+ * `f.adapters || f.storage` test runSelfTest() uses at run time, no live run needed to know the list). This is
+ * the platform's own, non-caller-editable definition of "what must pass to certify this build" (Posudek 16
+ * P1-9, docs/POSUDKY.md: `CertificationRegistry.certify()`'s `requiredTests` must come from the platform's own
+ * conformance metadata, never from whoever calls admission). Empty for a capability with no known suite.
+ */
+export function requiredTestsFor(capability: string): string[] {
+  const suite = SUITES.find((s) => s.capability === capability);
+  if (!suite) return [];
+  return suite.fixtures.filter((f) => !(f.adapters || f.storage)).map((f) => f.id);
+}
+
 /** Which capability a scheduled self-test tick should run — deterministic from the tick's own timestamp
  * (`controller.scheduledTime`), no stored "which one is next" state between runs. Pure, so it's testable
  * without a Workers runtime, unlike the scheduled() handler that calls it (index.ts, HANDOFF 88). */

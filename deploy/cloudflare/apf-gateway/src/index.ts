@@ -21,6 +21,7 @@ import { platformError } from "../../../../src/platform/errors.js";
 import { newId } from "../../../../src/platform/ids.js";
 import type { CapabilityRecord } from "../../../../src/platform/registry.js";
 import { Orchestrator, type WorkflowDef } from "../../../../src/platform/orchestrator.js";
+import { CertificationRegistry, deriveLifecycleStatus, type CertificationRecord, type LifecycleStatus } from "../../../../src/platform/certification.js";
 import { IdentityProvider } from "../../../../src/platform/gateway.js";
 import type { Instance } from "../../../../src/platform/journal.js";
 import { ReviewService, type Decision } from "../../../../src/platform/review.js";
@@ -52,7 +53,7 @@ import {
   type Wired,
 } from "./page.js";
 import { describeModels, gatewayCatalog, wirePlatform, type Wiring } from "./platform-wiring.js";
-import { runSelfTest, selfTestCapabilityForTick, SELF_TEST_CAPABILITIES, SELF_TEST_WORKFLOW_ID } from "./self-test.js";
+import { runSelfTest, requiredTestsFor, selfTestCapabilityForTick, SELF_TEST_CAPABILITIES, SELF_TEST_WORKFLOW_ID } from "./self-test.js";
 import { D1_AUDIT_DDL, DDL, SqliteArtifacts, SqliteAudit, SqliteJournal, SqliteReviewTaskStore } from "./store.js";
 import { visuallyStamp } from "./visual-stamp.js";
 
@@ -220,6 +221,55 @@ async function latestSelfTestSummary(env: Env): Promise<SelfTestSummary | undefi
   await ensureD1Audit(env.AUDIT);
   const row = await env.AUDIT.prepare("SELECT json FROM audit WHERE audit_id = ?").bind(SELF_TEST_STATE_AUDIT_ID).first<{ json: string }>();
   return row ? (JSON.parse(row.json) as SelfTestSummary) : undefined;
+}
+
+const CERTIFICATION_STATE_PREFIX = "certification-state:";
+
+/**
+ * Admission Gate, made real (docs/POSUDKY.md Posudek 16 — "kde se zadává nová kráva?"). `CertificationRegistry`
+ * (src/platform/certification.ts) is a pure, in-memory primitive; a stateless Worker has nowhere to keep its Map
+ * across requests, so this derives one build-bound `CertificationRecord` per call (a throwaway registry instance
+ * is fine — `certify()`'s decision logic is a pure function of its input) and persists JUST that record here,
+ * same fixed-row `INSERT OR REPLACE` + append-only history idiom as `recordSelfTestSummary` above. `requiredTests`
+ * comes ONLY from `requiredTestsFor()` (self-test.ts) — the platform's own conformance suite for this exact
+ * capability — never from a query param or request body, closing Posudek 16 P1-9 for the one real caller that
+ * exists today.
+ */
+function certifyFromSelfTest(input: { module: string; capability: string; riskProfile: string; buildHash: string; rows: SelfTestRow[]; clock: Clock }): CertificationRecord {
+  const requiredTests = requiredTestsFor(input.capability);
+  const actualResults: Record<string, "PASS" | "FAIL"> = {};
+  for (const r of input.rows) if (!r.skipped) actualResults[r.id] = r.ok ? "PASS" : "FAIL";
+  return new CertificationRegistry(input.clock).certify({
+    module: input.module,
+    capability: input.capability,
+    buildHash: input.buildHash,
+    riskProfile: input.riskProfile,
+    requiredTests,
+    actualResults,
+  });
+}
+
+async function recordCertification(env: Env, record: CertificationRecord): Promise<void> {
+  await ensureD1Audit(env.AUDIT);
+  const insertHistory = env.AUDIT.prepare(
+    "INSERT OR IGNORE INTO audit (audit_id, at, kind, correlation_id, workflow_id, tenant_id, actor_id, capability, json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).bind(newId("aud"), record.certifiedAt, "certification-check", null, null, null, "admission-gate", record.capability, JSON.stringify(record));
+  const upsertState = env.AUDIT.prepare(
+    "INSERT OR REPLACE INTO audit (audit_id, at, kind, correlation_id, workflow_id, tenant_id, actor_id, capability, json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).bind(`${CERTIFICATION_STATE_PREFIX}${record.capability}`, record.certifiedAt, "certification-state", null, null, null, "admission-gate", record.capability, JSON.stringify(record));
+  await env.AUDIT.batch([upsertState, insertHistory]);
+}
+
+/** Every capability's last-known certification, keyed by capability — empty for a capability never certified. */
+async function latestCertifications(env: Env): Promise<Record<string, CertificationRecord>> {
+  await ensureD1Audit(env.AUDIT);
+  const rows = await env.AUDIT.prepare("SELECT json FROM audit WHERE kind = ?").bind("certification-state").all<{ json: string }>();
+  const out: Record<string, CertificationRecord> = {};
+  for (const row of rows.results ?? []) {
+    const record = JSON.parse(row.json) as CertificationRecord;
+    out[record.capability] = record;
+  }
+  return out;
 }
 
 const WATCHDOG_INCIDENT_KIND = "watchdog-incident";
@@ -1174,7 +1224,7 @@ async function inboxDetail(env: Env): Promise<{ pending: InboxItem[]; failed: In
  */
 async function buildFarmModel(env: Env, instanceLimit: number, instanceWindow: string): Promise<FarmModel> {
   const now = iso(new SystemClock().now());
-  const [documentHost, emailExecutor, mailIngest, fakes, instances, log, inbox, stats, documentHostCaps, emailExecutorCaps, selfTestSummary, alertHealth, openWorkflowProblems, recentAuditTenantMismatches] = await Promise.all([
+  const [documentHost, emailExecutor, mailIngest, fakes, instances, log, inbox, stats, documentHostCaps, emailExecutorCaps, selfTestSummary, alertHealth, openWorkflowProblems, recentAuditTenantMismatches, certifications] = await Promise.all([
     deployableInfo(env.DOCUMENT_HOST, "https://apf-document-host.internal"),
     deployableInfo(env.EMAIL_EXECUTOR, "https://apf-email-executor.internal"),
     deployableInfo(env.MAIL_INGEST, "https://apf-mail-ingest.internal"),
@@ -1189,18 +1239,34 @@ async function buildFarmModel(env: Env, instanceLimit: number, instanceWindow: s
     latestAlertHealth(env),
     authoritativeOpenProblems(env),
     recentAuditTenantMismatchCount(env, windowSince("24h", new SystemClock()) as string),
+    latestCertifications(env),
   ]);
   // Admission Gate visibility (HANDOFF 70/71): the same LifecycleRegistry the Router enforces, read here only —
   // this page never writes it. Quarantining a module still means editing config/<installation>/lifecycle.json
   // and redeploying (a human decision with its own commit), not a button on this page.
   const selfTestAgg = selfTestAggregates(selfTestSummary);
   const fixturesOf = (predicate: (f: SelfTestFixtureState) => boolean): SelfTestFixtureState[] => (selfTestSummary?.fixtures ?? []).filter(predicate);
-  const capabilities: CapabilityRow[] = [...gatewayCatalog(), ...documentHostCaps.capabilities, ...emailExecutorCaps.capabilities].map((c) => ({
-    ...c,
-    lifecycleStatus: installation.lifecycle.statusOf(c.module),
-    selfTest: selfTestAgg.byCapability[c.capability],
-    selfTestFixtures: fixturesOf((f) => f.capability === c.capability),
-  }));
+  const capabilities: CapabilityRow[] = [...gatewayCatalog(), ...documentHostCaps.capabilities, ...emailExecutorCaps.capabilities].map((c) => {
+    const lifecycleStatus = installation.lifecycle.statusOf(c.module);
+    const certification = certifications[c.capability];
+    // Build-bound (CERT-004, certification.ts's own docstring): a certification from a PREVIOUS deploy's gitSha
+    // must never appear to certify what's running now — still shown for transparency, just not fed into
+    // deriveLifecycleStatus() as "this build passed".
+    const currentBuildCertification = certification && certification.buildHash === env.GIT_SHA ? certification : undefined;
+    return {
+      ...c,
+      lifecycleStatus,
+      selfTest: selfTestAgg.byCapability[c.capability],
+      selfTestFixtures: fixturesOf((f) => f.capability === c.capability),
+      certification,
+      derivedStatus: deriveLifecycleStatus({
+        certification: currentBuildCertification,
+        admitted: lifecycleStatus === "ACTIVE",
+        degraded: false,
+        quarantined: lifecycleStatus === "QUARANTINED",
+      }),
+    };
+  });
   // MAJOR 5 (HANDOFF 93): which workers' /capabilities call failed this run — capabilitiesOf() no longer lets
   // that look identical to "genuinely zero capabilities", so computeWatchdog() can say so instead of the
   // affected capabilities just silently not being in the list above.
@@ -1341,6 +1407,30 @@ export default {
       if (next < SELF_TEST_CAPABILITIES.length) return Response.redirect(new URL(`/farm/self-test?chain=${next}`, url).toString(), 303);
       const summary = await latestSelfTestSummary(env);
       return html(renderSelfTest(summary?.fixtures ?? rows));
+    }
+
+    // Admission Gate, made real (docs/POSUDKY.md Posudek 16 — "kde se zadává nová kráva?"): runs the real, live
+    // conformance suite for exactly one already-deployed capability (same self-test run "/farm/self-test?capability="
+    // already does) and additionally certifies the result — requiredTests comes ONLY from requiredTestsFor()
+    // (self-test.ts), never from this request, so nothing posted here can shrink what's required (Posudek 16
+    // P1-9). This does NOT register new code or flip lifecycle.json to ACTIVE: a build with no code behind it has
+    // no capability row to certify, and admission (the "admitted" bit deriveLifecycleStatus() reads) stays the
+    // deliberate human config-edit-and-redeploy step buildFarmModel()'s own comment already documents.
+    if (url.pathname === "/farm/certify" && request.method === "POST") {
+      const capability = url.searchParams.get("capability");
+      if (!capability) return new Response("capability required", { status: 400 });
+      const [documentHostCaps, emailExecutorCaps] = await Promise.all([
+        capabilitiesOf(env.DOCUMENT_HOST, "https://apf-document-host.internal"),
+        capabilitiesOf(env.EMAIL_EXECUTOR, "https://apf-email-executor.internal"),
+      ]);
+      const row = [...gatewayCatalog(), ...documentHostCaps.capabilities, ...emailExecutorCaps.capabilities].find((c) => c.capability === capability);
+      if (!row) return new Response(`unknown capability ${capability}`, { status: 404 });
+      const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(SELF_TEST_WORKFLOW_ID));
+      const rows = (await stub.selfTest({ capability })) as SelfTestRow[];
+      await recordSelfTestSummary(env, rows);
+      const record = certifyFromSelfTest({ module: row.module, capability, riskProfile: row.riskClass ?? "UNKNOWN", buildHash: env.GIT_SHA, rows, clock: new SystemClock() });
+      await recordCertification(env, record);
+      return Response.redirect(new URL("/farm#staj", url).toString(), 303);
     }
 
     // Manual verification for the Argos alert wiring (HANDOFF 85) — "never deploy untested" for a real external

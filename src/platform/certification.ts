@@ -56,9 +56,16 @@ export class CertificationRegistry {
    * missing from `actualResults` counts as not passed, the same "absent fails the same as failed"
    * rule `policy.ts`'s `checkEffectFieldValidators()` already applies to evidence fields. A module
    * cannot certify itself as PASS by simply not running (or not reporting) an inconvenient test.
+   *
+   * `requiredTests` itself must never be empty (Posudek 16 P1-9): `[].every(...)` is vacuously
+   * `true`, so a caller passing `requiredTests: []` would otherwise certify PASS having proven
+   * nothing at all. Defense in depth here — the real fix is that whoever wires this into the live
+   * farm must derive `requiredTests` from the platform's own conformance/self-test suite for that
+   * capability, never accept it from a caller/COW; this guard just makes that the only way `certify()`
+   * itself can ever return PASS, even if a future caller gets that wrong.
    */
   certify(input: CertificationInput): CertificationRecord {
-    const decision: "PASS" | "FAIL" = input.requiredTests.every((t) => input.actualResults[t] === "PASS") ? "PASS" : "FAIL";
+    const decision: "PASS" | "FAIL" = input.requiredTests.length > 0 && input.requiredTests.every((t) => input.actualResults[t] === "PASS") ? "PASS" : "FAIL";
     const record: CertificationRecord = Object.freeze({
       recordId: newId("cert"),
       module: input.module,

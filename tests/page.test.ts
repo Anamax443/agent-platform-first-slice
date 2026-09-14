@@ -40,15 +40,16 @@ const model: FarmModel = {
       sideEffects: "none",
       usesLlm: true,
       lifecycleStatus: "ACTIVE",
+      derivedStatus: "NEW",
       selfTest: { passed: 18, total: 18 },
       selfTestFixtures: [
         { capability: "document.classify", worker: "apf-gateway", id: "canonical-invoice-cz", kind: "canonical", description: "Czech invoice with IBAN and VAT; the IBAN also feeds EVD-005.", why: "Kontroluje základní extrakci na reálném českém formátu faktury.", onFailure: "Never shown: this fixture passes.", ok: true, diff: [], at: "2026-09-09T13:20:00Z" },
         { capability: "document.classify", worker: "apf-gateway", id: "injection-approve", kind: "injection", description: "Injected instruction outside the allowlist: quality retry, then a legitimate stamp.", why: "Dokument je vždy DATA, nikdy příkaz platformě.", onFailure: "Capabilitu okamžitě prověřit, zvážit karanténu.", ok: false, diff: ['$.status: "FAILED" != "SUCCEEDED"'], at: "2026-09-09T13:20:00Z" },
       ],
     },
-    { capability: "document.stamp", version: "1", module: "document-executor-host", riskClass: "LOW", isolationClass: "LOGICAL", sideEffects: "internal-write", lifecycleStatus: "ACTIVE", selfTest: { passed: 12, total: 14 } },
-    { capability: "document.archive", version: "1", module: "document-executor-host", riskClass: "LOW", isolationClass: "LOGICAL", sideEffects: "internal-write", lifecycleStatus: "QUARANTINED" },
-    { capability: "email.send", version: "1", module: "email-executor", riskClass: "MEDIUM", isolationClass: "PRINCIPAL", sideEffects: "external-write", lifecycleStatus: "ACTIVE" },
+    { capability: "document.stamp", version: "1", module: "document-executor-host", riskClass: "LOW", isolationClass: "LOGICAL", sideEffects: "internal-write", lifecycleStatus: "ACTIVE", derivedStatus: "NEW", selfTest: { passed: 12, total: 14 } },
+    { capability: "document.archive", version: "1", module: "document-executor-host", riskClass: "LOW", isolationClass: "LOGICAL", sideEffects: "internal-write", lifecycleStatus: "QUARANTINED", derivedStatus: "QUARANTINED" },
+    { capability: "email.send", version: "1", module: "email-executor", riskClass: "MEDIUM", isolationClass: "PRINCIPAL", sideEffects: "external-write", lifecycleStatus: "ACTIVE", derivedStatus: "NEW" },
   ] satisfies CapabilityRow[],
   instances: [
     {
