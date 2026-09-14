@@ -37,6 +37,10 @@ export interface InstallationProfile {
   policyRefs: string[];
   /** capability -> models. Absent only in installations that never call a model (tests with fakes). */
   models?: Record<string, ModelConfig>;
+  /** Persona for conversational tooling (Kravská dílna's system prompt) — SEVERKA.md "Tenant Layer"'s own
+   * envisioned `assistant.displayName` field, pulled forward narrowly (just a name, not the full future
+   * TenantConfig). Absent = caller's own fallback, never a hardcoded name in code. */
+  assistant?: { displayName: string };
 }
 
 export interface Installation {

@@ -53,7 +53,7 @@ describe("buildPrompt() — flattens the whole transcript into one string for Ll
         { role: "ai", text: "odpověď", at: START },
       ],
     };
-    const prompt = buildPrompt(session);
+    const prompt = buildPrompt(session, "Erwin");
     expect(prompt).toContain("Admin: první zpráva");
     expect(prompt).toContain("Asistent: odpověď");
     expect(prompt.indexOf("Admin: první zpráva")).toBeLessThan(prompt.indexOf("Asistent: odpověď"));
@@ -62,11 +62,21 @@ describe("buildPrompt() — flattens the whole transcript into one string for Ll
 
   it("carries the platform conventions (descriptor/policy/fixtures) so a fresh model turn always sees them, not just turn 1", () => {
     const session = newSession("ahoj", new FakeClock(START));
-    const prompt = buildPrompt(session);
+    const prompt = buildPrompt(session, "Erwin");
     expect(prompt).toContain("descriptor.json");
     expect(prompt).toContain("policy");
     expect(prompt).toContain("VC §5");
     expect(prompt).toContain("Nikdy sám nic nenasazuješ");
+  });
+
+  it("farmName is a genuine parameter, not a renamed constant — a different installation gets a different prompt", () => {
+    const session = newSession("ahoj", new FakeClock(START));
+    const erwin = buildPrompt(session, "Erwin");
+    const other = buildPrompt(session, "Testbeda");
+    expect(erwin).toContain("farmy Erwin");
+    expect(other).toContain("farmy Testbeda");
+    expect(erwin).not.toContain("Testbeda");
+    expect(other).not.toContain("farmy Erwin");
   });
 });
 
@@ -75,7 +85,7 @@ describe("sendMessage() — appends admin text and the model's reply, never muta
     const clock = new FakeClock(START);
     const session = newSession("start", clock);
     const adapter = new StubAdapter("navrhuji descriptor.json takto...");
-    const after = await sendMessage(session, "doplňuji detail", adapter, clock);
+    const after = await sendMessage(session, "doplňuji detail", adapter, clock, "Erwin");
     expect(after).not.toBe(session);
     expect(session.messages).toEqual([]); // original untouched
     expect(after.messages).toHaveLength(2);
@@ -87,7 +97,7 @@ describe("sendMessage() — appends admin text and the model's reply, never muta
     const clock = new FakeClock(START);
     const session = newSession("start", clock);
     const adapter = new StubAdapter();
-    await sendMessage(session, "kráva pro ISDS", adapter, clock);
+    await sendMessage(session, "kráva pro ISDS", adapter, clock, "Erwin");
     expect(adapter.calls).toBe(1);
     expect(adapter.lastPrompt).toContain("Admin: kráva pro ISDS");
   });
@@ -96,8 +106,8 @@ describe("sendMessage() — appends admin text and the model's reply, never muta
     const clock = new FakeClock(START);
     let session = newSession("start", clock);
     const adapter = new StubAdapter((p) => (p.includes("druhá") ? "druhá odpověď" : "první odpověď"));
-    session = await sendMessage(session, "první zpráva", adapter, clock);
-    session = await sendMessage(session, "druhá zpráva", adapter, clock);
+    session = await sendMessage(session, "první zpráva", adapter, clock, "Erwin");
+    session = await sendMessage(session, "druhá zpráva", adapter, clock, "Erwin");
     expect(adapter.lastPrompt).toContain("Admin: první zpráva");
     expect(adapter.lastPrompt).toContain("Asistent: první odpověď");
     expect(adapter.lastPrompt).toContain("Admin: druhá zpráva");

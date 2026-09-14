@@ -1,6 +1,7 @@
 {
   "installation": "local-fakes",
   "description": "Test installation: two tenants, one orchestrator identity per tenant, one AI identity with a single read scope; every external system is a fake; no channels.",
+  "assistant": { "displayName": "Testbeda" },
   "tenants": ["tenant-42", "tenant-7"],
   "identities": [
     { "actorId": "svc-orchestrator", "actorType": "service", "tenantId": "tenant-42", "scopes": ["document.classify", "document.validate", "document.stamp", "document.archive", "mail.ingest", "email.send", "invoice.extract", "cz.company.verify", "cz.vat.verify"], "authStrength": "client-credentials" },

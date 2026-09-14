@@ -1523,7 +1523,7 @@ export default {
       const session = newSession(text, clock);
       const modelKey = await latestCowWorkshopModelKey(env);
       const { adapter } = modelAdapterFor(installation, secretsOf(env), env.AI, COW_WORKSHOP, modelKey, 4000);
-      const withReply = await sendMessage(session, text, adapter, clock);
+      const withReply = await sendMessage(session, text, adapter, clock, installation.profile.assistant?.displayName ?? "Erwin");
       await saveWorkshopSession(env, withReply);
       return Response.redirect(new URL(`/farm/workshop/${withReply.sessionId}`, url).toString(), 303);
     }
@@ -1539,7 +1539,7 @@ export default {
       const clock = new SystemClock();
       const modelKey = await latestCowWorkshopModelKey(env);
       const { adapter } = modelAdapterFor(installation, secretsOf(env), env.AI, COW_WORKSHOP, modelKey, 4000);
-      const withReply = await sendMessage(session, text, adapter, clock);
+      const withReply = await sendMessage(session, text, adapter, clock, installation.profile.assistant?.displayName ?? "Erwin");
       await saveWorkshopSession(env, withReply);
       return Response.redirect(new URL(`/farm/workshop/${sessionId}`, url).toString(), 303);
     }

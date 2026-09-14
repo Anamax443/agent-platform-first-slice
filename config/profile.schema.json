@@ -68,6 +68,15 @@
       "items": { "$ref": "#/$defs/capabilityName" },
       "description": "Capabilities that MUST have a policy in policy/*.json of this installation (fail-closed at load)."
     },
+    "assistant": {
+      "type": "object",
+      "description": "Persona shown to the operator in conversational tooling (e.g. Kravská dílna's system prompt) — never a literal in code, so a second installation can name its assistant differently without a deploy.",
+      "additionalProperties": false,
+      "required": ["displayName"],
+      "properties": {
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 60 }
+      }
+    },
     "models": {
       "type": "object",
       "description": "AI models per capability: the options the operator may pick from and the default. Never without a model; credentials by reference only; processor and inference geography written down per option (NIS2 / ISO 27001 supplier control).",

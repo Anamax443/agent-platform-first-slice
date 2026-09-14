@@ -2,6 +2,41 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-15 (153) — Kravská dílna: "Erwin" vytažen z kódu do `installation.profile.assistant.displayName`
+
+**Podnět:** externí recenze merge `524a5e1` (vlastník ji přinesl z GitHubu) — `workshop.ts`'s
+`SYSTEM_PROMPT` mělo natvrdo "farmy Erwin" v šabloně, což jde proti pravidlu "nic instalačně
+vázaného v kódu" (stejné pravidlo, co `platform-wiring.ts`'s vlastní hlavičkový komentář říká o
+sobě). Ověřeno: `Erwin` byl v celém repu jen na jednom místě (`workshop.ts:39`), nikde jinde
+zavedené jméno — recenze měla pravdu, `assistant.displayName` navíc přesně odpovídá poli, co
+`SEVERKA.md`'s `## Vrstvy` "Tenant Layer" řádek už dřív navrhoval jako součást budoucí
+`TenantConfig`, jen vytažené úzce (jen jméno, ne celá budoucí `Office` vrstva).
+
+**Priorita oproti recenzi:** recenze navrhovala tohle jako krok #1 před durable Žlabem; nesouhlasím
+s pořadím (zapsáno vlastníkovi) — farma je dnes `CLOUD_SINGLE_TENANT`, hardcoded jméno má nulový
+živý dopad, zatímco durable Žlab je otevřená integrity/audit mezera. Oprava udělána i tak (je levná,
+~15 minut), jen ne jako priorita #1.
+
+**Změny:**
+- `config/profile.schema.json`: nová volitelná `assistant.displayName` (1-60 znaků).
+- `src/installation.ts`: `InstallationProfile.assistant?: { displayName: string }`.
+- `config/farm-bass443/profile.json`: `"assistant": {"displayName": "Erwin"}` (zachovává dnešní
+  živé chování — je to skutečně nasazené jméno, jen teď v configu, ne v kódu).
+- `config/local-fakes/profile.json`: `"assistant": {"displayName": "Testbeda"}` — záměrně **jiné**
+  jméno než farm-bass443, aby test dokázal, že se hodnota skutečně čte per instalaci, ne že je to
+  jen přejmenovaná konstanta.
+- `deploy/cloudflare/apf-gateway/src/workshop.ts`: `SYSTEM_PROMPT` konstanta → `systemPrompt(farmName)`
+  funkce; `buildPrompt()`/`sendMessage()` nově berou `farmName: string` jako povinný parametr (žádný
+  tichý fallback uvnitř `workshop.ts` samotného — fail-closed, stejný princip jako `notWired`).
+- `deploy/cloudflare/apf-gateway/src/index.ts`: oba `/farm/workshop*` handlery čtou
+  `installation.profile.assistant?.displayName ?? "Erwin"` (fallback jen tady, na hranici, ne uvnitř
+  workshop.ts) a předávají dál.
+- `tests/workshop.test.ts`: existující testy přepnuty na nový signature (`"Erwin"` explicitně), nový
+  test **EVDW-style parametrizace**: `buildPrompt(session, "Erwin")` vs. `buildPrompt(session, "Testbeda")`
+  dají různý prompt — dokazuje, že je to skutečný parametr, ne přejmenovaná konstanta.
+
+**Brány zelené:** typecheck, arch, **442/442 testů** (+1), farm:check (obě instalace).
+
 ## 2026-09-14 (152) — cz.company.verify/cz.vat.verify zapojeny do živého apf-gateway Routeru (proti fakes, bez EvidenceWriter)
 
 **Sloučeno s paralelní session (149-148 kolize čísel):** tahle větev i `origin/main` nezávisle

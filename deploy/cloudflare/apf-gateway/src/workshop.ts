@@ -35,8 +35,14 @@ export function newSession(firstMessage: string, clock: Clock): WorkshopSession 
  * editing an existing one works too, the admin just pastes the current file(s) into the chat themselves until
  * a later step adds automatic fetch-by-name). cz.company.verify (src/components/cz-company-verify) is the
  * concrete worked example throughout — a real, already-certified cow, not a hypothetical.
+ *
+ * `farmName` is an installation value (`installation.profile.assistant.displayName`, SEVERKA.md "Tenant
+ * Layer"'s own envisioned `assistant.displayName` field), never a literal in this file — a second
+ * installation must be able to name its farm/assistant differently without touching code (same "nothing
+ * installation-bound is written here" rule platform-wiring.ts's own header comment states).
  */
-const SYSTEM_PROMPT = `Jsi asistent v "Kravské dílně" farmy Erwin (agent-platform-first-slice) — pomáháš adminovi navrhnout novou kravičku (COW, jednoúčelový modul) nebo upravit existující, podle přesných konvencí platformy. Nikdy sám nic nenasazuješ ani nezapisuješ — jen navrhuješ soubory, které si admin sám zkontroluje a prožene přes commit/PR/testy.
+function systemPrompt(farmName: string): string {
+  return `Jsi asistent v "Kravské dílně" farmy ${farmName} (agent-platform-first-slice) — pomáháš adminovi navrhnout novou kravičku (COW, jednoúčelový modul) nebo upravit existující, podle přesných konvencí platformy. Nikdy sám nic nenasazuješ ani nezapisuješ — jen navrhuješ soubory, které si admin sám zkontroluje a prožene přes commit/PR/testy.
 
 Konvence (vzor: src/components/cz-company-verify, real deployed cow "cz.company.verify"):
 1. descriptor.json: module (kebab-case), componentVersion, runtime "in-process", capabilities[]: name (domain.action), versions, inputSchema/outputSchema (jméno schématu), conformanceSuiteVersion, conformanceTier, executionMode "sync"|"async", sideEffects "none"|"internal-write"|"external-write", trustClass "deterministic"|"ai-assisted"|"executor", riskClass LOW/MEDIUM/HIGH/CRITICAL, requiredScopes, usesLlm (bool — AI se používá jen když je to nezbytné, ARES/VAT krávy jsou záměrně bez AI), idempotency, reversibility, unknownOutcomeRecovery, humanApproval "none"|"policy", errorCodes[].
@@ -50,23 +56,24 @@ Styl konverzace: ptej se na chybějící detaily (co přesně kráva dělá, jak
 <obsah>
 \`\`\`
 Piš česky, stručně, věcně — žádné omluvy ani obecné rady, rovnou k věci.`;
+}
 
 /** Flattens the whole conversation into one string — LlmAdapter.complete() takes a single prompt, no
  * system/user split at that layer (same interface document.classify already uses); a fresh prompt is built
  * from the full history every turn since neither adapter holds state between calls. */
-export function buildPrompt(session: WorkshopSession): string {
+export function buildPrompt(session: WorkshopSession, farmName: string): string {
   const transcript = session.messages.map((m) => `${m.role === "admin" ? "Admin" : "Asistent"}: ${m.text}`).join("\n\n");
-  return `${SYSTEM_PROMPT}\n\n${transcript}\n\nAsistent:`;
+  return `${systemPrompt(farmName)}\n\n${transcript}\n\nAsistent:`;
 }
 
 /** Sends one admin message, gets the AI's reply, returns the session with BOTH appended — never mutates the input. */
-export async function sendMessage(session: WorkshopSession, adminText: string, adapter: LlmAdapter, clock: Clock): Promise<WorkshopSession> {
+export async function sendMessage(session: WorkshopSession, adminText: string, adapter: LlmAdapter, clock: Clock, farmName: string): Promise<WorkshopSession> {
   const afterAdmin: WorkshopSession = {
     ...session,
     updatedAt: iso(clock.now()),
     messages: [...session.messages, { role: "admin", text: adminText, at: iso(clock.now()) }],
   };
-  const reply = await adapter.complete(buildPrompt(afterAdmin));
+  const reply = await adapter.complete(buildPrompt(afterAdmin, farmName));
   return {
     ...afterAdmin,
     updatedAt: iso(clock.now()),
