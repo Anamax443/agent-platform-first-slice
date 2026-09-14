@@ -29,6 +29,12 @@
       "options": {
         "fake-llm": { "provider": "fake", "model": "fake-llm-1", "label": "fake (deliberately gullible, tests only)", "processor": "none: in-process fake" }
       }
+    },
+    "cow.workshop": {
+      "default": "fake-llm",
+      "options": {
+        "fake-llm": { "provider": "fake", "model": "fake-llm-1", "label": "fake (deliberately gullible, tests only)", "processor": "none: in-process fake" }
+      }
     }
   }
 }

@@ -125,6 +125,11 @@ export interface FarmModel {
   inbox: { pending: InboxItem[]; failed: InboxItem[]; batchLimit: number };
   workflows: string[];
   models: ModelsInfo;
+  /** Nastavení's own runtime-editable model choice for Kravská dílna (cow.workshop, index.ts COW_WORKSHOP) —
+   * never without a model (installation.ts's own guarantee): defaults to the installation's configured default
+   * (Workers AI, free) until an operator picks something else in Nastavení. Separate from `models` above
+   * (document.classify's per-document dropdown) on purpose — a different capability's own choice. */
+  cowWorkshopModels: ModelsInfo;
   stats: FarmStats;
   /** When the self-test summary carried on deployables[].selfTest/capabilities[].selfTest was recorded —
    * undefined when self-test was never run on this farm yet. Doubles as the scheduled self-test's own
@@ -361,6 +366,7 @@ const ICONS = {
   argos: icon('<path d="M6 9c-1.2-.8-1.6-2.4 0-3.2.8.4 1.2 1.2 1.2 2M18 9c1.2-.8 1.6-2.4 0-3.2-.8.4-1.2 1.2-1.2 2"/><path d="M6 10.5a6 6 0 0 1 12 0c0 3.5-2.7 6-6 6s-6-2.5-6-6Z"/><circle cx="10" cy="11" r=".6" fill="currentColor" stroke="none"/><circle cx="14" cy="11" r=".6" fill="currentColor" stroke="none"/>'),
   vysledek: icon('<circle cx="12" cy="12" r="9"/><polyline points="8 12.5 10.8 15.3 16 9.5"/>'),
   denik: icon('<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/>'),
+  nastaveni: icon('<line x1="4" y1="6" x2="20" y2="6"/><circle cx="9" cy="6" r="2" fill="currentColor" stroke="none"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="15" cy="12" r="2" fill="currentColor" stroke="none"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="10" cy="18" r="2" fill="currentColor" stroke="none"/>'),
   diagram: icon('<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><line x1="8" y1="7.5" x2="10.5" y2="16.2"/><line x1="16" y1="7.5" x2="13.5" y2="16.2"/><line x1="8.5" y1="6" x2="15.5" y2="6"/>'),
   wheat: icon('<path d="M12 21V9"/><path d="M12 9c-2-2-2-4 0-6 2 2 2 4 0 6Z"/><path d="M12 13c-2.2-1.2-3-3-2.4-5.4 2.3.6 3.4 2 3 4.4Z"/><path d="M12 13c2.2-1.2 3-3 2.4-5.4-2.3.6-3.4 2-3 4.4Z"/><path d="M12 17c-2.2-1.2-3-3-2.4-5.4 2.3.6 3.4 2 3 4.4Z"/><path d="M12 17c2.2-1.2 3-3 2.4-5.4-2.3.6-3.4 2-3 4.4Z"/>'),
 };
@@ -384,7 +390,7 @@ const mascot = (which: keyof typeof MASCOT_SVG, bg: string, size: "lg" | "sm" = 
 // Dark, per-section-tinted badge backgrounds (owner's 13. 9. 2026 "dark demo as default" request) —
 // darkened versions of the old light tones, same hue families, so the mascot faces (light cream/white
 // fills) read with even more contrast than they did on the old light badges, not less.
-const MASCOT_BG: Record<"prehled" | "podatelna" | "ohrada" | "staj" | "argos" | "vysledek" | "denik", string> = {
+const MASCOT_BG: Record<"prehled" | "podatelna" | "ohrada" | "staj" | "argos" | "vysledek" | "denik" | "nastaveni", string> = {
   prehled: "#2a2015",
   podatelna: "#16241c",
   ohrada: "#241f18",
@@ -392,6 +398,7 @@ const MASCOT_BG: Record<"prehled" | "podatelna" | "ohrada" | "staj" | "argos" | 
   argos: "#2a2116",
   vysledek: "#16241a",
   denik: "#1a2028",
+  nastaveni: "#241a28",
 };
 /** Same round-badge treatment as mascot(), for the sections with no animal face of their own (Ohrada/
  * Výsledek/Deník/Podatelna) — a plain line icon() in a colored circle, so the whole nav rail reads as
@@ -822,6 +829,22 @@ const watchdogBanner = (snapshot: WatchdogSnapshot, incidents: IncidentRecord[])
   }`;
 };
 
+/** Nastavení's own model picker (Kravská dílna) — radio per choice, unavailable ones shown disabled with their
+ * reason (same "never silently skip an option" rule ModelChoice.unavailable already carries for the Podatelna
+ * dropdown), posts straight to index.ts's /farm/settings/cow-workshop-model. An `error` ModelsInfo (fail-closed:
+ * the capability's own configured default is itself unavailable) shows plainly rather than a broken form. */
+const cowWorkshopModelForm = (models: ModelsInfo): string => {
+  if ("error" in models) return `<p style="color:var(--crit)">Nelze načíst modely: ${esc(models.error)}</p>`;
+  const rows = models.choices
+    .map((c) => {
+      const disabled = c.unavailable ? " disabled" : "";
+      const reason = c.unavailable ? `<span class="dim" style="color:var(--crit)"> — nedostupné: ${esc(c.unavailable)}</span>` : "";
+      return `<label style="display:flex;gap:8px;align-items:center;padding:6px 0"><input type="radio" name="key" value="${esc(c.key)}"${c.isDefault ? " checked" : ""}${disabled}><span>${esc(c.label)}</span>${reason}</label>`;
+    })
+    .join("");
+  return `<form method="post" action="/farm/settings/cow-workshop-model">${rows}<button class="btn btn-primary btn-sm" type="submit" style="margin-top:8px">Uložit</button></form>`;
+};
+
 // -----------------------------------------------------------------------------------------------------------
 // Průsvitná stáj — nová IA (13. 9. 2026): Přehled · Podatelna · Ohrada · Stáj · Argos · Výsledek · Deník.
 // -----------------------------------------------------------------------------------------------------------
@@ -1062,6 +1085,15 @@ export function renderFarm(m: FarmModel): string {
       <div class="term" id="denik-term" aria-live="polite">${terminalSeed}</div>
       <h3 style="margin-top:16px">Stejná data jako tabulka</h3>
       <div class="gridwrap"><table><thead><tr><th>Čas</th><th>Druh</th><th>Instance</th><th>Capability</th><th>Detail</th></tr></thead><tbody>${denikRows}</tbody></table></div>`,
+    },
+    {
+      id: "nastaveni",
+      icon: iconBadge(ICONS.nastaveni, MASCOT_BG.nastaveni),
+      label: "Nastavení",
+      body: `<div class="pagehead"><h1>${iconBadge(ICONS.nastaveni, MASCOT_BG.nastaveni, "lg")} Nastavení</h1></div><p class="lede">Co se může měnit bez nového deploye, patří sem — první takové nastavení je model pro Kravskou dílnu.</p>
+      <div class="card"><h3 style="margin-bottom:4px">Kravská dílna — AI model</h3><p class="dim" style="font-size:12px;margin:0 0 12px">Používá se v Kravské dílně (návrh nové krávy z promptu/kódu/dokumentace). Vždy je vybraný nějaký model — minimum je Workers AI zdarma, nikdy žádný.</p>
+      ${cowWorkshopModelForm(m.cowWorkshopModels)}
+      </div>`,
     },
   ];
 

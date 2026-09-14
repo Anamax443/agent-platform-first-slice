@@ -2,6 +2,52 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-14 (144) — Nastavení: první runtime-editovatelné nastavení (model pro Kravskou dílnu), krok 1 k "přidat krávu z webu"
+
+**Pokyn vlastníka:** po screenshotu reálné `Průsvitná stáj` — "nevidím nastavení ani office" (potvrzeno
+v kódu: skutečně neexistuje, jen v `ai-farma-web` demu a v docs) → "nějak to vymysli, abychom mohli nové
+krávy zadávat z webovek farmy". Rozsah ujasněn: nová záložka s formulářem/chatem (kód API dotazu, prompt,
+nebo dokumentace), AI navrhne krávu podle standardů, výsledek se standardně otestuje na farmě. Na otázku
+"jaký AI model pro to" odpověď: "jaký bude nastaven v Nastavení… minimum bude AI zdarma, nikdy nebude
+bez AI" — tedy Nastavení muselo vzniknout jako první, samostatný krok, ne součástí dílny samotné.
+
+**Rozsah tohoto kroku (vědomě jen základ, ne celá Kravská dílna):** postaven celý řetěz pro JEDNO
+nastavení — od statického katalogu modelů, přes runtime přepínání, až po UI — aby na něm šla stavět
+Kravská dílna (další krok) a případná další nastavení bez opakování stejné práce.
+
+**Jak to funguje:**
+- `installation.ts`'s `profile.models` (dřív jen `document.classify`/`invoice.extract`) dostal nový klíč
+  `cow.workshop` (`platform-wiring.ts`'s `COW_WORKSHOP` — NENÍ dispatchovaná Router capabilita, žádný
+  descriptor/policy, jen recyklace existujícího "nikdy bez modelu, fail-closed, nedostupné možnosti se
+  ukážou s důvodem" mechanismu z `modelTable()`). Oba profily (`farm-bass443`, `local-fakes`) dostaly
+  odpovídající katalog — na farm-bass443 stejné 4 volby jako `document.classify` (Llama 8B/70B zdarma,
+  Claude Opus 5/Haiku 4.5 platí, oba za `cred:anthropic`, dnes nedostupné — secret ještě není nastavený).
+- `describeModels()` zobecněná o `capability`/`selectedKey` parametr (dřív natvrdo CLASSIFY) — třetí
+  volání stejné logiky (po CLASSIFY, EXTRACT), takže sdílená funkce místo další kopie sedí na vlastní
+  dosavadní konvenci repa ("duplikace do třetího použití"). Nový `modelAdapterFor()` vedle (jeden adaptér
+  z jedné volby, ne celá sada pro workflow strategie — pro Kravskou dílnu, budoucí krok).
+- **Runtime přepínání:** nová D1 řádka `settings:cow-workshop-model` (stejné `INSERT OR REPLACE`
+  fixed-row idiom jako `self-test-state`/`certification-state`) drží AKTUÁLNÍ volbu; `describeModels()`
+  ji čte jako `selectedKey`, ale zdroj pravdy pro "co vůbec existuje a je dostupné" zůstává statický
+  profil + secrets — Nastavení nemůže vynalézt nový provider ani obejít chybějící credential.
+- Nová záložka **Nastavení** na `/farm` (ikona, MASCOT_BG, `cowWorkshopModelForm()`) — rádiové tlačítko
+  na volbu, nedostupné šedě s důvodem, POST na nový `POST /farm/settings/cow-workshop-model`
+  (`index.ts`), který volbu ověří proti stejnému `describeModels()` (nejde uložit nedostupnou/neznámou
+  volbu) a teprve pak zapíše.
+
+**Testy:** `tests/page.test.ts` +2 nové (formulář s checked default; nedostupná volba zobrazená
+disabled s důvodem, nikdy tiše vynechaná) + 1 upravený (8 sekcí místo 7).
+
+**Živě ověřeno** (`wrangler dev`, `local-fakes`): Nastavení karta renderuje formulář se skutečnou
+jedinou volbou (`fake-llm`, checked); `POST` s platným klíčem → 303 a zápis do D1; s neznámým klíčem
+(`claude-opus-5`, na `local-fakes` neexistuje) → 400; bez klíče → 400.
+
+**Zbývá (další krok, ne dnes):** samotná Kravská dílna — chat/formulář, AI návrh nového modulu podle
+konvencí (`cz.vat.verify`/`cz.company.verify` jako vzor), založení branch + GitHub PR (`gh` ověřené,
+právo `repo`+`workflow`), lidský merge → normální deploy → živá certifikace přes dnešní Admission Gate.
+
+**Brány zelené:** typecheck, **427/427 testů**, arch, farm:check.
+
 ## 2026-09-14 (143) — self-test: `document.archive`'s `canonical-archive` mělo stejnou live-golden mezeru jako `dmsRef`/`stampText`, jen nikdy nedostalo override
 
 **Nalezeno:** hned po nasazení (142) vlastník ukázal reálný `/farm` s `document.stamp`/`document.archive`

@@ -28,6 +28,11 @@ import type { MessageEnvelope, ResultEnvelope } from "../../../../src/platform/t
 
 export const CLASSIFY = "document.classify";
 export const EXTRACT = "invoice.extract";
+/** Not a dispatched Router capability (no descriptor, no policy, nothing goes through checkGrant) — reuses
+ * installation.ts's `profile.models` keying purely to get its existing "never without a model, fail-closed,
+ * unavailable options shown with a reason" guarantee for Kravská dílna's own model choice, the same guarantee
+ * CLASSIFY/EXTRACT already have. */
+export const COW_WORKSHOP = "cow.workshop";
 /**
  * Capabilities the gateway itself provides; everything else is a host and stays "not wired" until its unit lands.
  * `mail.ingest` runs here too (not as a remote dispatch): it holds no credential to isolate and writes no external
@@ -68,21 +73,47 @@ export interface ModelsView {
   choices: ModelChoice[];
 }
 
-/** What the operator can pick from, with every unavailable option and its reason. Throws when the default itself is unavailable (fail-closed). */
-export function describeModels(installation: Installation, secrets: SecretsSource): ModelsView {
-  const t = modelTable(installation, secrets, CLASSIFY);
-  const options = installation.profile.models?.[CLASSIFY]?.options ?? {};
+/** What the operator can pick from, with every unavailable option and its reason. Throws when the capability's own
+ * configured default is unavailable (fail-closed) — that default is a build-time guarantee (installation.ts's
+ * "never without a model"), independent of `selectedKey`. `capability` defaults to CLASSIFY (document.classify's
+ * per-document model dropdown, the only caller before Kravská dílna needed a second one — installation.ts's
+ * `profile.models` was already keyed generically by capability, this just stopped hardcoding CLASSIFY here too).
+ * `selectedKey` marks a DIFFERENT option as `isDefault` in the returned view (e.g. Nastavení's own runtime pick,
+ * settings.ts, stored in D1) without touching what the fail-closed check above validates — an unset or
+ * no-longer-available `selectedKey` silently falls back to the capability's own configured default, never throws. */
+export function describeModels(installation: Installation, secrets: SecretsSource, capability: string = CLASSIFY, selectedKey?: string): ModelsView {
+  const t = modelTable(installation, secrets, capability);
+  const options = installation.profile.models?.[capability]?.options ?? {};
+  const effective = selectedKey && t.available[selectedKey] ? selectedKey : t.default;
   return {
-    default: t.default,
+    default: effective,
     choices: Object.entries(options).map(([key, o]) => ({
       key,
       label: o.label ?? `${o.provider} · ${o.model}`,
       provider: o.provider,
       model: o.model,
-      isDefault: key === t.default,
+      isDefault: key === effective,
       ...(t.unavailable[key] ? { unavailable: t.unavailable[key] } : {}),
     })),
   };
+}
+
+/** Resolves ONE model choice into a working LlmAdapter — unlike buildAdapters()/its invoice.extract twin below
+ * (every option of a capability, keyed for workflow strategy names), Kravská dílna's chat only ever needs a
+ * single adapter for whatever model Nastavení currently points at. `key` falls back to the capability's own
+ * configured default when absent, unavailable, or unknown (the same fail-closed guarantee modelTable() already
+ * makes for CLASSIFY/EXTRACT — a capability is never left without a usable model). */
+export function modelAdapterFor(installation: Installation, secrets: SecretsSource, ai: WorkersAiBinding, capability: string, key?: string): { adapter: LlmAdapter; key: string } {
+  const t = modelTable(installation, secrets, capability);
+  const resolvedKey = key && t.available[key] ? key : t.default;
+  const opt = t.available[resolvedKey] as (typeof t.available)[string];
+  const adapter =
+    opt.provider === "workers-ai"
+      ? new WorkersAiAdapter(opt.model, ai)
+      : opt.provider === "anthropic"
+        ? new AnthropicAdapter(opt.model, opt.secret as string, { ...(opt.inferenceGeo ? { inferenceGeo: opt.inferenceGeo } : {}) })
+        : new FakeLlmAdapter();
+  return { adapter, key: resolvedKey };
 }
 
 function buildAdapters(installation: Installation, secrets: SecretsSource, ai: WorkersAiBinding): Record<string, LlmAdapter> {

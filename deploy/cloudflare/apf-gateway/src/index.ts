@@ -52,7 +52,7 @@ import {
   type SelfTestRow,
   type Wired,
 } from "./page.js";
-import { describeModels, gatewayCatalog, wirePlatform, type Wiring } from "./platform-wiring.js";
+import { COW_WORKSHOP, describeModels, gatewayCatalog, wirePlatform, type Wiring } from "./platform-wiring.js";
 import { runSelfTest, requiredTestsFor, selfTestCapabilityForTick, SELF_TEST_CAPABILITIES, SELF_TEST_WORKFLOW_ID } from "./self-test.js";
 import { D1_AUDIT_DDL, DDL, SqliteArtifacts, SqliteAudit, SqliteJournal, SqliteReviewTaskStore } from "./store.js";
 import { visuallyStamp } from "./visual-stamp.js";
@@ -125,6 +125,14 @@ const wiredOf = (env: Env): Wired => ({
 const modelsOf = (env: Env): ModelsInfo => {
   try {
     return describeModels(installation, secretsOf(env));
+  } catch (e) {
+    return { error: String(e) };
+  }
+};
+
+const cowWorkshopModelsOf = (env: Env, selectedKey: string | undefined): ModelsInfo => {
+  try {
+    return describeModels(installation, secretsOf(env), COW_WORKSHOP, selectedKey);
   } catch (e) {
     return { error: String(e) };
   }
@@ -270,6 +278,26 @@ async function latestCertifications(env: Env): Promise<Record<string, Certificat
     out[record.capability] = record;
   }
   return out;
+}
+
+// Nastavení (owner's request 2026-09-14, over "kde se zadává nová kráva"): the farm's first runtime-editable
+// setting. "cow.workshop" (COW_WORKSHOP) rides installation.ts's existing profile.models mechanism for its
+// catalog and fail-closed default; this D1 row only overrides WHICH of those options is currently selected —
+// never invents a new provider/credential, never bypasses modelTable()'s own "unavailable options are shown,
+// never used" guarantee. Same fixed-row idiom as self-test-state/certification-state above.
+const SETTINGS_COW_WORKSHOP_MODEL_AUDIT_ID = "settings:cow-workshop-model";
+
+async function latestCowWorkshopModelKey(env: Env): Promise<string | undefined> {
+  await ensureD1Audit(env.AUDIT);
+  const row = await env.AUDIT.prepare("SELECT json FROM audit WHERE audit_id = ?").bind(SETTINGS_COW_WORKSHOP_MODEL_AUDIT_ID).first<{ json: string }>();
+  return row ? (JSON.parse(row.json) as { key: string }).key : undefined;
+}
+
+async function setCowWorkshopModelKey(env: Env, key: string, now: string): Promise<void> {
+  await ensureD1Audit(env.AUDIT);
+  await env.AUDIT.prepare("INSERT OR REPLACE INTO audit (audit_id, at, kind, correlation_id, workflow_id, tenant_id, actor_id, capability, json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .bind(SETTINGS_COW_WORKSHOP_MODEL_AUDIT_ID, now, "settings", null, null, null, "operator", null, JSON.stringify({ key }))
+    .run();
 }
 
 const WATCHDOG_INCIDENT_KIND = "watchdog-incident";
@@ -1224,7 +1252,7 @@ async function inboxDetail(env: Env): Promise<{ pending: InboxItem[]; failed: In
  */
 async function buildFarmModel(env: Env, instanceLimit: number, instanceWindow: string): Promise<FarmModel> {
   const now = iso(new SystemClock().now());
-  const [documentHost, emailExecutor, mailIngest, fakes, instances, log, inbox, stats, documentHostCaps, emailExecutorCaps, selfTestSummary, alertHealth, openWorkflowProblems, recentAuditTenantMismatches, certifications] = await Promise.all([
+  const [documentHost, emailExecutor, mailIngest, fakes, instances, log, inbox, stats, documentHostCaps, emailExecutorCaps, selfTestSummary, alertHealth, openWorkflowProblems, recentAuditTenantMismatches, certifications, cowWorkshopModelKey] = await Promise.all([
     deployableInfo(env.DOCUMENT_HOST, "https://apf-document-host.internal"),
     deployableInfo(env.EMAIL_EXECUTOR, "https://apf-email-executor.internal"),
     deployableInfo(env.MAIL_INGEST, "https://apf-mail-ingest.internal"),
@@ -1240,6 +1268,7 @@ async function buildFarmModel(env: Env, instanceLimit: number, instanceWindow: s
     authoritativeOpenProblems(env),
     recentAuditTenantMismatchCount(env, windowSince("24h", new SystemClock()) as string),
     latestCertifications(env),
+    latestCowWorkshopModelKey(env),
   ]);
   // Admission Gate visibility (HANDOFF 70/71): the same LifecycleRegistry the Router enforces, read here only —
   // this page never writes it. Quarantining a module still means editing config/<installation>/lifecycle.json
@@ -1298,6 +1327,7 @@ async function buildFarmModel(env: Env, instanceLimit: number, instanceWindow: s
     inbox,
     workflows: [...WORKFLOW_NAMES],
     models: modelsOf(env),
+    cowWorkshopModels: cowWorkshopModelsOf(env, cowWorkshopModelKey),
     stats,
     selfTestAt: selfTestSummary?.updatedAt,
     now,
@@ -1431,6 +1461,23 @@ export default {
       const record = certifyFromSelfTest({ module: row.module, capability, riskProfile: row.riskClass ?? "UNKNOWN", buildHash: env.GIT_SHA, rows, clock: new SystemClock() });
       await recordCertification(env, record);
       return Response.redirect(new URL("/farm#staj", url).toString(), 303);
+    }
+
+    // Nastavení's first setting (docs/POSUDKY.md Posudek 16 follow-up, owner's request 2026-09-14): which model
+    // Kravská dílna uses. Validated against the SAME describeModels()/modelTable() the read side renders from —
+    // an unavailable option (no credential) or an unknown key is refused, never silently stored; installation.ts's
+    // own "never without a model" guarantee means there's always at least one valid choice to fall back to.
+    if (url.pathname === "/farm/settings/cow-workshop-model" && request.method === "POST") {
+      const form = await request.formData().catch(() => new FormData());
+      const key = form.get("key");
+      if (typeof key !== "string" || !key) return new Response("key required", { status: 400 });
+      const view = cowWorkshopModelsOf(env, undefined);
+      if ("error" in view) return new Response(view.error, { status: 500 });
+      const choice = view.choices.find((c) => c.key === key);
+      if (!choice) return new Response(`unknown model ${key}`, { status: 400 });
+      if (choice.unavailable) return new Response(`model ${key} is unavailable: ${choice.unavailable}`, { status: 400 });
+      await setCowWorkshopModelKey(env, key, iso(new SystemClock().now()));
+      return Response.redirect(new URL("/farm#nastaveni", url).toString(), 303);
     }
 
     // Manual verification for the Argos alert wiring (HANDOFF 85) — "never deploy untested" for a real external

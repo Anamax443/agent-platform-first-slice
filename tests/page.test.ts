@@ -82,6 +82,7 @@ const model: FarmModel = {
   inbox: { pending: [], failed: [], batchLimit: 20 },
   workflows: ["document-intake", "mail-intake"],
   models: { default: "llama-8b", choices: [{ key: "llama-8b", label: "Llama 8B", provider: "workers-ai", model: "@cf/meta/llama-3.1-8b", isDefault: true }] },
+  cowWorkshopModels: { default: "llama-8b", choices: [{ key: "llama-8b", label: "Llama 8B", provider: "workers-ai", model: "@cf/meta/llama-3.1-8b", isDefault: true }] },
   stats: { totalProcessed: 12, processedToday: 3, avgProcessingMs: 4200, byType: [{ type: "INVOICE", count: 8 }] },
   selfTestAt: "2026-09-09T13:20:00Z",
   now: "2026-09-09T13:25:00Z",
@@ -96,9 +97,9 @@ describe("PAGE-FARM-001 renderFarm() actually runs, not just typechecks", () => 
     expect(html).toContain('src="/farm/ilustrace.png"');
   });
 
-  it("all 7 role sections exist (rebuild 13.9.2026: Přehled/Podatelna/Ohrada/Stáj/Argos/Výsledek/Deník)", () => {
+  it("all 8 role sections exist (rebuild 13.9.2026 + Nastavení 14.9.2026: Přehled/Podatelna/Ohrada/Stáj/Argos/Výsledek/Deník/Nastavení)", () => {
     const html = renderFarm(model);
-    for (const id of ["view-prehled", "view-podatelna", "view-ohrada", "view-staj", "view-argos", "view-vysledek", "view-denik"]) {
+    for (const id of ["view-prehled", "view-podatelna", "view-ohrada", "view-staj", "view-argos", "view-vysledek", "view-denik", "view-nastaveni"]) {
       expect(html).toContain(`id="${id}"`);
     }
     expect(html).toContain("Přehled farmy");
@@ -106,6 +107,7 @@ describe("PAGE-FARM-001 renderFarm() actually runs, not just typechecks", () => 
     expect(html).toContain(">Stáj<");
     expect(html).toContain(">Výsledek<");
     expect(html).toContain("Audit — Deník");
+    expect(html).toContain(">Nastavení<");
   });
 
   it("Kapability karty (na Stáji) jsou seskupené po modulu (pen), jedna karta pro každou kapabilitu", () => {
@@ -151,6 +153,32 @@ describe("PAGE-FARM-001 renderFarm() actually runs, not just typechecks", () => 
     expect(vysledekSection).toContain("wf-waiting1");
     expect(vysledekSection).toContain("wf-ok1");
     expect(vysledekSection).toContain("12"); // totalProcessed
+  });
+
+  it("Nastavení ukazuje Kravská dílna model volbu, s postem na /farm/settings/cow-workshop-model", () => {
+    const html = renderFarm(model);
+    const nastaveniSection = html.slice(html.indexOf('id="view-nastaveni"'));
+    expect(nastaveniSection).toContain("Kravská dílna");
+    expect(nastaveniSection).toContain('action="/farm/settings/cow-workshop-model"');
+    expect(nastaveniSection).toContain('value="llama-8b"');
+    expect(nastaveniSection).toContain("checked");
+  });
+
+  it("Nastavení ukazuje nedostupné modely jako disabled s důvodem, nikdy tiše nevynechané", () => {
+    const unavailableModel: FarmModel = {
+      ...model,
+      cowWorkshopModels: {
+        default: "llama-8b",
+        choices: [
+          { key: "llama-8b", label: "Llama 8B", provider: "workers-ai", model: "@cf/meta/llama-3.1-8b", isDefault: true },
+          { key: "claude-opus-5", label: "Claude Opus 5", provider: "anthropic", model: "claude-opus-5", isDefault: false, unavailable: "secret for cred:anthropic not provided" },
+        ],
+      },
+    };
+    const html = renderFarm(unavailableModel);
+    const nastaveniSection = html.slice(html.indexOf('id="view-nastaveni"'));
+    expect(nastaveniSection).toContain("nedostupné: secret for cred:anthropic not provided");
+    expect(nastaveniSection).toContain('value="claude-opus-5" disabled');
   });
 
   it("self-test výsledky (owner 2026-09-09: 'nevím jestli jsou zdravé, jen je zelené OK') se ukazují na kartách, ne jen jako holé OK/ACTIVE", () => {
