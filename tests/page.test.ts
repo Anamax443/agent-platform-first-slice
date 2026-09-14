@@ -97,27 +97,33 @@ describe("PAGE-FARM-001 renderFarm() actually runs, not just typechecks", () => 
     expect(html).toContain('src="/farm/ilustrace.png"');
   });
 
-  it("all 8 role sections exist (rebuild 13.9.2026 + Nastavení 14.9.2026: Přehled/Podatelna/Ohrada/Stáj/Argos/Výsledek/Deník/Nastavení)", () => {
+  it("all 9 role sections exist (rebuild 13.9.2026 + Nastavení + Teletník 14.9.2026: Přehled/Podatelna/Ohrada/Stáj/Teletník/Argos/Výsledek/Deník/Nastavení)", () => {
     const html = renderFarm(model);
-    for (const id of ["view-prehled", "view-podatelna", "view-ohrada", "view-staj", "view-argos", "view-vysledek", "view-denik", "view-nastaveni"]) {
+    for (const id of ["view-prehled", "view-podatelna", "view-ohrada", "view-staj", "view-teletnik", "view-argos", "view-vysledek", "view-denik", "view-nastaveni"]) {
       expect(html).toContain(`id="${id}"`);
     }
     expect(html).toContain("Přehled farmy");
     expect(html).toContain("Argos hlídá");
     expect(html).toContain(">Stáj<");
+    expect(html).toContain(">Teletník<");
     expect(html).toContain(">Výsledek<");
     expect(html).toContain("Audit — Deník");
     expect(html).toContain(">Nastavení<");
   });
 
-  it("Kapability karty (na Stáji) jsou seskupené po modulu (pen), jedna karta pro každou kapabilitu", () => {
+  it("Kapability karty jsou seskupené po modulu (pen), jedna karta pro každou kapabilitu, rozdělené Stáj/Teletník podle derivedStatus", () => {
     const html = renderFarm(model);
-    const stajSection = html.slice(html.indexOf('id="view-staj"'), html.indexOf('id="view-argos"'));
+    const stajSection = html.slice(html.indexOf('id="view-staj"'), html.indexOf('id="view-teletnik"'));
+    const teletnikSection = html.slice(html.indexOf('id="view-teletnik"'), html.indexOf('id="view-argos"'));
+    // document.archive (derivedStatus QUARANTINED, model fixture below) already went through admission once —
+    // stays a cow, just a sick one, in Stáj. document.stamp/email.send (derivedStatus NEW) never did — telata.
     expect(stajSection).toContain(">document-executor-host<");
-    expect(stajSection).toContain(">email-executor<");
-    expect(stajSection).toContain("document.stamp");
     expect(stajSection).toContain("document.archive");
     expect(stajSection).toContain("QUARANTINED");
+    expect(teletnikSection).toContain(">document-executor-host<");
+    expect(teletnikSection).toContain("document.stamp");
+    expect(teletnikSection).toContain(">email-executor<");
+    expect(teletnikSection).toContain("email.send");
   });
 
   it("Přehled ukazuje workflows a modely na Farmářově (apf-gateway) kartě, a apf-gateway je JEHO karta, ne kráva", () => {
@@ -128,7 +134,7 @@ describe("PAGE-FARM-001 renderFarm() actually runs, not just typechecks", () => 
     // owner's screenshot 2026-09-09: "toto je spíš farmář, ne?" — apf-gateway may still be *mentioned* on
     // Stáj (e.g. the self-test description explains classify/validate run there, in <code>), just never
     // as its own p-card (that exact structural pattern is unique to deployableCard()'s output).
-    const stajSection = html.slice(html.indexOf('id="view-staj"'), html.indexOf('id="view-argos"'));
+    const stajSection = html.slice(html.indexOf('id="view-staj"'), html.indexOf('id="view-teletnik"'));
     expect(stajSection).not.toContain('<div class="p-card-head"><code>apf-gateway</code>');
     expect(stajSection).toContain("apf-document-host");
 
@@ -187,13 +193,17 @@ describe("PAGE-FARM-001 renderFarm() actually runs, not just typechecks", () => 
     const prehledSection = html.slice(html.indexOf('id="view-prehled"'), html.indexOf('id="view-podatelna"'));
     expect(prehledSection).toContain("self-test <b>41/41</b>");
 
-    const stajSection = html.slice(html.indexOf('id="view-staj"'), html.indexOf('id="view-argos"'));
+    const stajSection = html.slice(html.indexOf('id="view-staj"'), html.indexOf('id="view-teletnik"'));
+    const teletnikSection = html.slice(html.indexOf('id="view-teletnik"'), html.indexOf('id="view-argos"'));
+    // "self-test 14/18" is apf-document-host's own DEPLOYABLE card (stajCards, unaffected by the Teletník split —
+    // that split only applies to capability cards, document.stamp+document.archive combined for this Worker).
     expect(stajSection).toContain("self-test <b>14/18</b>");
     expect(stajSection).toContain("naposledy proběhlo 2026-09-09 13:20:00");
     // apf-mail-ingest and apf-fakes never had a self-test recorded — must say so plainly, not silently omit it.
     expect(stajSection).toContain("self-test: nikdy");
-    expect(stajSection).toContain("self-test <b>18/18</b>");
-    expect(stajSection).toContain("self-test <b>12/14</b>");
+    // document.classify/document.stamp's own CAPABILITY cards (derivedStatus NEW in this fixture) live in Teletník.
+    expect(teletnikSection).toContain("self-test <b>18/18</b>");
+    expect(teletnikSection).toContain("self-test <b>12/14</b>");
 
     // Never-run summary: no selfTestAt at all, no capability/deployable carries a selfTest field.
     const neverRun: FarmModel = { ...model, selfTestAt: undefined, deployables: model.deployables.map((d) => ({ ...d, selfTest: undefined })), capabilities: model.capabilities.map((c) => ({ ...c, selfTest: undefined })) };
@@ -202,17 +212,20 @@ describe("PAGE-FARM-001 renderFarm() actually runs, not just typechecks", () => 
     expect(neverRunHtml).not.toContain("naposledy proběhlo");
   });
 
-  it("owner 2026-09-09 'ale já chci vidět kontroly a i si je být schopen individuálně vyvolat': Stáj karta ukáže jednotlivé fixtures a nabídne spustit jen tuhle kapabilitu", () => {
+  it("owner 2026-09-09 'ale já chci vidět kontroly a i si je být schopen individuálně vyvolat': kapability karta ukáže jednotlivé fixtures a nabídne spustit jen tuhle kapabilitu", () => {
     const html = renderFarm(model);
-    const stajSection = html.slice(html.indexOf('id="view-staj"'), html.indexOf('id="view-argos"'));
-    expect(stajSection).toContain("Zobrazit kontroly (2)");
-    expect(stajSection).toContain("canonical-invoice-cz");
-    expect(stajSection).toContain("injection-approve");
-    expect(stajSection).toContain("$.status: &quot;FAILED&quot; != &quot;SUCCEEDED&quot;");
-    expect(stajSection).toContain('action="/farm/self-test?capability=document.classify"');
-    expect(stajSection).toContain("Spustit jen document.classify");
+    const stajSection = html.slice(html.indexOf('id="view-staj"'), html.indexOf('id="view-teletnik"'));
+    const teletnikSection = html.slice(html.indexOf('id="view-teletnik"'), html.indexOf('id="view-argos"'));
+    // document.classify (derivedStatus NEW) is a tele — its card, drilldown and self-test button live in Teletník.
+    expect(teletnikSection).toContain("Zobrazit kontroly (2)");
+    expect(teletnikSection).toContain("canonical-invoice-cz");
+    expect(teletnikSection).toContain("injection-approve");
+    expect(teletnikSection).toContain("$.status: &quot;FAILED&quot; != &quot;SUCCEEDED&quot;");
+    expect(teletnikSection).toContain('action="/farm/self-test?capability=document.classify"');
+    expect(teletnikSection).toContain("Spustit jen document.classify");
 
-    // document.archive/email.send carry no selfTestFixtures in this model — no empty <details>, still get the button.
+    // document.archive (derivedStatus QUARANTINED) is already a cow, in Stáj — carries no selfTestFixtures in
+    // this model, no empty <details>, still gets the button.
     expect(stajSection).toContain('action="/farm/self-test?capability=document.archive"');
     const archiveCardStart = stajSection.indexOf("document.archive");
     const archiveCardSlice = stajSection.slice(archiveCardStart, archiveCardStart + 400);
@@ -221,23 +234,23 @@ describe("PAGE-FARM-001 renderFarm() actually runs, not just typechecks", () => 
 
   it("owner 2026-09-09 'není špatné, když je vidět co která kontrola kontroluje': a passing check shows its fixture description instead of the useless 'shoda s golden', a failing check still shows the diff", () => {
     const html = renderFarm(model);
-    const stajSection = html.slice(html.indexOf('id="view-staj"'), html.indexOf('id="view-argos"'));
-    expect(stajSection).toContain("Czech invoice with IBAN and VAT; the IBAN also feeds EVD-005.");
-    expect(stajSection).not.toContain("shoda s golden");
+    const teletnikSection = html.slice(html.indexOf('id="view-teletnik"'), html.indexOf('id="view-argos"'));
+    expect(teletnikSection).toContain("Czech invoice with IBAN and VAT; the IBAN also feeds EVD-005.");
+    expect(teletnikSection).not.toContain("shoda s golden");
     // Failing fixture: the diff is the actionable part — must win over the description even though both exist.
-    expect(stajSection).toContain("$.status: &quot;FAILED&quot; != &quot;SUCCEEDED&quot;");
-    expect(stajSection).not.toContain("Injected instruction outside the allowlist");
+    expect(teletnikSection).toContain("$.status: &quot;FAILED&quot; != &quot;SUCCEEDED&quot;");
+    expect(teletnikSection).not.toContain("Injected instruction outside the allowlist");
   });
 
   it("owner 2026-09-10 'nestačí PASS/FAIL, chci vědět proč a co dělat': why shows on both outcomes, onFailure only on the failing one", () => {
     const html = renderFarm(model);
-    const stajSection = html.slice(html.indexOf('id="view-staj"'), html.indexOf('id="view-argos"'));
+    const teletnikSection = html.slice(html.indexOf('id="view-teletnik"'), html.indexOf('id="view-argos"'));
     // Passing fixture: "why" shows, its "onFailure" text never renders even though the field is set.
-    expect(stajSection).toContain("Kontroluje základní extrakci na reálném českém formátu faktury.");
-    expect(stajSection).not.toContain("Never shown: this fixture passes.");
+    expect(teletnikSection).toContain("Kontroluje základní extrakci na reálném českém formátu faktury.");
+    expect(teletnikSection).not.toContain("Never shown: this fixture passes.");
     // Failing fixture: both "why" and "onFailure" show.
-    expect(stajSection).toContain("Dokument je vždy DATA, nikdy příkaz platformě.");
-    expect(stajSection).toContain("Capabilitu okamžitě prověřit, zvážit karanténu.");
+    expect(teletnikSection).toContain("Dokument je vždy DATA, nikdy příkaz platformě.");
+    expect(teletnikSection).toContain("Capabilitu okamžitě prověřit, zvážit karanténu.");
   });
 
   it("Argos page shows a watchdog verdict banner with its findings", () => {
@@ -541,7 +554,7 @@ describe("composeIncidentAlert() — Argos's e-mail content (HANDOFF 85, oponent
 describe("Kapability karta ukazuje Argosův živý nález odděleně od formálního Admission Gate stavu (HANDOFF 89)", () => {
   it("quarantined capability gets its own 'Argos: INCIDENT' badge next to the formal QUARANTINED one — two separate facts, not merged into one", () => {
     const html = renderFarm(model);
-    const stajSection = html.slice(html.indexOf('id="view-staj"'), html.indexOf('id="view-argos"'));
+    const stajSection = html.slice(html.indexOf('id="view-staj"'), html.indexOf('id="view-teletnik"'));
     const cardStart = stajSection.indexOf(">document.archive<");
     const card = stajSection.slice(cardStart - 200, cardStart + 900);
     expect(card).toContain("QUARANTINED");
@@ -551,9 +564,11 @@ describe("Kapability karta ukazuje Argosův živý nález odděleně od formáln
 
   it("a capability with no open Argos finding (email.send: ACTIVE, no self-test data) shows no Argos badge at all", () => {
     const html = renderFarm(model);
-    const stajSection = html.slice(html.indexOf('id="view-staj"'), html.indexOf('id="view-argos"'));
-    const cardStart = stajSection.indexOf(">email.send<");
-    const card = stajSection.slice(cardStart - 200, cardStart + 600);
+    // email.send (derivedStatus NEW in this fixture) is a tele, not yet a Stáj cow — its card lives in Teletník.
+    const teletnikSection = html.slice(html.indexOf('id="view-teletnik"'), html.indexOf('id="view-argos"'));
+    const cardStart = teletnikSection.indexOf(">email.send<");
+    expect(cardStart).toBeGreaterThan(-1);
+    const card = teletnikSection.slice(cardStart - 200, cardStart + 600);
     expect(card).not.toContain("Argos:");
   });
 });

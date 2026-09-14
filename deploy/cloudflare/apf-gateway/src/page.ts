@@ -390,7 +390,7 @@ const mascot = (which: keyof typeof MASCOT_SVG, bg: string, size: "lg" | "sm" = 
 // Dark, per-section-tinted badge backgrounds (owner's 13. 9. 2026 "dark demo as default" request) —
 // darkened versions of the old light tones, same hue families, so the mascot faces (light cream/white
 // fills) read with even more contrast than they did on the old light badges, not less.
-const MASCOT_BG: Record<"prehled" | "podatelna" | "ohrada" | "staj" | "argos" | "vysledek" | "denik" | "nastaveni", string> = {
+const MASCOT_BG: Record<"prehled" | "podatelna" | "ohrada" | "staj" | "argos" | "vysledek" | "denik" | "nastaveni" | "teletnik", string> = {
   prehled: "#2a2015",
   podatelna: "#16241c",
   ohrada: "#241f18",
@@ -399,6 +399,7 @@ const MASCOT_BG: Record<"prehled" | "podatelna" | "ohrada" | "staj" | "argos" | 
   vysledek: "#16241a",
   denik: "#1a2028",
   nastaveni: "#241a28",
+  teletnik: "#1e2618",
 };
 /** Same round-badge treatment as mascot(), for the sections with no animal face of their own (Ohrada/
  * Výsledek/Deník/Podatelna) — a plain line icon() in a colored circle, so the whole nav rail reads as
@@ -884,16 +885,24 @@ export function renderFarm(m: FarmModel): string {
     cardSection("Návrh — zatím nepostaveno, jen v docs/NAVRHOVY-LIST-farma.md", PLANNED_DEPLOYABLES.map(plannedCard).join(""));
 
   // Kapability seskupené po modulu jako ohrady (owner's request 2026-09-09: karty, ne řádky tabulky).
-  const penGrid = (() => {
+  // Teletník/Stáj split (owner's request 2026-09-14: "co není hotová kráva, je tele") — derivedStatus:"NEW"
+  // (Admission Gate never certified THIS build, certification.ts's deriveLifecycleStatus) means the capability
+  // has never been through admission at all, ever: a tele. QUARANTINED stays in Stáj on purpose — a capability
+  // that WAS certified and is now failing is a sick cow, not an uncertified calf; only "never even tried" moves.
+  const penGridOf = (caps: CapabilityRow[]): string => {
     const byModule = new Map<string, CapabilityRow[]>();
-    for (const c of m.capabilities) {
+    for (const c of caps) {
       if (!byModule.has(c.module)) byModule.set(c.module, []);
       (byModule.get(c.module) as CapabilityRow[]).push(c);
     }
     return [...byModule.entries()]
-      .map(([mod, caps]) => `<div class="pen"><div class="pen-label">${ICONS.staj}${esc(mod)}</div><div class="grid-cards">${caps.map((c) => capabilityRow(c, watchdog, incidents, m.gitSha)).join("")}</div></div>`)
+      .map(([mod, ms]) => `<div class="pen"><div class="pen-label">${ICONS.staj}${esc(mod)}</div><div class="grid-cards">${ms.map((c) => capabilityRow(c, watchdog, incidents, m.gitSha)).join("")}</div></div>`)
       .join("");
-  })();
+  };
+  const teletnikCapabilities = m.capabilities.filter((c) => c.derivedStatus === "NEW");
+  const stajCapabilities = m.capabilities.filter((c) => c.derivedStatus !== "NEW");
+  const penGrid = penGridOf(stajCapabilities);
+  const teletnikGrid = penGridOf(teletnikCapabilities);
 
   // Owner's request 2026-09-08: what carries the link belongs in column 1, rows collapsed to a one-line summary
   // by default, click to see the steps — a document block is evidence to check, not to always read in full.
@@ -1026,7 +1035,7 @@ export function renderFarm(m: FarmModel): string {
       id: "staj",
       icon: mascot("krava", MASCOT_BG.staj),
       label: "Stáj",
-      body: `<div class="pagehead"><h1>${mascot("krava", MASCOT_BG.staj, "lg")} Stáj</h1></div><p class="lede">Kravičky a co skutečně smí vykonat, seskupeno po modulu jako ohrada — riziko a izolace jsou vlastní tvrzení komponenty (descriptor), stav na kartě je to, co <b>Router doopravdy vynucuje</b> před každým dispatchem.</p>
+      body: `<div class="pagehead"><h1>${mascot("krava", MASCOT_BG.staj, "lg")} Stáj</h1></div><p class="lede">Zavedené krávy — kapability, co aspoň jednou prošly Admission Gate certifikací (klidně i s výsledkem FAIL, nemocná kráva je pořád kráva). Nové, nikdy necertifikované jsou v <a href="#teletnik">Teletníku</a>. Seskupeno po modulu jako ohrada — riziko a izolace jsou vlastní tvrzení komponenty (descriptor), stav na kartě je to, co <b>Router doopravdy vynucuje</b> před každým dispatchem.</p>
       <form class="toolbar" method="post" action="/farm/self-test">
         <span class="dim">„OK“ dokazuje jen, že proces odpovídá — self-test skutečně spustí kapability proti reálnému modelu a porovná s golden výsledkem${m.selfTestAt ? ` — naposledy proběhlo ${shortAt(m.selfTestAt)}` : " — ještě nikdy neproběhl"}</span>
         <span class="fill"></span>
@@ -1034,8 +1043,16 @@ export function renderFarm(m: FarmModel): string {
       </form>
       ${stajCards}
       <h3 style="margin:18px 0 8px">Kapability (Admission Gate)</h3>
-      <div class="card" style="margin-bottom:14px"><h3 style="margin-bottom:4px">Nová kráva</h3><p class="dim" style="font-size:12px;margin:0">Nová kráva se do Stáje nedostane kliknutím na téhle stránce — potřebuje reálný kód (nový modul, policy, položku v <code>config/${esc(m.installation)}/lifecycle.json</code>) a deploy, to zůstává lidský krok s vlastním commitem. Co „Spustit certifikaci“ u každé karty dělá doopravdy: spustí živý konformanční test proti přesně tomuhle nasazenému buildu (<code>${esc(m.gitSha)}</code>) a certifikaci uloží — <b>certifikace sama nic nezapíná</b>, „ACTIVE“ tady pořád znamená jen to, co doopravdy vynucuje Router z <code>lifecycle.json</code>.</p></div>
-      ${m.capabilities.length ? penGrid : '<p class="dim">zatím žádné (vzdálení Workeři neodpověděli)</p>'}`,
+      ${stajCapabilities.length ? penGrid : '<p class="dim">zatím žádná zavedená kráva — vše nasazené čeká na první certifikaci v Teletníku</p>'}`,
+    },
+    {
+      id: "teletnik",
+      icon: mascot("krava", MASCOT_BG.teletnik),
+      label: "Teletník",
+      count: teletnikCapabilities.length || undefined,
+      body: `<div class="pagehead"><h1>${mascot("krava", MASCOT_BG.teletnik, "lg")} Teletník</h1></div><p class="lede">Co není hotová kráva, je tele — kapabilita už nasazená v kódu, ale ještě nikdy neprošla Admission Gate certifikací pro tenhle build. Jakmile projde (i s výsledkem FAIL), přestává být tele a stěhuje se do <a href="#staj">Stáje</a> natrvalo.</p>
+      <div class="card" style="margin-bottom:14px"><h3 style="margin-bottom:4px">Nová kráva</h3><p class="dim" style="font-size:12px;margin:0">Nová kráva se sem nedostane kliknutím na téhle stránce — potřebuje reálný kód (nový modul, policy, položku v <code>config/${esc(m.installation)}/lifecycle.json</code>) a deploy, to zůstává lidský krok s vlastním commitem. Co „Spustit certifikaci“ u každé karty dělá doopravdy: spustí živý konformanční test proti přesně tomuhle nasazenému buildu (<code>${esc(m.gitSha)}</code>) a certifikaci uloží — <b>certifikace sama nic nezapíná</b>, „ACTIVE“ ve Stáji pořád znamená jen to, co doopravdy vynucuje Router z <code>lifecycle.json</code>.</p></div>
+      ${teletnikCapabilities.length ? teletnikGrid : '<p class="dim">žádná telata — všechno nasazené už aspoň jednou prošlo certifikací</p>'}`,
     },
     {
       id: "argos",

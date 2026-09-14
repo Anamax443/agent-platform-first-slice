@@ -2,6 +2,36 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-14 (145) — Teletník: nová záložka odděluje telata (nikdy necertifikováno) od zavedených krav ve Stáji
+
+**Pokyn vlastníka:** po vysvětlení, že Stáj dnes ukazuje ACTIVE i NEW kapability vedle sebe (jen
+odlišené badge): "a neměla by to být samostatný teletník? co není hotová kráva je tele, ne?"
+
+**Pravidlo přesunu:** `derivedStatus === "NEW"` (Admission Gate nikdy neproběhla pro tenhle build) →
+tele → Teletník. **Cokoli jiného zůstává ve Stáji, včetně QUARANTINED** — kráva, co už jednou prošla
+certifikací a teď selhává, je nemocná kráva, ne tele; jen "nikdy ani nezkoušeno" se stěhuje.
+
+**Kód:** `penGrid` rozdělen na `penGridOf(caps)` (čistá funkce, beze změny vykreslování karty samotné)
++ dva filtry (`m.capabilities.filter(c => c.derivedStatus === "NEW")` / `!== "NEW"`). Nová záložka
+Teletník (ikona/MASCOT_BG sdílí kravský mascot s Stájí, jen jiná barva pozadí), počítadlo v navigaci
+jako u Ohrady. "Nová kráva" vysvětlující panel přesunut ze Stáje do Teletníku (tam teď reálně žijí
+nedokončené kapability). Stáj dostala poctivý prázdný stav ("zatím žádná zavedená kráva…") pro čerstvou
+farmu bez jediné certifikace — živě ověřeno, přesně tenhle stav na `local-fakes` nastal.
+
+**Nález při opravě testů:** existující `stajSection` řezy v `tests/page.test.ts` končily na
+`id="view-argos"` — vložení Teletníku MEZI Stáj a Argos způsobilo, že tenhle starý konec ticho
+pohltil celý nový Teletník obsah do "stajSection". Testy by prošly, i kdyby se rozdělení pokazilo
+(u `.not.toContain` assercí doslova vždy, bez ohledu na realitu). Opraveno na `id="view-teletnik"`
+jako správnou hranici + `expect(cardStart).toBeGreaterThan(-1)` guard tam, kde `.indexOf()` krmí
+`.slice()` do `.not.toContain()` (jediné rizikové místo, pozitivní assertions se same-guardují).
+Stejná disciplína jako Posudek 6 (nedůvěřovat, ověřit) — tentokrát nad vlastním testem, ne nad cizím.
+
+**Živě ověřeno** (`wrangler dev`, `local-fakes`, čerstvé D1 bez jediné certifikace): Stáj ukazuje
+prázdný stav, Teletník má všechny 4 nasazené kapability + count badge "4" v navigaci.
+
+**Brány zelené:** typecheck, **427/427 testů** (5 testů opraveno, 0 nových — čistě reorganizace
+existujícího pokrytí), arch, farm:check.
+
 ## 2026-09-14 (144) — Nastavení: první runtime-editovatelné nastavení (model pro Kravskou dílnu), krok 1 k "přidat krávu z webu"
 
 **Pokyn vlastníka:** po screenshotu reálné `Průsvitná stáj` — "nevidím nastavení ani office" (potvrzeno
