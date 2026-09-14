@@ -2,8 +2,8 @@
 // "IČO does not exist" is a business result (found: false), not a technical error — same pattern as
 // document.classify's OTHER (SEVERKA docs/SEVERKA.md "## Připravované doménové COW").
 import { AresSubjectNotFound, AresUnavailable, type AresAdapter } from "../../adapters/ares.js";
-import { capabilityError, DependencyTimeout, iso, platformError, withTimeout } from "../../platform/api.js";
-import type { Clock, Handler, HandlerOutcome, Provenance } from "../../platform/api.js";
+import { capabilityError, DependencyTimeout, iso, platformError, sha256, withTimeout } from "../../platform/api.js";
+import type { Clock, EvidenceWriter, Handler, HandlerInput, HandlerOutcome, Provenance } from "../../platform/api.js";
 import descriptor from "./descriptor.json" with { type: "json" };
 import inputSchema from "./input.schema.json" with { type: "json" };
 import outputSchema from "./output.schema.json" with { type: "json" };
@@ -14,6 +14,15 @@ export interface CompanyVerifierDeps {
   ares: AresAdapter;
   clock: Clock;
   aresTimeoutMs?: number;
+  /**
+   * Bound to cz.company.verify's own identity by the caller (platform-wiring.ts) — SEVERKA.md
+   * "Průsvitná stáj" / HANDOFF 143: a debugger has nothing to show on a breakpoint until the
+   * capabilities that verify against authoritative registries actually seal their result into the
+   * Žlab. Optional so this handler keeps working (and every existing conformance fixture keeps
+   * passing unchanged) for a caller that hasn't wired a writer yet — same "present = used, absent =
+   * skipped, never a hard dependency" shape as `aresTimeoutMs`.
+   */
+  evidence?: EvidenceWriter;
 }
 
 interface Input {
@@ -23,8 +32,14 @@ interface Input {
 export function createCompanyVerifier(deps: CompanyVerifierDeps): Handler {
   const failed = (error: ReturnType<typeof capabilityError>): HandlerOutcome => ({ status: "FAILED", error });
   const provenance: Provenance = { producerComponent: descriptor.module, producerVersion: descriptor.componentVersion };
+  // inputField "companyId" matches invoice.v1's supplier.companyId naming (NAVRHOVY-LIST-farma.md
+  // krok 8a), not the payload's local "ico" — the Žlab record names the business field being
+  // verified, not the wire-level parameter name.
+  const seal = (input: HandlerInput, ico: string, result: string) =>
+    deps.evidence?.write(input, { inputField: "companyId", inputValueHash: sha256(ico), result });
 
-  return async ({ message }) => {
+  return async (input) => {
+    const { message } = input;
     const p = message.payload as unknown as Input;
     const verifiedAt = iso(deps.clock.now());
 
@@ -34,12 +49,14 @@ export function createCompanyVerifier(deps: CompanyVerifierDeps): Handler {
       if (typeof record.obchodniJmeno !== "string" || (record.datumZaniku !== null && typeof record.datumZaniku !== "string")) {
         return failed(capabilityError("REGISTRY_RESPONSE_INVALID", "VALIDATION", false, "ARES returned a malformed record", { ico: p.ico }));
       }
+      const active = !record.datumZaniku && record.registraceAktivni;
+      seal(input, p.ico, active ? "ACTIVE" : "CEASED");
       return {
         status: "SUCCEEDED",
         payload: {
           ico: p.ico,
           found: true,
-          active: !record.datumZaniku && record.registraceAktivni,
+          active,
           companyName: record.obchodniJmeno,
           ceasedOn: record.datumZaniku,
           verifiedAt,
@@ -49,6 +66,7 @@ export function createCompanyVerifier(deps: CompanyVerifierDeps): Handler {
     } catch (e) {
       if (e instanceof AresSubjectNotFound) {
         // Business result, not FAILED: the IČO simply does not exist in ARES.
+        seal(input, p.ico, "NOT_FOUND");
         return { status: "SUCCEEDED", payload: { ico: p.ico, found: false, active: false, verifiedAt }, provenance };
       }
       if (e instanceof DependencyTimeout) return failed(platformError("DEPENDENCY_TIMEOUT", "ARES did not answer before the deadline", { ms: e.ms }));

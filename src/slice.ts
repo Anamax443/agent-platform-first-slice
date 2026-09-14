@@ -23,6 +23,8 @@ import { ArtifactStore } from "./platform/artifacts.js";
 import { Audit } from "./platform/audit.js";
 import { FakeClock, iso, plus } from "./platform/clock.js";
 import { CredentialResolver } from "./platform/credentials.js";
+import { EvidenceLedger } from "./platform/evidence.js";
+import { EvidenceWriter } from "./platform/evidence-writer.js";
 import { ExecutorHost, type HostHandlerSpec, type HostMutants } from "./platform/executor-host.js";
 import { Gateway, IdentityProvider } from "./platform/gateway.js";
 import { newId } from "./platform/ids.js";
@@ -83,6 +85,10 @@ export interface SliceOptions {
   workflow?: WorkflowDef;
   /** Overrides `installation.lifecycle` (test harness: quarantine a module without editing config/local-fakes). */
   lifecycle?: LifecycleRegistry;
+  /** Žlab (SEVERKA.md "Průsvitná stáj" / HANDOFF 143): shared between two slices to simulate two requests reading the same evidence store. */
+  evidence?: EvidenceLedger;
+  /** Stand-in for the Cloudflare Version Metadata `id` (SEVERKA.md "## Pořadí" bod 3) until that's wired — no real buildHash source exists yet anywhere in the platform, this is a test-only placeholder, never a live value. */
+  buildHash?: string;
 }
 
 export function createSlice(installation: Installation, secrets: SecretsSource, o: SliceOptions = {}) {
@@ -98,6 +104,12 @@ export function createSlice(installation: Installation, secrets: SecretsSource, 
   const signer = new Signer("k1", keyPair.privateKey);
   const identities = new IdentityProvider(profile.identities);
   const gateway = new Gateway({ identities, signer, clock, ...(o.contextTtlMs !== undefined ? { contextTtlMs: o.contextTtlMs } : {}) });
+
+  // Žlab: a separate Ed25519 identity from the gateway's signer on purpose (evidence.ts's own note —
+  // a different signed object with a different lifetime). buildHash is a placeholder (see SliceOptions).
+  const evidenceKeyPair = generateKeyPair();
+  const evidence = o.evidence ?? new EvidenceLedger(clock, { keyId: "evd-k1", privateKey: evidenceKeyPair.privateKey, publicKey: evidenceKeyPair.publicKey });
+  const buildHash = o.buildHash ?? "slice-dev";
 
   // Adapters (fakes)
   const dms = o.dms ?? new FakeDmsAdapter();
@@ -193,7 +205,12 @@ export function createSlice(installation: Installation, secrets: SecretsSource, 
         name: "cz.company.verify",
         version: "1",
         inputSchema: companyVerify.inputSchema,
-        handler: companyVerify.createCompanyVerifier({ ares, clock, ...(o.aresTimeoutMs !== undefined ? { aresTimeoutMs: o.aresTimeoutMs } : {}) }),
+        handler: companyVerify.createCompanyVerifier({
+          ares,
+          clock,
+          ...(o.aresTimeoutMs !== undefined ? { aresTimeoutMs: o.aresTimeoutMs } : {}),
+          evidence: new EvidenceWriter(evidence, { producerId: "cz.company.verify", capabilityVersion: "1", buildHash, schemaVersion: "1" }),
+        }),
       },
     ],
   });
@@ -205,7 +222,12 @@ export function createSlice(installation: Installation, secrets: SecretsSource, 
         name: "cz.vat.verify",
         version: "1",
         inputSchema: vatVerify.inputSchema,
-        handler: vatVerify.createVatVerifier({ mojeDane, clock, ...(o.mojeDaneTimeoutMs !== undefined ? { mojeDaneTimeoutMs: o.mojeDaneTimeoutMs } : {}) }),
+        handler: vatVerify.createVatVerifier({
+          mojeDane,
+          clock,
+          ...(o.mojeDaneTimeoutMs !== undefined ? { mojeDaneTimeoutMs: o.mojeDaneTimeoutMs } : {}),
+          evidence: new EvidenceWriter(evidence, { producerId: "cz.vat.verify", capabilityVersion: "1", buildHash, schemaVersion: "1" }),
+        }),
       },
     ],
   });
@@ -270,6 +292,7 @@ export function createSlice(installation: Installation, secrets: SecretsSource, 
     archive,
     ares,
     mojeDane,
+    evidence,
     smtp,
     models,
     recipients,

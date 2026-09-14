@@ -839,9 +839,19 @@ nepřeřazoval** — zapsány zvlášť pod čarou, ne zapomenuté.
    `src/platform/evidence.ts`'s `EvidenceLedger` — append-only, platform-signed (Ed25519, ne cow's
    vlastní klíč), `verify()` detekuje tamper i hash-only forgery, `verifyLineage()` chodí po
    `parentRefs`/`parentHashes` (hashový graf) a najde přesně zlomeného předka. `tests/zlab.test.ts`,
-   7 testů (ZLAB-001..007). **Zatím nezapojeno do žádné reálné capability/ExecutorHostu** — je to
-   samostatný primitiv, ne live cesta zápisu evidence z `cz.vat.verify`/`cz.company.verify` (ty
-   zatím nepostaveny, bod 5–6 níže).
+   7 testů (ZLAB-001..007). **`EvidenceWriter` (trusted-context-bound writer) hotov 13. 9. 2026**
+   (HANDOFF 128, Posudek 15 P1-2) — `tenantId`/`workflowId`/`operationId` jen z `HandlerInput`, nikdy
+   z krávina tvrzení. **`cz.company.verify`/`cz.vat.verify` reálně volají `EvidenceWriter.write()` od
+   14. 9. 2026** (HANDOFF 144) — `deps.evidence?.write(...)` na každém `SUCCEEDED` (FAILED/WAITING
+   se nikdy nezapisují), `inputField` "companyId"/"vatId" podle `invoice.v1` názvosloví, `result` =
+   ACTIVE/CEASED/NOT_FOUND (company) nebo přímo `reliability` ANO/NE/NENALEZEN (vat, beze změny —
+   evidence.ts's vlastní příklad vocabulary). `tests/cz-verify-evidence.test.ts`, 6 testů
+   (CZV-EVD-001..005). **Stále jen v `src/slice.ts` (testovací/conformance harness) — živý
+   `deploy/cloudflare/apf-gateway/src/platform-wiring.ts` tyhle dvě capability vůbec neregistruje v
+   Routeru (bod 5–6 níže: "Zatím nezapojeno do žádného workflow"), takže na `apf.maxferit.cz` se
+   dnes žádná evidence ještě nezapisuje.** `buildHash` je v `slice.ts` jen placeholder (`"slice-dev"`)
+   — skutečný zdroj (Cloudflare Version Metadata binding, needs verification) se řeší až při zapojení
+   do živého gatewaye, ne dřív.
 3. **Build-bound `CertificationRecord`** — `Lifecycle` smí přepnout na `ACTIVE` jen když
    `CertificationRecord.PASS && certifiedBuildHash == runningBuildHash` (Posudek 12 bod 6, viz
    `### Admission Gate` výše). **Hotovo jako testovaný primitiv 13. 9. 2026** (HANDOFF 126):

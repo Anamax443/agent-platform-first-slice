@@ -3,8 +3,8 @@
 // (found: false), not a technical error — same pattern as cz.company.verify's not-found and
 // document.classify's OTHER (SEVERKA docs/SEVERKA.md "## Připravované doménové COW").
 import { MojeDaneUnavailable, type MojeDaneAdapter } from "../../adapters/moje-dane.js";
-import { capabilityError, DependencyTimeout, iso, platformError, withTimeout } from "../../platform/api.js";
-import type { Clock, Handler, HandlerOutcome, Provenance } from "../../platform/api.js";
+import { capabilityError, DependencyTimeout, iso, platformError, sha256, withTimeout } from "../../platform/api.js";
+import type { Clock, EvidenceWriter, Handler, HandlerInput, HandlerOutcome, Provenance } from "../../platform/api.js";
 import descriptor from "./descriptor.json" with { type: "json" };
 import inputSchema from "./input.schema.json" with { type: "json" };
 import outputSchema from "./output.schema.json" with { type: "json" };
@@ -15,6 +15,9 @@ export interface VatVerifierDeps {
   mojeDane: MojeDaneAdapter;
   clock: Clock;
   mojeDaneTimeoutMs?: number;
+  /** Same "present = sealed into the Žlab, absent = skipped" shape as cz-company-verify's `evidence`
+   * (SEVERKA.md "Průsvitná stáj" / HANDOFF 143) — see that handler's comment for the full reasoning. */
+  evidence?: EvidenceWriter;
 }
 
 interface Input {
@@ -26,8 +29,12 @@ const RELIABILITY = new Set(["ANO", "NE", "NENALEZEN"]);
 export function createVatVerifier(deps: VatVerifierDeps): Handler {
   const failed = (error: ReturnType<typeof capabilityError>): HandlerOutcome => ({ status: "FAILED", error });
   const provenance: Provenance = { producerComponent: descriptor.module, producerVersion: descriptor.componentVersion };
+  // inputField "vatId" matches invoice.v1's supplier.vatId naming (NAVRHOVY-LIST-farma.md krok 8a).
+  const seal = (input: HandlerInput, dic: string, result: string) =>
+    deps.evidence?.write(input, { inputField: "vatId", inputValueHash: sha256(dic), result });
 
-  return async ({ message }) => {
+  return async (input) => {
+    const { message } = input;
     const p = message.payload as unknown as Input;
     const verifiedAt = iso(deps.clock.now());
 
@@ -37,6 +44,9 @@ export function createVatVerifier(deps: VatVerifierDeps): Handler {
       if (!RELIABILITY.has(record.reliability) || !Array.isArray(record.publishedAccounts)) {
         return failed(capabilityError("REGISTRY_RESPONSE_INVALID", "VALIDATION", false, "MOJE daně returned a malformed record", { dic: p.dic }));
       }
+      // reliability (ANO/NE/NENALEZEN) is already exactly the kind of capability-specific vocabulary
+      // Evidence.result is meant to carry (evidence.ts's own doc comment uses this same example) — sealed as-is.
+      seal(input, p.dic, record.reliability);
       return {
         status: "SUCCEEDED",
         payload: {

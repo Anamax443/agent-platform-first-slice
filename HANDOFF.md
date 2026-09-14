@@ -2,6 +2,45 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-14 (144) — cz.company.verify/cz.vat.verify reálně zapisují do Žlabu (test/conformance harness), živý gateway zatím ne
+
+**Pokyn vlastníka:** "jasne" na návrh z (143) — zapojit `EvidenceLedger.append()` do obou ověřovacích
+kraviček, aby breakpoint měl co zobrazit, až vznikne.
+
+**Zjištění cestou:** `EvidenceWriter` (trusted-context-bound writer, přesně tenhle problém řeší) už
+existoval — HANDOFF 128, Posudek 15 P1-2 — jen nebyl zapojený nikam. Nejdřív omylem napsaný
+konkurenční `withEvidence()` wrapper smazán bez commitu, jakmile se `EvidenceWriter` našel.
+
+**Změny:**
+- `src/platform/api.ts`: `EvidenceWriter`/`EvidenceClaim` přidány do ARCH-DEP-001 fasády (komponenty
+  smí importovat jen odsud) — první pokus importovat přímo z `evidence-writer.ts` spadl na
+  `npm run arch`, opraveno přes fasádu.
+- `src/components/cz-company-verify/handler.ts` a `cz-vat-verify/handler.ts`: nový volitelný
+  `evidence?: EvidenceWriter` v `Deps`; na každém `SUCCEEDED` (nikdy na `FAILED`/timeoutu) se zavolá
+  `deps.evidence?.write(input, {...})`. `inputField` "companyId"/"vatId" (`invoice.v1` názvosloví,
+  ne payloadový `ico`/`dic`), `inputValueHash = sha256(hodnota)`, `result` = `ACTIVE`/`CEASED`
+  (company, odvozeno z `active`) nebo `NOT_FOUND` (company, `AresSubjectNotFound` větev), případně
+  přímo MOJE daně's `reliability` (vat — evidence.ts's vlastní ANO/NE/NENALEZEN příklad, beze změny).
+  Volitelnost zachovává každou dnešní conformance fixturu beze změny (170/170 CTR testů prošlo
+  nezměněno).
+- `src/slice.ts` (jediný composition root, i pro testy): nová `EvidenceLedger` (vlastní Ed25519
+  identita, oddělená od gateway signeru — evidence.ts's vlastní poznámka), dva `EvidenceWriter`
+  (jeden na capabilitu), `buildHash` jako přepsatelný placeholder (`o.buildHash ?? "slice-dev"` —
+  skutečný zdroj neexistuje nikde v platformě, needs verification, řeší se až u živého zapojení).
+  `evidence` nově na vráceném slice objektu (`tests/harness/index.ts`'s vlastní hlavičkový komentář
+  "reads evidence back" tohle už předjímal).
+- Nový `tests/cz-verify-evidence.test.ts`, 6 testů (CZV-EVD-001..005): SUCCEEDED sealuje správný
+  záznam (company i vat, found i not-found), FAILED nesealuje nic, dvě po sobě jdoucí verifikace
+  stejného ICO dají dva různé `recordId` (append-only, žádné přepsání).
+
+**Co pořád chybí (vědomě, ne zapomenuto):** živý `deploy/cloudflare/apf-gateway/src/platform-wiring.ts`
+tyhle dvě capability vůbec neregistruje v Routeru — na `apf.maxferit.cz` se dnes žádná evidence
+nezapisuje, jen v testovacím/conformance `src/slice.ts`. Zapojení do živého gatewaye (+ skutečný
+`buildHash` zdroj, + reálné `HttpAresAdapter`/`HttpMojeDaneAdapter` volání) je samostatný, pozdější
+krok, stejná disciplína jako u (132)/(136).
+
+**Brány zelené:** typecheck, arch, **427/427 testů** (+6 CZV-EVD), farm:check (obě instalace).
+
 ## 2026-09-14 (143) — SEVERKA: Průsvitná stáj zpřesněna — BREAKPOINT patří za krávu co píše do Žlabu, "přeléčení" = CORRECT retry, tvrdá závislost na napojení Žlabu
 
 **Vlastníkův požadavek (diskuze, "uptoyou" na sepsání):** "musím být schopen po každé krávě
