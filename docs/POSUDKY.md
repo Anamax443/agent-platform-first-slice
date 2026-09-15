@@ -649,3 +649,20 @@ implementace validace je v TS (`FactCatalog.build`), gate je `npm test` (FACT-00
 Body 4-6 (authority domain) a 4-7 (identita entit) jsou zapsané jako **další návrhová rozhodnutí před
 `accounting.account.resolve` / `bc.vendors`** (SEVERKA `### Slovník faktů a deterministické skládání`),
 ne jako kód.
+
+### Kolo 5 — roadmapa M0–M8 (15. 9. 2026)
+
+Reviewer navrhl 8 milníků (M0 Foundation freeze → M7 Controlled Write, M8 druhá doména). Ověřeno
+proti kódu a `## Pořadí`: **P s 5 úpravami + 1 mezerou**, vlastník potvrdil. Mezera: durable Žlab
+v roadmapě chyběl — Žlab je in-memory v DO (`EvidenceLedger` = `Map`), živý gateway evidenci
+záměrně nezapisuje (`platform-wiring.ts:197-201`), takže M2/M3 by stály na runtime iluzi → do M0.
+Úpravy: M0 přejmenovat na „Fact Contract v1" (kolize se zmrazeným foundation repem); M1 je menší,
+než posudek myslí (model bez změny krávy jde už dnes přes `profile.json`; skutečná práce = sjednocení
+credential cesty + usage audit + tier); M3 killer test bez závislosti na BC (evidence `cz.company.verify`
+přítomná / chybějící / prošlá / cizí tenant / špatná doména mění plán bez editace workflow); M5 nechat
+READY/REVIEW/REJECT; M7 tvrdý gate = kryptograficky ověřená identita schvalovatele (Posudek 7 MAJOR 2)
++ rozsah jen `create purchase invoice` Open bez zaúčtování + reconciler vendor + vendorInvoiceNumber.
+Vlastník doplnil tři povinné exit vrstvy (functional / adversarial / live farm verification) a zadal
+M0 jako návrhový dokument se čtyřmi částmi (invarianty · datový tvar · validace · adversarial) — kód
+až po schválení. Výsledek: SEVERKA `## Roadmapa M0–M8` (mapování Pořadí 1–10 na milníky),
+`docs/M0-FACT-CONTRACT-V1.md` s rozhodnutími R1–R7 (HANDOFF 155).

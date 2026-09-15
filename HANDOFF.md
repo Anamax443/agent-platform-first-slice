@@ -2,6 +2,44 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-15 (155) — Roadmapa M0–M8 v SEVERKA, M0 „Fact Contract v1" jako návrhový dokument (žádný kód)
+
+**Podnět:** Posudek 17 kolo 5 — reviewer navrhl 8 milníků; ověřeno proti kódu a `## Pořadí`: 5 úprav
+(M0 přejmenovat — kolize se zmrazeným foundation repem; M1 je menší, než posudek myslí — výměna modelu
+bez změny krávy jde už dnes přes `profile.json`, skutečná práce = sjednocení credential cesty + usage
+audit + tier; M3 killer test bez závislosti na BC; M5 nechat READY/REVIEW/REJECT; M7 tvrdý gate =
+kryptograficky ověřená identita schvalovatele + jen Open faktura bez zaúčtování + reconciler vendor +
+vendorInvoiceNumber) + **1 mezera: durable Žlab chyběl** (Žlab je in-memory `Map` v DO, živý gateway
+evidenci záměrně nezapisuje, `platform-wiring.ts:197-201` — M2/M3 by stály na runtime iluzi). Vlastník
+úpravy potvrdil, přidal tři povinné exit vrstvy (functional / adversarial / live farm verification)
+a zadal M0 jako návrh se čtyřmi částmi, každá s invarianty, datovým tvarem, validací a adversarial
+scénáři — **kód až po schválení**.
+
+**Změny (jen dokumentace):**
+- `docs/SEVERKA.md`: nová `## Roadmapa M0–M8` nad `## Pořadí`, mapování bodů 1–10 na milníky, tři
+  exit vrstvy, „co se teď nedělá".
+- `docs/M0-FACT-CONTRACT-V1.md` (nový): FactAddress · EntityHash · AuthorityGrant · DurableFactStore,
+  navázané na skutečné tvary (`Evidence`, `EvidenceClaim`, `RequiredEvidence`,
+  `CertifiedBusinessObject.fieldHashes`, DO SQLite + D1 zrcadlo vzor ze `store.ts`, `newId`,
+  `canonicalize`), navržené Test ID rodiny (FACT-005..007, ENT-001..006, AUTH-001..007,
+  ZLAB-DUR-001..007), adversarial tabulky a **7 otevřených rozhodnutí R1–R7** pro vlastníka.
+- `docs/POSUDKY.md`: Posudek 17 kolo 5.
+
+**Klíčové návrhové volby v M0 (k schválení):** id entity je mimo klíč slovníku (`key@entityId` jen
+serializace, uzavřený namespace zůstává); **kontinuita id podle obsahu** při re-extrakci (stejný
+`entityHash` = zděděné id, změněný obsah = nové id → stará evidence správně osiří, chybějící řádek =
+`SUPERSEDED` append-only); **snapshot entity jako platformní záznam v Žlabu** → lineage řádkové
+evidence funguje dnešním `verifyLineage()` beze změny, `not_bound` přes existující `fieldHashes`
+kontrolu; odvozené fakty (účet) do `entityHash` nevstupují; authority domain razítkuje platforma
+z `config/<installation>/authorities.json` (vzor ADR-016 granty), `EvidenceClaim` pole nemá, Dojička
+vyžaduje doménu místo `producerId` a kontroluje **aktuální** grant (revokace, R2); TTL ořezaný grantem
+(P1-10); durable Žlab = DO SQLite synchronně před publikací výsledku + D1 insert-only zrcadlo pro
+cross-case lookup jen referencí, import cizí evidence = podepsaná kopie s lineage, důvěra jen z podpisu;
+podpis v2 s domain prefixem (P1-12, R4); `buildHash := gitSha` (R5). Pořadí implementace po schválení:
+D → C → A → B, každá část vlastní commit + Test ID + live verification u D.
+
+**Brány:** beze změny kódu — 476/476 z (154) platí. Nenasazeno.
+
 ## 2026-09-15 (154) — Slovník faktů + deterministický `plan()`: katalog reprodukuje dnešní workflow, Farmář nikdy nevidí hodnoty (Posudek 17)
 
 **Podnět:** externí review ve čtyřech kolech (vlastník přinesl; `docs/POSUDKY.md` Posudek 17): (1) Claude

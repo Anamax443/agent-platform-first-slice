@@ -910,6 +910,43 @@ control plane ani farmy jako celku.*
 
 ---
 
+## Roadmapa M0–M8 — od first-slice k prvnímu autonomně skládanému případu (15. 9. 2026)
+
+Z Posudku 17, kolo 5 (`docs/POSUDKY.md`): reviewer navrhl 8 milníků, asistent je ověřil proti kódu
+a `## Pořadí` (5 úprav + 1 mezera: durable Žlab), **vlastník potvrdil 15. 9. 2026**. Milníky jsou
+vrstva **nad** `## Pořadí` — body 1–10 se do nich mapují beze zbytku (sloupec vpravo), nic se neztrácí.
+Hlavní demonstrační scénář: *přijde dodavatelská faktura → Farma zjistí, co je potřeba → platforma
+doplní fakta → případ projde Dojičkou → deterministický náhled → člověk schválí → Mlékárna zapíše
+fakturu do BC* — **bez ručně nadrátovaného invoice workflow**. Až to projde, je důkaz, že architektura
+není n8n.
+
+**Tři povinné exit vrstvy každého milníku:** (1) *functional* — testy s Test ID; (2) *adversarial* —
+útočné scénáře jako testy, ne poznámky; (3) *live farm verification* — nasazeno na `farm-bass443`
+a ověřeno živě (`gitSha`), ne jen `npm test`. „Prošlo unit testem" ≠ hotovo.
+
+| M | Název | Hlavní exit | `## Pořadí` |
+|---|---|---|---|
+| **M0** | **Fact Contract v1** | `FactAddress` (klíč, scope, entityId mimo klíč), `EntityHash` s kontinuitou id podle obsahu, `AuthorityGrant` (domény v `authorities.json`, `EvidenceWriter` razítkuje, Dojička podle domény, TTL per doména), **durable Žlab** (DO SQLite synchronně + D1 insert-only zrcadlo, důvěra jen z podpisu). Návrh: **`docs/M0-FACT-CONTRACT-V1.md`** — čistý návrh se čtyřmi částmi (invarianty, datový tvar, validace, adversarial), **kód až po schválení** | Posudek 16 punch list: durable Žlab, TTL z policy (P1-10), domain separation (P1-12) |
+| **M1** | **AI Credential & Usage Layer** | sjednotit cestu credentialů (`modelTable()` → `CredentialResolver`), `response.usage` do auditu, tier mapování v profilu; krok 0 = vlastník nastaví `ANTHROPIC_API_KEY`. Exit: přepnout provider/model bez změny krávy (dnes částečně přes `profile.json`) | Posudek 17 1-2/1-3/1-4 |
+| **M2** | **Invoice Understanding v2** | `invoice.extract/2`: hlavička, dodavatel, částky, `invoice.line × N` s identitou z M0; ISDOC deterministická strategie (jistota 1,0 + zlatý standard pro totéž PDF); `forEach` bounded krok; anonymizovaný korpus 30–50 faktur mimo repo (R2); metriky v `MEASUREMENT.md`. Exit: Žlab má správný canonical invoice včetně řádků a původu každého faktu | nová kráva → Admission Gate (3, 4) |
+| **M3** | **No-n8n Gate** | compile `plan → WorkflowDef`, `available` počítané ze Žlabu (hash + TTL + doména), živě. **Killer test bez BC:** (1) Žlab bez platné evidence `cz.company.verify` → plán obsahuje verify; (2) čerstvá evidence správné domény → verify z plánu zmizí; (3) prošlá / cizí tenant / špatná doména → verify se vrátí. Bez editace jediného workflow. Adversarial: podvržené `available` klíče | 5, 6 (skutečná `HttpAresAdapter`/`HttpMojeDaneAdapter` volání) |
+| **M4** | **BC Read World** | BC **sandbox**, `cred:bc` přes `CredentialResolver`; `bc.vendor.resolve` READ (= `bc.vendors`); `accounting.account.candidates` = kandidáti + evidence bez grantu autority, rozhodnutí člověka = doména `tenant.human-review`. Exit: Farma doplní BC dodavatele a účetní kontext bez ručně vytvořené cesty | 7 |
+| **M5** | **Readiness & Composition Safety** | goal contract (`purchaseInvoice.readyForBc` = required facts + domény + TTL), Dojička READY / REVIEW / REJECT nad živým Žlabem, Konev; **composition attack suite** jako exit (každá capability sama vypadá povoleně, dohromady nesmí projít) | 8, 8b, 9 |
+| **M6** | **Sealed Dry Run** | deterministický BC adapter z Konve vytvoří přesný náhled + technický payload, žádné LLM; review task **vázaný na hash Konve** — změna chráněného faktu = approval neplatné → nová Konev → nový DRY_RUN → nové approval | 10 (DRY_RUN) |
+| **M7** | **Controlled BC Write** | **tvrdý gate: kryptograficky ověřená identita schvalovatele** (Posudek 7 MAJOR 2, `accessJwtVerified`) — bez toho žádný write. Rozsah: `create purchase invoice`, stav **Open**, **bez zaúčtování** (posting zůstává člověku v BC). Executor kontroluje seal, approval, tenant, scope, idempotency key, target. Reconciler UNKNOWN_OUTCOME: lookup vendor + vendorInvoiceNumber (pokud v tenantovi jednoznačné). Exit: reálná testovací faktura od vstupu do BC + zpětně dohledatelný celý řetěz (co přišlo, co extrahováno, kdo vytvořil který fakt, jaká evidence, co Farmář naplánoval, co Argos povolil, co člověk opravil, co Dojička uznala, co zapečetěno, co schváleno, jaký payload, co Executor poslal, co BC odpověděl) = **SEVERKA v1** | 10 (live) |
+| **M8** | **Second-domain Proof** | jiný use-case (např. Gwalarn: `calendar.availability`, `calendar.event.prepare`, `location.resolve`, `booking.missingInformation`) jen přidáním faktů + kontraktů + krav — **bez sahání na Farmáře, Argose, Žlab, Dojičku, Konev**. Druhý acceptance test: platforma, ne systém na faktury | — |
+
+**Průřezově:** každá nová kráva (M2, M4, M8) projde Admission Gate (`## Pořadí` 3–4, dnes ruční
+allow-list `lifecycle.json`); farma se nasazuje na konci každého milníku (15. 9. 2026 je 2 commity
+pozadu — vlastníkův krok).
+
+**Co se teď nedělá:** Gmail, Telegram, FIO, kalendář, další ERP, autonomní učení (silo), vizuální
+editor workflow, „deset dalších krav". Faktura → BC je vertikální řez, který obsahuje všechno, co je
+architektonicky potřeba vyřešit.
+
+**Teď:** M0 → M1 → M2 → M3. M3 je brána: dokud změna dostupných faktů sama nemění plán bez editace
+workflow, nepokračuje se k zápisu.
+
 ## Pořadí (co je skutečně příští, ne všech vrstev najednou)
 
 **Přepsáno 12. 9. 2026 podle vlastníkova pořadí (Posudek 12, `docs/POSUDKY.md`)** — starší verze
