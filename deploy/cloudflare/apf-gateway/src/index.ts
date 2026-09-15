@@ -534,11 +534,27 @@ class NotWiredTransport {
   }
 }
 
-let d1AuditReady: Promise<unknown> | undefined;
-const ensureD1Audit = (db: D1Database): Promise<unknown> => (d1AuditReady ??= db.prepare(D1_AUDIT_DDL).run());
-/** Durable Žlab's shared copy (M0 D-5): the evidence_mirror table in the same D1 as the audit trail, its own DDL. */
-let d1EvidenceReady: Promise<unknown> | undefined;
-const ensureD1Evidence = (db: D1Database): Promise<unknown> => (d1EvidenceReady ??= Promise.all(D1_EVIDENCE_DDL.map((stmt) => db.prepare(stmt).run())));
+/**
+ * Once-per-isolate DDL, but never a cached failure: a rejected promise kept in the module variable would poison every
+ * later call in this isolate (copyOut, /farm) for the isolate's whole life. Found live 15. 9. 2026 (HANDOFF 166) with
+ * the evidence DDL — the same shape protects the audit DDL too.
+ */
+const oncePerIsolate = (run: () => Promise<void>): (() => Promise<void>) => {
+  let ready: Promise<void> | undefined;
+  return () =>
+    (ready ??= run().catch((e: unknown) => {
+      ready = undefined;
+      throw e;
+    }));
+};
+let ensureAudit: (() => Promise<void>) | undefined;
+const ensureD1Audit = (db: D1Database): Promise<void> => (ensureAudit ??= oncePerIsolate(async () => void (await db.prepare(D1_AUDIT_DDL).run())))();
+/** Durable Žlab's shared copy (M0 D-5): the evidence_mirror table in the same D1 as the audit trail. Sequential on purpose — the index must see the table. */
+let ensureEvidence: (() => Promise<void>) | undefined;
+const ensureD1Evidence = (db: D1Database): Promise<void> =>
+  (ensureEvidence ??= oncePerIsolate(async () => {
+    for (const stmt of D1_EVIDENCE_DDL) await db.prepare(stmt).run();
+  }))();
 
 /** Žlab as seen from the shared D1 copy: counts and domains only — never a value, never a result. */
 async function zlabStats(env: Env): Promise<ZlabStats> {
@@ -1486,9 +1502,14 @@ export default {
     // Durable Žlab (M0 D-5 live verification): what the shared D1 copy holds and what the self-test object holds
     // locally — counts, domains, how many records verify under the platform key. Never a value, never a result.
     if (url.pathname === "/farm/zlab.json" && request.method === "GET") {
-      const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(SELF_TEST_WORKFLOW_ID));
-      const [d1, selfTestObject] = await Promise.all([zlabStats(env), stub.evidenceStats()]);
-      return Response.json({ gitSha: env.GIT_SHA, d1, selfTestObject });
+      try {
+        const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(SELF_TEST_WORKFLOW_ID));
+        const [d1, selfTestObject] = await Promise.all([zlabStats(env), stub.evidenceStats()]);
+        return Response.json({ gitSha: env.GIT_SHA, d1, selfTestObject });
+      } catch (e) {
+        // A legible failure beats a bare 1101: say what broke (D1 DDL, the object, the key), never pretend "0 records".
+        return Response.json({ gitSha: env.GIT_SHA, error: String((e as Error).message ?? e) }, { status: 503 });
+      }
     }
     if (url.pathname === "/farm/self-test" && (request.method === "POST" || request.method === "GET")) {
       // Owner's request 2026-09-09: "chci vidět kontroly a i si je být schopen individuálně vyvolat" — an
