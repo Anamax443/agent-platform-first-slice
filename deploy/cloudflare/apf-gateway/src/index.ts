@@ -758,6 +758,21 @@ export class WorkflowInstance extends DurableObject<Env> {
     return rows;
   }
 
+  /**
+   * Operator's synchronous copy-out (M0 D-5): the same copyOut() the object schedules in the background, but awaited
+   * and reported — a failure inside a waitUntil() is invisible, this makes it a legible answer (found live 15. 9. 2026:
+   * the D1 mirror stayed empty while the object held verified records, and nothing said why).
+   */
+  async copyOutNow(): Promise<{ ok: true; evidencePending: number; evidenceUnmirroredAfter: number } | { ok: false; error: string; evidencePending: number }> {
+    const evidencePending = this.evidenceStore.unmirrored().length;
+    try {
+      await this.copyOut();
+      return { ok: true, evidencePending, evidenceUnmirroredAfter: this.evidenceStore.unmirrored().length };
+    } catch (e) {
+      return { ok: false, error: String((e as Error).stack ?? (e as Error).message ?? e), evidencePending };
+    }
+  }
+
   /** Žlab as held by THIS object (M0 D-5 live verification): counts per authority domain and how many records verify — never a value. */
   evidenceStats(): { records: number; verified: number; byDomain: Record<string, number> } {
     const ledger = this.wiring().evidence;
@@ -1501,6 +1516,12 @@ export default {
     // instance at /workflow/wf-selftest/purge if its artifact store grows.
     // Durable Žlab (M0 D-5 live verification): what the shared D1 copy holds and what the self-test object holds
     // locally — counts, domains, how many records verify under the platform key. Never a value, never a result.
+    // Operator's synchronous copy-out of the self-test object: the answer (or the error) instead of a silent waitUntil.
+    if (url.pathname === "/farm/zlab/mirror" && request.method === "POST") {
+      const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(SELF_TEST_WORKFLOW_ID));
+      const outcome = await stub.copyOutNow();
+      return Response.json({ gitSha: env.GIT_SHA, ...outcome }, { status: outcome.ok ? 200 : 503 });
+    }
     if (url.pathname === "/farm/zlab.json" && request.method === "GET") {
       try {
         const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(SELF_TEST_WORKFLOW_ID));
