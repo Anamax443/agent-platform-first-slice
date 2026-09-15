@@ -2,6 +2,18 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-15 (160) — M0 krůček 2 uzavřen (EntityHash), krůček 3 AuthorityGrant k uzavření (žádný kód)
+
+Vlastník: „ano" → **krůček 2 EntityHash UZAVŘEN** beze změn (`docs/M0-FACT-CONTRACT-V1.md` část B).
+Zapsán krůček 3: rozhodovací tabulka AuthorityGrant v části C — autorita = instalační grant
+`authorities.json` (nikdy kráva/runtime), klíč = `authorityDomain` místo jedné osy trustu, razítkuje
+`EvidenceWriter`, bez grantu = inferred, fakt mimo doménu = `AUTHORITY_SCOPE`, Dojička požaduje doménu
+(ne `producerId`), revokace podle **aktuálního** grantu + Lifecycle (zavírá R2), TTL = min(claim, grant)
+s výchozími hodnotami R6, lidské rozhodnutí = evidence `platform.review` / `tenant.human-review`,
+žádný samostatný `trustLevel` na evidenci, per-tenant připraveno prázdné, konflikt autorit → REVIEW.
+Tři adversarial příklady (AUTH-001/003/005). **Čeká na vlastníkovo „ano".** Pak krůček 4
+DurableFactStore, poslední před kódem. Žádný kód, brány beze změny.
+
 ## 2026-09-15 (159) — M0 krůček 1 uzavřen (R1 FactAddress), krůček 2 EntityHash k uzavření (žádný kód)
 
 Vlastník potvrdil obě úpravy tabulky FactAddress („udělej co je třeba") → **R1 UZAVŘENO** v

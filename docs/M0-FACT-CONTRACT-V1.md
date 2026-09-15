@@ -2,8 +2,8 @@
 
 **Stav: NÁVRH ke schválení vlastníkem. Žádný kód, žádná změna schémat, dokud není schváleno.**
 Postup po krůčcích (jedno rozhodnutí, jedno potvrzení): **krůček 1 FactAddress — UZAVŘENO 15. 9. 2026**
-(část A, R1) · krůček 2 EntityHash — k uzavření (část B, tabulka) · krůček 3 AuthorityGrant (C) ·
-krůček 4 DurableFactStore (D). Kód až po uzavření všech čtyř, v pořadí implementace D → C → A → B.
+(část A, R1) · **krůček 2 EntityHash — UZAVŘENO 15. 9. 2026** (část B) · krůček 3 AuthorityGrant —
+k uzavření (část C, tabulka; zavírá i R2 a R6) · krůček 4 DurableFactStore (D). Kód až po uzavření všech čtyř, v pořadí implementace D → C → A → B.
 Roadmapa: `SEVERKA.md ## Roadmapa M0–M8`. Vychází z Posudku 17 (`POSUDKY.md`, kola 4–5) a z dnešního
 kódu — každý datový tvar níže je navázaný na existující typ, ne vymyšlený od nuly.
 
@@ -166,7 +166,7 @@ vázaná na `key@entityId`, takže schválení L1 se nepřenese na L2 (viz B-adv
 
 ### Rozhodovací tabulka — EntityHash (krůček 2, 15. 9. 2026)
 
-Stav: **K UZAVŘENÍ — čeká na vlastníkovo „ano".** Stejný formát jako krůček 1: jen rozhodnutí, žádný kód.
+Stav: **UZAVŘENO 15. 9. 2026** — vlastník potvrdil beze změn. Další krůček: AuthorityGrant (část C).
 
 | Otázka | Rozhodnutí |
 |---|---|
@@ -253,6 +253,32 @@ vzor = policy granty ADR-016):
 - Dojička kontroluje doménu **a** že producer je v grantu **teď** (revokace — rozhodnutí R2 níže).
 - `FieldValue.trustLevel` zůstává jen jako platformou **odvozený** souhrn na faktu (`untrusted-derived` bez
   domény, `validated` s doménou, `human-corrected` = `tenant.human-review`); kráva smí nastavit jen nejnižší.
+
+### Rozhodovací tabulka — AuthorityGrant (krůček 3, 15. 9. 2026)
+
+Stav: **K UZAVŘENÍ — čeká na vlastníkovo potvrzení.** Zavírá zároveň R2 (revokace) a R6 (výchozí TTL).
+Jen rozhodnutí, žádný kód.
+
+| Otázka | Rozhodnutí |
+|---|---|
+| Kdo rozhoduje, že producent je autorita pro fakt? | **Instalace** (`config/<installation>/authorities.json`, vzor = policy granty ADR-016). Nikdy kráva, nikdy runtime. Změna = commit + nasazení. |
+| Co je klíčem autority? | **`authorityDomain`** — odpověď na „kdo smí tvrdit tento fakt": `cz.company.registry`, `cz.vat.registry`, `tenant.businessCentral`, `tenant.human-review`, `platform`. **Ne** jedna globální osa trustu: ARES je autorita pro název a stav firmy, ne pro `vendor.bcNumber`; BC naopak. |
+| Kdo razítkuje doménu na evidenci? | **`EvidenceWriter`** z grantu při konstrukci (wiring zná `producerId` → doménu). `EvidenceClaim` pole nemá, kráva ho nemůže dodat ani přes cast. |
+| Producent bez grantu? | Evidence **bez domény** = inferred. Nikdy „authoritative" ze sebeoznačení. |
+| Producent s grantem, ale fakt mimo `facts` domény? | `write()` odmítne **`AUTHORITY_SCOPE`**, nic se nezapíše (stejně jako `Router` odmítá scope mimo grant). |
+| Co požaduje Dojička? | **Doménu** (`requiredAuthority`), ne `producerId`. Výměna ARES adaptéru za jiný registr téže domény kontrakt nerozbije. `producerId` zůstává jen jako explicitní výjimka pro testy/diagnostiku. |
+| Revokace (R2)? | Dojička kontroluje **aktuální** grant a `LifecycleRegistry`, ne stav v době zápisu. Producent odebraný nebo v karanténě → finding `revoked` → REVIEW, i když podpis i lineage sedí. Fail-closed. |
+| TTL? | `expiresAt = min(claim.expiresAt, observedAt + maxEvidenceTtl domény)` — kráva může TTL jen **zkrátit**. `null` jen pro doménu `platform`. Výchozí hodnoty (R6): ARES `P30D`, VAT spolehlivost `P1D`, BC `P7D`, human `P365D` — čísla k ladění, ne dogma. |
+| Jak vstupuje lidské rozhodnutí do Žlabu? | Jako evidence `producerId: platform.review`, doména `tenant.human-review`, `parentRefs` → audit záznam `review-decision`, `result` = rozhodnutí. Tak vzniká „approved". |
+| Samostatný `trustLevel` na evidenci? | **Ne.** Doména ho subsumuje. `FieldValue.trustLevel` zůstává jako platformou **odvozený** souhrn na faktu; kráva smí nastavit jen nejnižší. |
+| Per-tenant přepsání domén? | Připraveno (`tenants: {}`), v M0 prázdné. Řeší se s druhým reálným tenantem. |
+| Dvě autority téže domény s rozporným výsledkem? | Existující finding `conflict` → REVIEW. Nikdy tichý výběr. |
+
+Tři adversarial příklady (stanou se testy AUTH-001 / AUTH-003 / AUTH-005):
+
+1. **Kráva tvrdí doménu v claimu**, i přes cast → strukturálně nemožné, `write()` čte jen šest pojmenovaných polí.
+2. **Kompromitovaná ARES kráva zapíše `supplier.vatId.verified`** → fakt mimo `facts` domény → `AUTHORITY_SCOPE`.
+3. **Producent odebraný z grantu po zápisu** → stará evidence stále podepsaná, Dojička přesto `revoked`.
 
 ### Invarianty
 
@@ -362,7 +388,7 @@ původního DO se ověří z lokální kopie · **ZLAB-DUR-007** podpis v2 s pre
 | # | Otázka | Doporučení |
 |---|---|---|
 | R1 | FactAddress + kontinuita id podle obsahu při re-extrakci — ano/ne? | **ano** — bez ní každé „přeléčení" zahodí všechna lidská rozhodnutí o řádcích. **UZAVŘENO 15. 9. 2026 (krůček 1): rozhodovací tabulka v části A, úpravy 1–2 potvrzeny vlastníkem.** |
-| R2 | Revokace: Dojička kontroluje grant **aktuální**, nebo **v době zápisu**? | **aktuální** (fail-closed) — producer odhalený jako kompromitovaný nesmí mít doživotní evidenci |
+| R2 | Revokace: Dojička kontroluje grant **aktuální**, nebo **v době zápisu**? | **aktuální** (fail-closed) — producer odhalený jako kompromitovaný nesmí mít doživotní evidenci. **Krůček 3 (15. 9.): součást tabulky v části C, k uzavření.** |
 | R3 | Retence evidence po purge případu | D1 kopie zůstává podle `retentionDays` instalace (hash IČO je pseudonym, ne hodnota); purge maže DO, ne D1 |
 | R4 | Domain separation + `schemaVersion: "2"` už v M0? | **ano** — tvar záznamu se stejně mění (doména), levné teď, drahé později |
 | R5 | `buildHash := gitSha` z nasazení místo Version Metadata bindingu | **ano** pro M0; binding ověřit v M1 |
