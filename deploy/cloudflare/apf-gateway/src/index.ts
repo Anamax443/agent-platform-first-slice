@@ -753,8 +753,15 @@ export class WorkflowInstance extends DurableObject<Env> {
       deadlineMs: 60_000,
       only,
     });
-    // cz.company.verify/cz.vat.verify fixtures seal real evidence into this object's Žlab (M0 D-5) — copy it out.
-    this.ctx.waitUntil(this.copyOut());
+    // cz.company.verify/cz.vat.verify fixtures seal real evidence into this object's Žlab (M0 D-5) — copy it out and
+    // WAIT for it: a waitUntil() after this RPC returns never finished (found live 15. 9. 2026, HANDOFF 166 — the
+    // object went idle with 12 verified records and an empty D1 mirror, and nothing said why). A mirror failure must
+    // not hide the self-test result either: it is logged and stays visible as `unmirrored` in evidenceStats().
+    try {
+      await this.copyOut();
+    } catch (e) {
+      console.error(`[zlab] copy-out after self-test failed: ${String((e as Error).message ?? e)}`);
+    }
     return rows;
   }
 
@@ -774,7 +781,7 @@ export class WorkflowInstance extends DurableObject<Env> {
   }
 
   /** Žlab as held by THIS object (M0 D-5 live verification): counts per authority domain and how many records verify — never a value. */
-  evidenceStats(): { records: number; verified: number; byDomain: Record<string, number> } {
+  evidenceStats(): { records: number; verified: number; unmirrored: number; byDomain: Record<string, number> } {
     const ledger = this.wiring().evidence;
     const byDomain: Record<string, number> = {};
     let records = 0;
@@ -787,7 +794,8 @@ export class WorkflowInstance extends DurableObject<Env> {
         byDomain[domain] = (byDomain[domain] ?? 0) + 1;
       }
     }
-    return { records, verified, byDomain };
+    // `unmirrored` > 0 for long means the D1 copy is behind the object — visible here, never silently "0 in D1".
+    return { records, verified, unmirrored: this.evidenceStore.unmirrored().length, byDomain };
   }
 
   view(): InstanceView | null {
