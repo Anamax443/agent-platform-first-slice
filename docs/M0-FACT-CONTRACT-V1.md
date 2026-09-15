@@ -1,10 +1,10 @@
 # M0 — Fact Contract v1: návrh (15. 9. 2026)
 
-**Stav: NÁVRH ke schválení vlastníkem. Žádný kód, žádná změna schémat, dokud není schváleno.**
-Postup po krůčcích (jedno rozhodnutí, jedno potvrzení): **krůček 1 FactAddress — UZAVŘENO 15. 9. 2026**
-(část A, R1) · **krůček 2 EntityHash — UZAVŘENO 15. 9. 2026** (část B) · **krůček 3 AuthorityGrant —
-UZAVŘENO 15. 9. 2026** (část C, R2 + R6) · krůček 4 DurableFactStore — k uzavření (část D, tabulka;
-zavírá R3, R4, R5 — poslední před kódem). Kód až po uzavření všech čtyř, v pořadí implementace D → C → A → B.
+**Stav: NÁVRH SCHVÁLEN vlastníkem 15. 9. 2026 — všechny čtyři krůčky uzavřeny (R1–R7 rozhodnuto).
+Implementace v pořadí D → C → A → B, každá část po malých commitech s vlastními Test ID; D navíc live
+verification.** Postup po krůčcích: **krůček 1 FactAddress — UZAVŘENO** (část A, R1) · **krůček 2
+EntityHash — UZAVŘENO** (část B) · **krůček 3 AuthorityGrant — UZAVŘENO** (část C, R2 + R6) · **krůček 4
+DurableFactStore — UZAVŘENO** (část D, R3 + R4 + R5). Kód až po uzavření všech čtyř, v pořadí implementace D → C → A → B.
 Roadmapa: `SEVERKA.md ## Roadmapa M0–M8`. Vychází z Posudku 17 (`POSUDKY.md`, kola 4–5) a z dnešního
 kódu — každý datový tvar níže je navázaný na existující typ, ne vymyšlený od nuly.
 
@@ -349,8 +349,11 @@ D1 (sdílené, per instalace), insert-only:
 
 ### Rozhodovací tabulka — DurableFactStore (krůček 4, 15. 9. 2026)
 
-Stav: **K UZAVŘENÍ — poslední krůček před kódem.** Zavírá zároveň R3 (retence), R4 (podpis v2) a R5
-(`buildHash`). Jen rozhodnutí, žádný kód.
+Stav: **UZAVŘENO 15. 9. 2026** — vlastník potvrdil beze změn; R3 (retence), R4 (podpis v2) a R5
+(`buildHash`) tím uzavřeny. Implementace D začíná: (D-1) tvar záznamu v2 + podpis s prefixem +
+`authorityDomain` pole → (D-2) storage backend `SqliteEvidenceStore` v DO → (D-3) D1 zrcadlo + lookup
+referencí → (D-4) import s lineage → (D-5) živé zapojení `EvidenceWriter` pro `cz.*`, `buildHash = gitSha`,
+`/farm`, live verification.
 
 | Otázka | Rozhodnutí |
 |---|---|
@@ -418,9 +421,9 @@ původního DO se ověří z lokální kopie · **ZLAB-DUR-007** podpis v2 s pre
 |---|---|---|
 | R1 | FactAddress + kontinuita id podle obsahu při re-extrakci — ano/ne? | **ano** — bez ní každé „přeléčení" zahodí všechna lidská rozhodnutí o řádcích. **UZAVŘENO 15. 9. 2026 (krůček 1): rozhodovací tabulka v části A, úpravy 1–2 potvrzeny vlastníkem.** |
 | R2 | Revokace: Dojička kontroluje grant **aktuální**, nebo **v době zápisu**? | **aktuální** (fail-closed) — producer odhalený jako kompromitovaný nesmí mít doživotní evidenci. **UZAVŘENO 15. 9. 2026 (krůček 3).** |
-| R3 | Retence evidence po purge případu | D1 kopie zůstává podle `retentionDays` instalace (hash IČO je pseudonym, ne hodnota); purge maže DO, ne D1. **Krůček 4 (15. 9.): v tabulce části D, k uzavření.** |
-| R4 | Domain separation + `schemaVersion: "2"` už v M0? | **ano** — tvar záznamu se stejně mění (doména), levné teď, drahé později. **Krůček 4: k uzavření.** |
-| R5 | `buildHash := gitSha` z nasazení místo Version Metadata bindingu | **ano** pro M0; binding ověřit v M1. **Krůček 4: k uzavření.** |
+| R3 | Retence evidence po purge případu | D1 kopie zůstává podle `retentionDays` instalace (hash IČO je pseudonym, ne hodnota); purge maže DO, ne D1. **UZAVŘENO 15. 9. 2026 (krůček 4).** |
+| R4 | Domain separation + `schemaVersion: "2"` už v M0? | **ano** — tvar záznamu se stejně mění (doména), levné teď, drahé později. **UZAVŘENO 15. 9. 2026 (krůček 4).** |
+| R5 | `buildHash := gitSha` z nasazení místo Version Metadata bindingu | **ano** pro M0; binding ověřit v M1. **UZAVŘENO 15. 9. 2026 (krůček 4).** |
 | R6 | Výchozí TTL per doména | ARES `P30D`, VAT spolehlivost `P1D` (mění se denně), BC `P7D`, human `P365D` — čísla k ladění, ne dogma. **UZAVŘENO 15. 9. 2026 (krůček 3) jako výchozí hodnoty k ladění.** |
 | R7 | Rozšíření slovníku (`entities[]`, `scope`, `identityFields`) jako aditivní změna v `"1"`, nebo `"2"`? | **`"1"` aditivně** — dnešní soubory zůstávají platné, `FactCatalog.build()` validuje nová pole |
 
