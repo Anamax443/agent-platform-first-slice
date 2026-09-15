@@ -57,6 +57,8 @@ import { COW_WORKSHOP, describeModels, gatewayCatalog, modelAdapterFor, wirePlat
 import { runSelfTest, requiredTestsFor, selfTestCapabilityForTick, SELF_TEST_CAPABILITIES, SELF_TEST_WORKFLOW_ID } from "./self-test.js";
 import { newSession, sendMessage, type WorkshopSession } from "./workshop.js";
 import { D1_AUDIT_DDL, D1_EVIDENCE_DDL, d1Sql, DDL, evidenceMirrorOf, evidenceStoreOf, SqliteArtifacts, SqliteAudit, SqliteJournal, SqliteReviewTaskStore } from "./store.js";
+import { createPrivateKey, createPublicKey } from "node:crypto";
+import { verifyEvidence, type Evidence } from "../../../../src/platform/evidence.js";
 import { mirrorEvidence } from "../../../../src/platform/evidence-mirror.js";
 import type { SqliteEvidenceStore } from "../../../../src/platform/evidence-sqlite.js";
 import type { ZlabStats } from "./page.js";
@@ -1534,6 +1536,19 @@ export default {
       try {
         const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(SELF_TEST_WORKFLOW_ID));
         const [d1, selfTestObject] = await Promise.all([zlabStats(env), stub.evidenceStats()]);
+        // ?verify=1: re-verify every row of the D1 copy with the platform's PUBLIC key only (M0 D3 — a row proves
+        // nothing, the signature does). Edit one row in D1 and it shows up here by id with the reason; nothing else does.
+        if (url.searchParams.get("verify") === "1") {
+          if (!env.GATEWAY_SIGNING_KEY) return Response.json({ gitSha: env.GIT_SHA, d1, selfTestObject, error: "GATEWAY_SIGNING_KEY missing — cannot derive the public key" }, { status: 503 });
+          const trusted = { keyId: env.SIGNING_KEY_ID, publicKey: createPublicKey(createPrivateKey(env.GATEWAY_SIGNING_KEY)) };
+          const rows = await d1Sql(env.AUDIT).all("SELECT record_id, json FROM evidence_mirror ORDER BY observed_at LIMIT 1000");
+          const invalid: { recordId: string; reason: string }[] = [];
+          for (const row of rows) {
+            const check = verifyEvidence(JSON.parse(row.json as string) as Evidence, trusted);
+            if (!check.ok) invalid.push({ recordId: String(row.record_id), reason: check.reason });
+          }
+          return Response.json({ gitSha: env.GIT_SHA, d1: { ...d1, checked: rows.length, verified: rows.length - invalid.length, invalid }, selfTestObject });
+        }
         return Response.json({ gitSha: env.GIT_SHA, d1, selfTestObject });
       } catch (e) {
         // A legible failure beats a bare 1101: say what broke (D1 DDL, the object, the key), never pretend "0 records".

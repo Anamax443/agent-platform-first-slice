@@ -1362,7 +1362,7 @@ ${[...byCapability.entries()].map(([cap, rs]) => capabilitySection(cap, rs)).joi
     .join("");
   return shell(
     "Self-test kravičky",
-    `<div class="doc"><header><h1>Self-test kravičky</h1><small class="dim">${ran.length - failed.length}/${ran.length} fixtures prošlo (${rows.length - ran.length} přeskočeno — vyžadují adapter chaos mode, jen Node testy)</small></header>${sections}<nav><a href="/farm#staj">Zpět na Stáj</a></nav></div>`,
+    `<div class="doc"><header><h1>Self-test kravičky</h1><small class="dim">${ran.length - failed.length}/${ran.length} fixtures prošlo (${rows.length - ran.length} přeskočeno — vyžadují adapter chaos mode, jen Node testy)</small></header>${sections}<nav><a href="/farm">Zpět na farmu</a></nav></div>`,
   );
 }
 

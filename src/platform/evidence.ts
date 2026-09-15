@@ -87,6 +87,26 @@ export const EVIDENCE_SIGNATURE_DOMAIN = `EVIDENCE:v${EVIDENCE_SCHEMA_VERSION}:`
 export const evidenceSignedBytes = (recordHash: string) => utf8Bytes(EVIDENCE_SIGNATURE_DOMAIN + recordHash);
 
 /**
+ * Verification needs only the platform's PUBLIC key (M0 část D, D3: trust comes from the signature, never from the
+ * row). Standalone so any reader of a copy — the D1 mirror check on /farm, a future auditor with just the public
+ * key — can prove a record is exactly what the platform sealed without ever holding the private key. Order of
+ * checks: schema version (a v1 record is refused, never silently accepted), content hash (any edited field), key id,
+ * signature over the domain-separated hash (a hash-only forgery by someone who could edit storage but never held
+ * the private key).
+ */
+export function verifyEvidence(record: Evidence, trusted: { keyId: string; publicKey: KeyObject }): EvidenceVerification {
+  const { recordHash, keyId, platformSignature, ...rest } = record;
+  if (rest.schemaVersion !== EVIDENCE_SCHEMA_VERSION) {
+    return { ok: false, reason: `unsupported evidence schemaVersion ${JSON.stringify(rest.schemaVersion)} — only v${EVIDENCE_SCHEMA_VERSION} records are accepted (older records are refused, never silently accepted)` };
+  }
+  const expectedHash = sha256(canonicalize(rest));
+  if (expectedHash !== recordHash) return { ok: false, reason: "recordHash does not match record content — record was altered after sealing" };
+  if (keyId !== trusted.keyId) return { ok: false, reason: `signed by unknown key ${keyId}, trusted key is ${trusted.keyId}` };
+  const sigOk = verify(null, evidenceSignedBytes(recordHash), trusted.publicKey, fromBase64Url(platformSignature));
+  return sigOk ? { ok: true } : { ok: false, reason: "platformSignature does not match recordHash — forged or corrupted" };
+}
+
+/**
  * Storage behind the ledger (docs/M0-FACT-CONTRACT-V1.md část D). Deliberately three read/write calls and nothing
  * else: no update, no delete — the store's surface is as append-only as the ledger's. The ledger seals (hash + sign)
  * before `put()`, so a store never sees an unsigned record, and it verifies after `get()`, so a store is never trusted
@@ -182,15 +202,7 @@ export class EvidenceLedger {
    * `signing.privateKey`.
    */
   verify(record: Evidence): EvidenceVerification {
-    const { recordHash, keyId, platformSignature, ...rest } = record;
-    if (rest.schemaVersion !== EVIDENCE_SCHEMA_VERSION) {
-      return { ok: false, reason: `unsupported evidence schemaVersion ${JSON.stringify(rest.schemaVersion)} — this ledger accepts only v${EVIDENCE_SCHEMA_VERSION} records (older records are refused, never silently accepted)` };
-    }
-    const expectedHash = sha256(canonicalize(rest));
-    if (expectedHash !== recordHash) return { ok: false, reason: "recordHash does not match record content — record was altered after sealing" };
-    if (keyId !== this.signing.keyId) return { ok: false, reason: `signed by unknown key ${keyId}, this ledger trusts ${this.signing.keyId}` };
-    const sigOk = verify(null, evidenceSignedBytes(recordHash), this.signing.publicKey, fromBase64Url(platformSignature));
-    return sigOk ? { ok: true } : { ok: false, reason: "platformSignature does not match recordHash — forged or corrupted" };
+    return verifyEvidence(record, this.signing);
   }
 
   /**

@@ -4,7 +4,7 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { FakeClock } from "../src/platform/clock.js";
-import { EvidenceLedger, type Evidence, type EvidenceCandidate } from "../src/platform/evidence.js";
+import { EvidenceLedger, verifyEvidence, type Evidence, type EvidenceCandidate } from "../src/platform/evidence.js";
 import { EVIDENCE_MIRROR_DDL, mirrorEvidence, SQLITE_MIRROR_STATEMENTS, SqliteEvidenceMirror } from "../src/platform/evidence-mirror.js";
 import { EVIDENCE_DDL, SqliteEvidenceStore } from "../src/platform/evidence-sqlite.js";
 import { generateKeyPair } from "../src/platform/signing.js";
@@ -42,7 +42,7 @@ async function farm() {
   const d1 = openAsyncSql(join(dir, "d1.sqlite"));
   for (const s of EVIDENCE_MIRROR_DDL) await d1.sql.run(s);
   const mirror = new SqliteEvidenceMirror(d1.sql);
-  return { store, ledger, mirror, d1, close: () => (object.close(), d1.close()) };
+  return { store, ledger, mirror, d1, publicKey: keyPair.publicKey, close: () => (object.close(), d1.close()) };
 }
 
 describe("ZLAB-DUR-004 the mirror is a copy, never trusted storage — the signature is", () => {
@@ -93,6 +93,21 @@ describe("ZLAB-DUR-004 the mirror is a copy, never trusted storage — the signa
     const forged = forger.append(candidate({ result: "CEASED" }));
     await f.mirror.insert(forged);
     expect(f.ledger.verify((await f.mirror.get(forged.recordId)) as Evidence).ok).toBe(false);
+    f.close();
+  });
+
+  it("a reader holding only the platform's PUBLIC key tells the one edited D1 row from all the others, by id", async () => {
+    const f = await farm();
+    const keep = f.ledger.append(candidate());
+    const edited = f.ledger.append(candidate({ inputField: "supplier.vatId", inputValueHash: "sha256-of-dic" }));
+    await mirrorEvidence(f.store, f.mirror);
+    f.d1.raw.prepare("UPDATE evidence_mirror SET json = json_set(json, '$.result', 'CEASED') WHERE record_id = ?").run(edited.recordId);
+    const publicOnly = { keyId: "platform-k1", publicKey: f.publicKey }; // no private key anywhere here
+    const rows = await f.d1.sql.all("SELECT record_id, json FROM evidence_mirror ORDER BY observed_at");
+    const invalid = rows.filter((r) => !verifyEvidence(JSON.parse(r.json as string) as Evidence, publicOnly).ok).map((r) => r.record_id);
+    expect(rows).toHaveLength(2);
+    expect(invalid).toEqual([edited.recordId]);
+    expect(verifyEvidence(JSON.parse((rows.find((r) => r.record_id === keep.recordId) as { json: string }).json) as Evidence, publicOnly)).toEqual({ ok: true });
     f.close();
   });
 
