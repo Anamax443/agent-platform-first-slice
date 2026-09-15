@@ -2,6 +2,22 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-15 (159) — M0 krůček 1 uzavřen (R1 FactAddress), krůček 2 EntityHash k uzavření (žádný kód)
+
+Vlastník potvrdil obě úpravy tabulky FactAddress („udělej co je třeba") → **R1 UZAVŘENO** v
+`docs/M0-FACT-CONTRACT-V1.md` (část A, řádek R1, hlavička dokumentu s postupem po krůčcích). Zapsán
+krůček 2: rozhodovací tabulka EntityHash v části B — hash jen z `identityFields` (odvozené fakty ne),
+počítá platforma, uložen jako snapshot v Žlabu (`platform.entity`, `OBSERVED`), evidence entity se váže
+přes `parentRefs`/`parentHashes` → dnešní `verifyLineage()` beze změny, normalizaci dělá kráva ve F2
+(žádná fuzzy shoda), identické řádky = stejný hash + různá id, `entityHash` není cross-case identita.
+Tři adversarial příklady (přeuspořádání polí, změna odvozeného pole, změna částky po schválení).
+**Čeká na vlastníkovo „ano".** Pak krůček 3 AuthorityGrant. Žádný kód, brány beze změny.
+
+**Pravidlo vlastníka pro M1 (řečeno 15. 9. 2026, zapsáno do SEVERKA řádku M1):** primární AI vždy
+bezplatná od Cloudflare; Haiku nebo jiný levný LLM jen jako eskalace, když výsledek nestačí, a tak dál
+po žebříku. Dnešní stav tomu odpovídá (default `llama-8b`, Claude jen na volbu per dokument); chybí
+automatická eskalace na měřitelný signál a viditelný návrat na free při selhání placeného (157).
+
 ## 2026-09-15 (158) — Krok 2 živě: klíč z organizace s kreditem, první skutečný běh Claude na farmě prošel
 
 **Co se stalo:** po (157) vlastník nahrál nový `ANTHROPIC_API_KEY`. První pokus vrátil `401

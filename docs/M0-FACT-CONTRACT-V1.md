@@ -1,6 +1,9 @@
 # M0 — Fact Contract v1: návrh (15. 9. 2026)
 
 **Stav: NÁVRH ke schválení vlastníkem. Žádný kód, žádná změna schémat, dokud není schváleno.**
+Postup po krůčcích (jedno rozhodnutí, jedno potvrzení): **krůček 1 FactAddress — UZAVŘENO 15. 9. 2026**
+(část A, R1) · krůček 2 EntityHash — k uzavření (část B, tabulka) · krůček 3 AuthorityGrant (C) ·
+krůček 4 DurableFactStore (D). Kód až po uzavření všech čtyř, v pořadí implementace D → C → A → B.
 Roadmapa: `SEVERKA.md ## Roadmapa M0–M8`. Vychází z Posudku 17 (`POSUDKY.md`, kola 4–5) a z dnešního
 kódu — každý datový tvar níže je navázaný na existující typ, ne vymyšlený od nuly.
 
@@ -71,8 +74,8 @@ chybějící fakty per `entityId`, ne `invoice.lines[]`.
 
 Návrh reviewera (Posudek 17, kolo 6): projít M0 po malých auditovatelných rozhodnutích, první =
 uzavřít, co přesně je adresa jednoho faktu. Tabulka převzata; asistent doplnil tři řádky a dvě úpravy.
-Stav: **K UZAVŘENÍ — čeká na vlastníkovo potvrzení úprav 1 a 2.** Po uzavření je R1 zavřené a další
-krůček je jen canonical entity hash (část B), nic jiného.
+Stav: **UZAVŘENO 15. 9. 2026** — vlastník potvrdil obě úpravy. Další krůček je jen canonical entity hash
+(část B, rozhodovací tabulka níže), nic jiného.
 
 | Otázka | Rozhodnutí |
 |---|---|
@@ -160,6 +163,30 @@ dostane nové id; stará entita bez protějšku je `SUPERSEDED` (append-only zá
 evidence pro nezměněné řádky přežije re-extrakci, evidence pro změněné řádky správně osiří. Přeuspořádání
 nemá vliv (hash, ne pozice). Dva obsahově identické řádky = dvě entity, dvě id, stejný hash — evidence je
 vázaná na `key@entityId`, takže schválení L1 se nepřenese na L2 (viz B-adv-3).
+
+### Rozhodovací tabulka — EntityHash (krůček 2, 15. 9. 2026)
+
+Stav: **K UZAVŘENÍ — čeká na vlastníkovo „ano".** Stejný formát jako krůček 1: jen rozhodnutí, žádný kód.
+
+| Otázka | Rozhodnutí |
+|---|---|
+| Z čeho se `entityHash` počítá? | **Jen z `identityFields`** entity deklarovaných ve slovníku (zdrojová pole z dokumentu), přes `canonicalize()` + `sha256()`. Pořadí polí nehraje roli. |
+| Vstupují odvozené fakty (účet, dimenze, `bcNumber`)? | **Ne.** Jinak by vyřešení účtu změnilo hash a zneplatnilo evidenci, která ho vyrobila. |
+| Kdo hash počítá? | **Platforma** při uložení výstupu krávy. Kráva nikdy; hodnota od krávy se ignoruje. |
+| Kde je hash uložen? | Jako **platformní snapshot v Žlabu**: `producerId: platform.entity`, `inputField: <type>@<entityId>`, `inputValueHash = entityHash`, `result: OBSERVED`. Append-only, podepsaný jako každá evidence. |
+| Jak se na entitu váže evidence o ní? | `parentRefs` → snapshot, `parentHashes` → jeho `recordHash`. Lineage ověřuje **dnešní `verifyLineage()` beze změny**; vazbu na aktuální obsah kontroluje Dojička jako dnes `fieldHashes` (`not_bound`). |
+| Co znamená změna `identityField`? | Nový hash = **nová entita** (podle R1), stará `SUPERSEDED` + `supersededBy`. Evidence staré entity je pro novou `not_bound`. |
+| Normalizace hodnot (`15 000` vs `15000.00`)? | **Normalizuje kráva** ve strukturální kontrole (F2) před výstupem; hash bere už kanonickou hodnotu. Dvě různé normalizace = dvě entity, záměrně fail-closed, žádná fuzzy shoda. |
+| Dva obsahově identické řádky? | **Stejný hash, různá id.** Evidence je per `key@entityId` (R1). |
+| Je `entityHash` identita napříč případy? | **Ne.** Je to vazba evidence uvnitř případu. Cross-case reuse jde přes hash hodnoty pole (`inputValueHash`, část D), ne přes `entityHash`. |
+
+Tři adversarial příklady (stanou se testy ENT-001 / ENT-003 / KONEV-009 rozšíření):
+
+1. **Kráva přeuspořádá pole ve výstupu řádku** → stejný hash, nic se nemění.
+2. **Kráva změní odvozené pole** (účet), aby vynutila nové řešení → hash beze změny, evidence zdrojových
+   faktů i lidské rozhodnutí platí dál.
+3. **Někdo změní částku řádku po schválení** → hash nesedí → Konev odmítne
+   (`BUSINESS_OBJECT_CHANGED_AFTER_AGGREGATION`), review task vázaný na hash Konve je neplatný (M6).
 
 ### Invarianty
 
@@ -334,7 +361,7 @@ původního DO se ověří z lokální kopie · **ZLAB-DUR-007** podpis v2 s pre
 
 | # | Otázka | Doporučení |
 |---|---|---|
-| R1 | FactAddress + kontinuita id podle obsahu při re-extrakci — ano/ne? | **ano** — bez ní každé „přeléčení" zahodí všechna lidská rozhodnutí o řádcích. **Krůček 1 (15. 9.): rozhodovací tabulka v části A, k uzavření po potvrzení úprav 1–2.** |
+| R1 | FactAddress + kontinuita id podle obsahu při re-extrakci — ano/ne? | **ano** — bez ní každé „přeléčení" zahodí všechna lidská rozhodnutí o řádcích. **UZAVŘENO 15. 9. 2026 (krůček 1): rozhodovací tabulka v části A, úpravy 1–2 potvrzeny vlastníkem.** |
 | R2 | Revokace: Dojička kontroluje grant **aktuální**, nebo **v době zápisu**? | **aktuální** (fail-closed) — producer odhalený jako kompromitovaný nesmí mít doživotní evidenci |
 | R3 | Retence evidence po purge případu | D1 kopie zůstává podle `retentionDays` instalace (hash IČO je pseudonym, ne hodnota); purge maže DO, ne D1 |
 | R4 | Domain separation + `schemaVersion: "2"` už v M0? | **ano** — tvar záznamu se stejně mění (doména), levné teď, drahé později |
