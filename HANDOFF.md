@@ -2,6 +2,75 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-15 (154) — Slovník faktů + deterministický `plan()`: katalog reprodukuje dnešní workflow, Farmář nikdy nevidí hodnoty (Posudek 17)
+
+**Podnět:** externí review ve čtyřech kolech (vlastník přinesl; `docs/POSUDKY.md` Posudek 17): (1) Claude
+credential / Model Gateway / Cost Guard, (2) „Farmář nemá mapovat JSONy — Case Fact Store, kontrakt
+požadavků, consumes/produces, deterministický Scheduler", (3) potvrzení asistentova ověření a zpřesnění
+(`ExecutionPlan` → compile → `WorkflowDef`, žádný runtime replanning, FACT/EVIDENCE/ARTIFACT/EFFECT),
+(4) „kráva je schopnost, ne krok", potvrzení dispozic (trust nesmí být self-asserted; readiness není
+capability) a dvě nová návrhová rozhodnutí. Každé tvrzení ověřeno v kódu; většina části 2 už existuje
+jako Žlab/Dojička/Konev/Mlékárna. Skutečně nové: sdílený slovník faktů, `consumes`/`produces` u krav,
+deterministické skládání. Postaven přesně ten „důkaz skládání", na kterém se všechny strany shodly — ne
+runtime Scheduler. Vlastník: „klidně můžeme i diskutovat, není nutno hned psát kód" — kód vznikl jako
+důkaz teze, commit až po výslovném souhlasu (kolo 4: „HANDOFF 154 bych commitnul").
+
+**Ověřeno živě před prací:** `/version` na `apf.maxferit.cz` = `gitSha c3bda0c` (#153 nenasazeno),
+Claude modely `secret for cred:anthropic not provided` — mechanismus (`cred:anthropic` →
+`ANTHROPIC_API_KEY`, `apf-gateway/src/index.ts:97`, `docs/BUILD.md:45`) existuje, klíč nikdy nebyl
+nastaven. Posudkova příčina („`.env.example` nemá místo") je špatně, důsledek platí. Vlastníkův krok,
+ne kód: `npx wrangler secret put ANTHROPIC_API_KEY -c .wrangler/generated/farm-bass443/apf-gateway/wrangler.jsonc`
+a `node scripts/farm-deploy.mjs farm-bass443`.
+
+**Změny:**
+- `contracts/facts.v1.json` — 23 klíčů (`kind` fact/artifact/evidence/effect, `authority` source/derived,
+  evidence `for` + `resultVocabulary` ACTIVE/CEASED/NOT_FOUND resp. ANO/NE/NENALEZEN — ze `seal()` volání
+  v handlerech, ne vymyšleno). Záměrně obsahuje i klíče bez producenta (`supplier.vatId`,
+  `vendor.bcNumber`) — jmenný prostor říká, co fakt znamená, ne kdo ho umí.
+- `src/components/*/facts.json` × 8 — sidecar (descriptor zmrazený), skupiny artifacts/facts/evidence
+  (consumes) + effects (produces). Jen to, co handler skutečně dělá: `invoice.extract` nedeklaruje
+  `supplier.vatId`; `email.send` konzumuje `document.type` + `document.stamped` (zrcadlí šablonu
+  `document-stamped`, jiné šablony si deklarují své, až budou).
+- `src/platform/fact-catalog.ts` — `FactCatalog.build(namespace, sidecars)` fail-closed, 13 kódů chyb
+  (DUPLICATE_KEY, UNKNOWN_KEY, KIND_MISMATCH, EVIDENCE_TARGET, EMPTY_PRODUCES, SELF_PRODUCE,
+  UNKNOWN_FIELD…). `producersOf()` v pevném pořadí podle jména. Bez node importů (ARCH-DEP-001).
+- `src/platform/planner.ts` — `plan({goal, available}, catalog)`: backward chaining se snapshot/rollback
+  při slepé uličce, `CYCLE` fail-closed, `CAPABILITY_GAP` s `NO_PRODUCER`/`UNSATISFIABLE` + `tried`,
+  pořadí Kahn s tie-breakem podle jména (nezávislé na pořadí skupin v JSON). Výstup = jen jména capabilit
+  a klíče. Žádné retry/role/deadline — to je compile krok, záměrně nepostaven.
+- `tests/harness/facts.ts`, `tests/facts.test.ts` (FACT-001..004, 18 testů), `tests/plan.test.ts`
+  (PLAN-001..006, 16 testů). Negativní případy nad syntetickým mini-namespace, ať každé pravidlo
+  prokazatelně kouše, ne jen projde na dnešních souborech.
+- `docs/POSUDKY.md` Posudek 17 (4 kola, dispozice), `docs/SEVERKA.md` (řádek Planner, nová
+  `### Slovník faktů a deterministické skládání` včetně dvou otevřených návrhových rozhodnutí,
+  `### COW technický pas`, `## Pořadí`).
+
+**Výsledky, které stojí za zápis:**
+- PLAN-001/002: `plan()` reprodukuje **přesně** `document-intake` v1/v2 (classify → validate → stamp) a
+  `mail-intake` v1/v2 (ingest → classify → validate → stamp → notify). Tvrdá brána myšlenky splněna.
+- PLAN-006: bez validátoru v katalogu je `document.stamped` `CAPABILITY_GAP` — stamp se nikdy nenaplánuje
+  nad neověřeným typem; `document.type` k dispozici validaci nepřeskočí (evidence hlídá zápis, ne fakt).
+- Planner našel dva reálné gapy sám: `supplier.vatId.verified` je z dokumentu nedosažitelné
+  (`cz.vat.verify` je od (152) živě zapojený, ale nemá kdo ho krmit — `invoice.extract` v1 DIČ nemá);
+  `vendor.bcNumber` bez producenta (`bc.vendors`, SEVERKA Pořadí 7).
+- PLAN-005: každý list výstupu je klíč, jméno capability/modulu nebo stavový token; hodnota v `available`
+  je `INVALID`, ne data.
+
+**Vědomě NE:** runtime Scheduler, compile `plan → WorkflowDef`, AI Planner, GUI, runtime replanning.
+`npm run arch` nerozšířen — jediná implementace validace je `FactCatalog.build()` v TS, gate = `npm test`
+(FACT-004), ne druhá kopie v JS. Z části 1 posudku zůstává na vlastníkovi: nastavit `ANTHROPIC_API_KEY`
++ `farm-deploy`; Model Gateway (sjednotit `modelTable()` cestu s `CredentialResolver`), `response.usage`
+do auditu.
+
+**Otevřeno dál (kolo 4, jen zapsáno v SEVERKA, žádný kód):** identita entit v kolekcích (`invoice.line`
+— entityId mimo klíč, evidence na hash obsahu, `forEach` krok jako bounded loop) a authority domain
+evidence (`authorities` grant v instalaci, `EvidenceWriter` razítkuje doménu, Dojička požaduje doménu
+místo `producerId`). Obě před `bc.vendors` a jakoukoli položkovou krávou. Plus pět otázek + naming test
+do promptu Kravské dílny.
+
+**Brány zelené:** typecheck, arch, **476/476 testů** (+34), farm:check (obě instalace). Nenasazeno —
+nic runtime se nezměnilo; farma dál běží `c3bda0c`.
+
 ## 2026-09-15 (153) — Kravská dílna: "Erwin" vytažen z kódu do `installation.profile.assistant.displayName`
 
 **Podnět:** externí recenze merge `524a5e1` (vlastník ji přinesl z GitHubu) — `workshop.ts`'s

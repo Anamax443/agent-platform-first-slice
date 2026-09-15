@@ -1,0 +1,14 @@
+{
+  "$comment": "Fact-flow sidecar (Posudek 17): which namespace keys (contracts/facts.v1.json) this module's capabilities consume and produce. A sidecar on purpose — module-descriptor.v1.schema.json is frozen. Keys only, never values; capability set must equal descriptor.json (FACT-004).",
+  "module": "document-executor-host",
+  "capabilities": {
+    "document.stamp": {
+      "consumes": { "artifacts": ["document.original"], "facts": ["document.type"], "evidence": ["document.type.validated"] },
+      "produces": { "artifacts": ["document.stamped"], "effects": ["dms.document.stored"] }
+    },
+    "document.archive": {
+      "consumes": { "artifacts": ["document.original"] },
+      "produces": { "effects": ["archive.document.stored"] }
+    }
+  }
+}

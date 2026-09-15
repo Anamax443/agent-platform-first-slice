@@ -1,0 +1,10 @@
+{
+  "$comment": "Fact-flow sidecar (Posudek 17): which namespace keys (contracts/facts.v1.json) this module's capabilities consume and produce. A sidecar on purpose — module-descriptor.v1.schema.json is frozen. Keys only, never values; capability set must equal descriptor.json (FACT-004).",
+  "module": "cz-company-verify",
+  "capabilities": {
+    "cz.company.verify": {
+      "consumes": { "facts": ["supplier.companyId"] },
+      "produces": { "evidence": ["supplier.companyId.verified"], "facts": ["supplier.officialName"] }
+    }
+  }
+}

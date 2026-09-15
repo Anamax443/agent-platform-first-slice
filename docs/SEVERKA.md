@@ -29,7 +29,7 @@ se přepisuje orchestrátor.
 |---|---|---|---|
 | **Agent Registry** | **oba kroky hotové (9. 9. 2026):** `src/platform/registry.ts` (`capabilityNamesOf()`, `catalogEntry()`, `catalogOf()`) + `Router.catalog()` — `platform-wiring.ts`'s dřív ručně duplikovaná pole (`GATEWAY_CAPABILITIES`/`DOCUMENT_HOST_CAPABILITIES`/`EMAIL_EXECUTOR_CAPABILITIES`) odvozená přímo z `descriptor.json`; `GET /capabilities` teď na všech třech providerech (`apf-gateway`/`apf-document-host`/`apf-email-executor`) — descriptor's vlastní deklarovaný `endpoints.capabilities`, dřív nikde neimplementovaný (`tests/reg.test.ts`, REG-001..005). Chybí: napojení do `/farm`'s Kravičky panelu (dnes pořád čte `/version`'s prostý seznam, ne bohatý `/capabilities` katalog), health/cena/`lifecycleStatus` pole (vyžaduje rozšíření zmrazeného `module-descriptor.v1.schema.json`, mimo proces) | formalizace toho, co už komponenty nesou v `descriptor.json` (capabilities, vstup/výstup schema) + health/verze/cena | nízké — je to datová nadstavba nad existujícím vzorem |
 | **Admission Gate (module lifecycle)** | **první krok hotový (9. 9. 2026), block-list → mandatorní allow-list (10. 9. 2026)** — `LifecycleRegistry` (`src/platform/lifecycle.ts`), `Router` ho vynucuje před `checkGrant()` (`MODULE_QUARANTINED`), **povinný** `config/<installation>/lifecycle.json` (`farm-bass443`/`local-fakes` mají explicitní `ACTIVE` pro všech 5 modulů), zapojeno na **všech** Routerech farmy (`apf-document-host`, `apf-email-executor`, gateway in-process pro classify/validate/mail.ingest — `apf-mail-ingest` vlastní Router nemá) (`docs/POSUDKY.md` Posudek 7, rozhovor o "koupi nových krav" 9. 9. 2026; externí oponentura 10. 9. 2026 označila `unknown → ACTIVE` za P0) | chybějící záznam v allow-listu = `QUARANTINED` (SEC-LCY-003), stejně jako explicitní karanténa — pořád jen dva stavy (`ACTIVE`/`QUARANTINED`), žádný automatický verification runner před prvním přidáním | nízké dnes (ruční, ale fail-closed). Zbývá: `NEW`/`TESTING`/`DEGRADED` stavy, automatický verification runner nad `verificationProfiles` z `module-descriptor.v1.schema.json` (ten už dnes deklaruje `riskClass`→`isolationClass` pravidla a `buildCommit`, jen je nic nevynucuje běhu), auto-quarantine na živém selhání |
-| **Planner** | chybí | z požadavku (přirozený jazyk) sestaví plán z dostupných capabilities | **vysoké, pokud plán rovnou vykonává.** Musí místo toho **vyprodukovat `WorkflowDef`**, který projde stejnou fail-closed bránou (schema, Policy Engine, Human Review) jako dnešní ručně psaný workflow — generátor vstupu do přísného pipeline, ne nová cesta kolem něj |
+| **Planner** | **deterministický základ hotov 15. 9. 2026 (Posudek 17, HANDOFF 154):** `contracts/facts.v1.json` (sémantický slovník faktů), `src/components/*/facts.json` (`consumes`/`produces` sidecar), `src/platform/fact-catalog.ts` + `src/platform/planner.ts` (`plan({goal, available}) → PLANNED \| CAPABILITY_GAP \| CYCLE`, jen klíče, nikdy hodnoty). PLAN-001/002: reprodukuje přesně dnešní `document-intake`/`mail-intake` řetězce. **Chybí:** compile krok `plan → WorkflowDef`, AI část (záměr → `goal`), runtime zapojení, identita entit v kolekcích, authority domain — viz `### Slovník faktů a deterministické skládání` | z požadavku (přirozený jazyk) sestaví plán z dostupných capabilities | **vysoké, pokud plán rovnou vykonává.** Musí místo toho **vyprodukovat `WorkflowDef`**, který projde stejnou fail-closed bránou (schema, Policy Engine, Human Review) jako dnešní ručně psaný workflow — generátor vstupu do přísného pipeline, ne nová cesta kolem něj |
 | **Policy Engine + risk scoring** | částečně — `policy.ts` (`policyFor(installation.policies, capability, "1")`) existuje per-capability | rozšířit o rizikovou úroveň požadavku (nízké/střední/vysoké → auto/potvrzení/nikdy) | střední — navazuje na existující Human Review, není nová vrstva vedle ní |
 | **Execution Engine** | existuje (`Router`, `ExecutorHost`, retry/review/journal) | — | **Opraveno 8. 9. 2026 (`b5b8be8`/`f29eb6f`) a 9. 9. 2026 (HANDOFF 69) — tenhle řádek byl dvakrát zastaralý, opraven znovu 13. 9. 2026.** Hlubší identita `tenantId + handlerId + idempotencyKey` + fingerprint (`sha256(canonicalize(payload))`) → `IDEMPOTENCY_CONFLICT` je univerzální (`src/platform/executor-host.ts`, každý `ExecutorHost`). Durable effect ledger (`IdempotencyLedger` Durable Object, atomická `reserveOrGet`/`resolve`/`release`) běží dnes na **obou** hostech: `apf-document-host` (8. 9.) i `apf-email-executor` (`deploy/cloudflare/apf-email-executor/src/idempotency-ledger.ts` + `DurableIdempotencyStore` v `index.ts`, HANDOFF 69) — ověřeno přímo v kódu 13. 9. 2026, ne převzato z předchozího zápisu. Tahle mezera je uzavřená, ne otevřená |
 | **Human Review** | rozhodovací cesta existuje a je živě ověřená; časové expirace nasazené, alarm mechanismus živě ověřen | — | **Opraveno 8. 9. 2026 (`6dea224`, HANDOFF 50–52) a 9. 9. 2026 (`165fe38`, HANDOFF 66–67).** `SqliteReviewTaskStore` (Durable Object SQLite) drží úkoly durabilně, `POST /workflow/:id/review/decide` → `decideReview()` je nasazený a živě ověřený (`WAITING(REVIEW)` → decide → dokončená instance). WF-REV-003 (`orchestrator.applyReviewExpiries()`, `EXPIRE_TO_FAILED`/`EXPIRE_TO_CANCELLED`/`ESCALATE`/`CREATE_NEW_REVIEW`) je nasazené: každá `WorkflowInstance` si sama nastaví `ctx.storage.setAlarm()` na deadline vlastního otevřeného review úkolu (`rearmReviewAlarm()`). **Živě ověřeno (HANDOFF 67):** dočasnou izolovanou diagnostikou (mimo real journal/reviewStore) potvrzeno, že CF Durable Object alarm na `farm-bass443` skutečně vystřelí přesně v čas — kód pak vrácen, `git diff` prázdný. **Zbývá:** živé potvrzení celé byznys transakce (skutečný review úkol, co přirozeně expiruje a projde `applyReviewExpiries()`) — ověřená je zatím jen infrastrukturní vrstva (alarm → hook), ne plný běh přes reálnou `WorkflowDef` |
@@ -579,7 +579,90 @@ dnešnímu `WAITING(REVIEW)`: eskalace na člověka/produktové rozhodnutí ("po
 krávy"), ne tichá degradace ani pokus o řešení s tím, co je po ruce. Přímo navazuje na budoucí
 **Planner jako generátor `WorkflowDef`** (`## Pořadí` bod 8) — plánovač skládající workflow z
 dostupných capabilit musí mít tuhle únikovou cestu vestavěnou od začátku, ne jako dodatečnou
-záplatu.
+záplatu. **Od 15. 9. 2026 v kódu:** `plan()` vrací `CAPABILITY_GAP` s `NO_PRODUCER`/`UNSATISFIABLE`
+a seznamem vyzkoušených producentů (`src/platform/planner.ts`, PLAN-003).
+
+### Slovník faktů a deterministické skládání — Farmář smí znát sémantiku, nikdy hodnoty (15. 9. 2026)
+
+Z Posudku 17 (`docs/POSUDKY.md`), čtyři kola externí review + ověření v kódu. Cíl: Farmář nemá mapovat
+JSONy ani „nadefinovat celou cestu" per případ (n8n riziko), ale řešit *co ještě chybí ke splnění
+cíle* — a to deterministicky, ne LLM. Přijatý invariant:
+
+> **Planner/Scheduler smí pracovat se sémantikou, identitou a stavem faktů/evidence, ale nesmí dostat
+> autoritativní business hodnoty. Generovaný plán smí obsahovat pouze reference na business objekty,
+> faktové klíče, evidence a artifacts; dereference hodnot probíhá až v důvěryhodné platformní vrstvě.**
+
+Přímé pokračování `### Hlavní invariant: farmář nesmí nosit hodnoty`. Dnešní `resolveRef()`
+(`$steps.classify.payload.documentType` v ručně psaných workflow) je pro první slice v pořádku, ale
+generovaný plán nesmí takové odkazy na business hodnoty vůbec vyrábět. Základní jednotka systému není
+workflow, ale **fakt + capability + policy**; kráva je schopnost („umím z těchto faktů vyrobit tyto"),
+ne krok — neví, co bude potom, odkud vstup přišel ani kdo ji volá.
+
+**Hotovo 15. 9. 2026 jako testovaný primitiv (HANDOFF 154):**
+- `contracts/facts.v1.json` — sémantický jmenný prostor: co klíč *znamená*, nikdy hodnota (`kind`
+  fact/artifact/evidence/effect — Scheduler nesmí zaměnit „znám IČO" za „IČO bylo ověřeno proti ARES";
+  `authority` source/derived; evidence nese `for` a `resultVocabulary` ze skutečného kódu). Obsahuje i
+  klíče bez producenta (`supplier.vatId`, `vendor.bcNumber`) — slovník říká, co fakt znamená, ne kdo ho umí.
+- `src/components/<module>/facts.json` — sidecar (descriptor zmrazený) s `consumes`/`produces` ve
+  skupinách artifacts/facts/evidence/effects; množina capabilit musí sedět s `descriptor.json`
+  (FACT-004). Trust není pole na faktu — spotřebitel explicitně konzumuje evidenci
+  (`document.stamp` konzumuje `document.type.validated`), přesně jako Dojička čte Žlab.
+- `src/platform/fact-catalog.ts` (`FactCatalog.build()`, fail-closed, odmítá i pole mimo kontrakt —
+  strukturálně nemůže nést hodnotu) a `src/platform/planner.ts` (`plan({goal, available}) →
+  PLANNED | CAPABILITY_GAP | CYCLE | INVALID`, backward chaining + Kahn s pevným tie-breakem podle
+  jména, vstup i výstup jen klíče — PLAN-005).
+- **Tvrdá brána myšlenky splněna:** PLAN-001/002 — `plan()` z katalogu reprodukuje přesně dnešní
+  `document-intake` v1/v2 a `mail-intake` v1/v2 řetězce. Katalog tedy kóduje to, co workflow už vědí,
+  nic navíc. Planner sám našel dva reálné gapy: `supplier.vatId` nemá producenta (`invoice.extract` v1
+  DIČ neextrahuje → `cz.vat.verify` nemá kdo krmit), `vendor.bcNumber` nemá producenta
+  (`bc.vendors`, `## Pořadí` 7).
+
+**Fáze (shoda vlastník + posudek):** fáze 1 = `goal → deterministic plan → immutable WorkflowDef →
+execution`. Compile krok `plan → WorkflowDef` (retry budgety, role, deadliny, strategie = execution/policy
+parametry, ne vlastnost cíle — patří do policy/profile vrstvy nebo goal template) a AI Planner (záměr →
+`goal`) zůstávají za `## Pořadí` body 1–10. **Runtime replanning po každém kroku se nedělá** — je to
+nový orchestration model (verze plánu, idempotency, approval, crash recovery), ne mutace běžící
+instance; případně později jako nová verze/pokračování, nikdy úprava rozběhnutého workflow.
+
+**PURE / READ / WRITE bez nového enumu:** `sideEffects` ve zmrazeném schématu zůstává; PURE vs READ se
+derivuje z `sideEffects: none` + `allowedNetworkDestinations` (prázdné = PURE, neprázdné = READ /
+external observation — má egress, cenu, freshness a posílá tenantova data ven). Argos rozhoduje z
+konkrétních vlastností, ne ze sebeoznačení krávy.
+
+**Dvě návrhová rozhodnutí před dalšími kravami (Posudek 17 kolo 4, nerozhodnuto v kódu) — obě
+rozhodnou, jestli Fact Contract vydrží rozšiřování bez rozbití:**
+
+1. **Identita entit v kolekcích (`invoice.line`).** Index (`invoice.lines[0]`) je špatná identita —
+   přeuspořádání nebo re-extrakce rozbije vazbu evidence. Návrh: stabilní platformní `entityId`
+   (ULID-styl, nese nulovou business hodnotu), capability se binduje na **typ entity + typ faktu**
+   (`invoice.line` × `description`), ne na JSON cestu. Id entity **není součást klíče** ve slovníku
+   (uzavřený namespace, FACT-002/003) — klíč zůstává typ (`invoice.line.description`, `scope:
+   invoice.line`), entita je samostatná souřadnice adresy faktu; kanonická serializace `klíč@entityId`
+   jen pro hashování/journal/Konev `fieldHashes`. Evidence se váže na **hash obsahu entity** (stejný
+   princip jako Konev): re-extrakce se změněným obsahem evidenci správně zneplatní, s identickým obsahem
+   ji zachová. „Jednou per entitu, kde fakt chybí" = nový `forEach` krok ve `WorkflowDef` (bounded
+   loop — `### Bounded looping`, N = počet položek, idempotency key per `(step, entityId)`), ne runtime
+   replanning. Stejný mechanismus pro `order.line`, `contract.party`, `email.attachment`, `payment.item`.
+   Předpoklad pro `accounting.account.resolve` — dnes `invoice.extract` v1 položky vůbec neextrahuje.
+2. **Authority domain evidence místo jedné osy trustu.** Kráva smí tvrdit jen „produkuji X"; kdo je
+   oprávněn tvrdit konkrétní fakt, přiděluje instalace: grant `authorities: { "cz.company.registry":
+   ["cz.company.verify"], "tenant.businessCentral": ["bc.vendors"], "tenant.human-review": [...] }`
+   (stejné místo jako scopes/granty, ADR-016 per tenant). `EvidenceWriter` razítkuje `authorityDomain`
+   z grantu (platforma, ne kráva — sebetvrzení „jsem authoritative" je stejná chyba jako `expiresAt` od
+   krávy, Posudek 16 P1-10). Dojička pak nepožaduje `producerId` konkrétní krávy (dnešní
+   `RequiredEvidence` — výměna ARES adaptéru za jiný registr by rozbila kontrakt), ale doménu:
+   `supplier.companyId → cz.company.registry`, `vendor.bcNumber → tenant.businessCentral`. ARES je
+   autorita pro název a stav firmy, ne pro `bcVendorId`; BC přesně naopak. Samostatný `trustLevel` na
+   evidenci není potřeba — doména ho subsumuje; `FieldValue.trustLevel` zůstává jako platformou
+   **odvozený** souhrn, kráva smí nastavit jen nejnižší. Táž policy tabulka nese `maxEvidenceTTL` per
+   doména. Vedlejší zisk: `available` pro `plan()` spočítané ze Žlabu (čerstvá evidence pro stejný hash
+   IČO) zkrátí řetězec — „známý dodavatel nepotřebuje `company.verify`" vypadne zadarmo.
+
+**Role po kole 4 (shoda):** Kráva vyrábí fakta · Žlab drží evidenci (hodnoty faktů žijí v artefaktech
+a journalu instance — samostatný Fact Store není pro fázi 1 potřeba) · Farmář hledá, co chybí a kdo to
+umí · Argos rozhoduje, co smí být spuštěno · Dojička rozhoduje, zda jsou splněny podmínky cíle
+(**platformní role, nikdy kráva** — kompromitovaná capability nesmí být rozhodčí) · Konev pečetí ·
+Adapter deterministicky tvoří cílový payload · Mlékárna/ExecutorHost provede write.
 
 ---
 
@@ -625,6 +708,14 @@ Dnešní `module-descriptor.v1.schema.json` (zmrazený) už nese: `capabilities`
 je `DENY + SECURITY EVENT`), explicitní `rateLimit`, `healthCheck`/`connectorTests` reference.
 **COW sama nemůže tvrdit „jsem bezpečná" — platforma její deklaraci porovná s vlastní policy,**
 stejně jako dnes `Router` porovnává `requiredScopes` s granty, ne s tvrzením handleru.
+
+**Doplněno 15. 9. 2026 (Posudek 17):** vedle descriptoru má každý modul sidecar `facts.json` —
+`consumes`/`produces` v klíčích `contracts/facts.v1.json`, skupiny artifacts/facts/evidence/effects;
+množina capabilit v něm musí sedět s descriptorem (FACT-004). Viz `### Slovník faktů a deterministické
+skládání` výše. Sidecar, ne rozšíření descriptoru: zmrazený kontrakt se nemění bez evidence z kódu.
+Pět otázek pro novou krávu (jaký doménový problém · jaké fakty potřebuje · jaké vyrobí · jak moc jim
+věřit · jaký side effect) a naming test (`after`/`before`/`step`/`then`/`workflow` v názvu = popisuje
+místo v procesu, ne schopnost) patří do promptu Kravské dílny — nepostaveno.
 
 ### Admission Gate — nasazení COW jako homologace
 
@@ -955,7 +1046,11 @@ po nalezení zdroje.
 
 **Planner jako generátor `WorkflowDef`** (nikdy přímý executor) zůstává až za vším výše — plánuje
 až nad reálnou, dotaženou farmou, ne nad rozestavěnou; proto poslední, ne proto, že by byl málo
-důležitý.
+důležitý. **Deterministický základ (slovník faktů + `plan()`) je hotový 15. 9. 2026 jako testovaný
+primitiv (Posudek 17, HANDOFF 154) — pořadí to nemění:** AI část (záměr → `goal`) a compile krok
+(`plan → WorkflowDef`) zůstávají za body 1–10; postaven byl jen „důkaz skládání", ne runtime Scheduler.
+Před `bc.vendors` (bod 7) a jakoukoli položkovou krávou je třeba rozhodnout identitu entit v kolekcích
+a authority domain evidence (`### Slovník faktů a deterministické skládání`, dvě návrhová rozhodnutí).
 
 Tenant resolution zůstává mimo tohle pořadí — dnes to není bug (`CLOUD_SINGLE_TENANT`), je to
 budoucí capability; řešit se má, až bude existovat druhý reálný tenant, ne preventivně. **Office**

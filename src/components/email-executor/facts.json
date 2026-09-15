@@ -1,0 +1,10 @@
+{
+  "$comment": "Fact-flow sidecar (Posudek 17): which namespace keys (contracts/facts.v1.json) this module's capabilities consume and produce. A sidecar on purpose — module-descriptor.v1.schema.json is frozen. Keys only, never values; capability set must equal descriptor.json (FACT-004). Consumed keys mirror the document-stamped template (mail-intake: documentType from validate, artifactId from stamp); other templates will declare their own needs when they exist.",
+  "module": "email-executor",
+  "capabilities": {
+    "email.send": {
+      "consumes": { "facts": ["notification.recipientRef", "document.type"], "artifacts": ["document.stamped"] },
+      "produces": { "effects": ["notification.sent"] }
+    }
+  }
+}
