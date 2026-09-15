@@ -31,7 +31,7 @@
     "status": "live",
     "modules": ["cz-company-verify"],
     "capabilities": ["cz.company.verify"],
-    "note": "Postaveno 13. 9. 2026 (HANDOFF 132). Zatím nezapojeno do žádného workflow ani do skutečného HttpAresAdapter volání — Router ho umí dispatchnout, nic ho zatím nevolá."
+    "note": "Postaveno 13. 9. 2026 (HANDOFF 132), zapojeno do živého Routeru a self-testu 14. 9. (HANDOFF 152). Od 15. 9. 2026 reálně zapisuje evidenci do durable Žlabu (M0 část D, HANDOFF 162–167, /farm/zlab.json). Pořád proti FakeAresAdapter (žádný reálný baseUrl) a mimo workflow definici."
   },
   {
     "id": "cz-vat-verify",
@@ -43,7 +43,7 @@
     "status": "live",
     "modules": ["cz-vat-verify"],
     "capabilities": ["cz.vat.verify"],
-    "note": "Postaveno 13. 9. 2026 (HANDOFF 136). Zatím nezapojeno do žádného workflow ani do skutečného HttpMojeDaneAdapter volání — Router ho umí dispatchnout, nic ho zatím nevolá."
+    "note": "Postaveno 13. 9. 2026 (HANDOFF 136), zapojeno do živého Routeru a self-testu 14. 9. (HANDOFF 152). Od 15. 9. 2026 reálně zapisuje evidenci do durable Žlabu (M0 část D, HANDOFF 162–167, /farm/zlab.json). Pořád proti FakeMojeDaneAdapter (žádný reálný baseUrl) a mimo workflow definici."
   },
   {
     "id": "invoice-extraction",

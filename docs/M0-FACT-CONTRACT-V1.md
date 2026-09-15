@@ -359,7 +359,8 @@ bez hodnot; ZLAB-DUR-004/005), `d1Sql()`/`evidenceMirrorOf()` v deploy store.ts 
 HANDOFF 165** — `EvidenceLedger.importSealed()`, `src/platform/evidence-import.ts` (`importEvidence()`: ancestry ze
 zrcadla, tenant → integrita → expirace → id konflikt, marker `IMPORTED`; ZLAB-DUR-006) → **(D-5) HOTOVO A ŽIVĚ
 OVĚŘENO 15. 9. 2026, HANDOFF 166** — `EvidenceWriter` pro `cz.*` v živém wiringu, ledger nad stejným klíčem jako
-dispatch (domain separation), `buildHash = gitSha`, `copyOut` → D1, `/farm/zlab.json`, `/farm/zlab/mirror`, Přehled;
+dispatch (domain separation), `buildHash = gitSha`, `copyOut` → D1, `/farm/zlab.json` (+ `?verify=1` — ověření každého řádku D1 kopie jen veřejným klíčem, živě
+předvedeno přepisem jednoho řádku, HANDOFF 167), `/farm/zlab/mirror`, Přehled;
 živě: záznamy přežily restart objektu, D1 se dorovná samo, `buildHash` = nasazení, které pečetilo. Dvě chyby nalezené
 jen živě (souběžné DDL + cachovaná rejection; `waitUntil` po RPC nedoběhl). **Část D je kompletní.**
 

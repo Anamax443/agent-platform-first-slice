@@ -14,7 +14,7 @@ Kolem obou: gateway podepisující dispatch obálky Ed25519, capability router v
 
 Nic z toho není sdílený runtime. Vše v `src/platform` je lokální pro tento projekt; balíčkem se to stane až ve chvíli, kdy totéž potřebuje druhý projekt (foundation §9, P2).
 
-Dokumentový tok navíc běží **živě na Cloudflare** (`deploy/cloudflare/`, instalace `farm-bass443`, `apf.maxferit.cz`): tři samostatné Workery, skutečný podepsaný dispatch, skutečný model a skutečná kryptografická hranice mezi hosty — ne jen fakes v jednom procesu. Mailová větev (`mail.ingest`/`email.send`) je zapojená a nasazená na stejné úrovni jako `document.stamp` (HANDOFF 57–69). Aktuální stav v [HANDOFF.md](HANDOFF.md) (append-only, nejnovější záznam nahoru), operátorský pohled na `/farm` přímo na živé instalaci — [STATUS.html](STATUS.html) je snímek z počátku září a má prokazatelně zastaralá čísla.
+Dokumentový tok navíc běží **živě na Cloudflare** (`deploy/cloudflare/`, instalace `farm-bass443`, `apf.maxferit.cz`): tři samostatné Workery, skutečný podepsaný dispatch, skutečný model a skutečná kryptografická hranice mezi hosty — ne jen fakes v jednom procesu. Mailová větev (`mail.ingest`/`email.send`) je zapojená a nasazená na stejné úrovni jako `document.stamp` (HANDOFF 57–69). Aktuální stav v [HANDOFF.md](HANDOFF.md) (append-only, nejnovější záznam nahoru), operátorský pohled na `/farm` přímo na živé instalaci — [STATUS.html](STATUS.html) je snímek z počátku září a má prokazatelně zastaralá čísla. Durable Žlab (evidence: SQLite objektu + insert-only zrcadlo v D1, platformou podepsané záznamy, ověření veřejným klíčem na `/farm/zlab.json?verify=1`) běží živě od 15. 9. 2026 (HANDOFF 162–167).
 
 ## Stack
 
