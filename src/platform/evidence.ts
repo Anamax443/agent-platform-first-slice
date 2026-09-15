@@ -147,6 +147,24 @@ export class EvidenceLedger {
     return structuredClone(record);
   }
 
+  /**
+   * Accepts a record this platform already sealed elsewhere (another case's object, read back from the mirror —
+   * docs/M0-FACT-CONTRACT-V1.md část D, D-4) verbatim: same recordId, same signature. Fail-closed: a record that
+   * does not verify() under this ledger's key is refused, a different record under an existing recordId is refused,
+   * an identical one is a no-op. Still append-only — nothing here can change or remove a stored record.
+   */
+  importSealed(record: Evidence): "IMPORTED" | "ALREADY_PRESENT" {
+    const check = this.verify(record);
+    if (!check.ok) throw new Error(`refusing to import unverifiable evidence ${record.recordId}: ${check.reason}`);
+    const existing = this.store.get(record.recordId);
+    if (existing) {
+      if (existing.recordHash === record.recordHash) return "ALREADY_PRESENT";
+      throw new Error(`refusing to import evidence ${record.recordId}: a different sealed record already holds this id`);
+    }
+    this.store.put(Object.freeze(structuredClone(record)));
+    return "IMPORTED";
+  }
+
   get(recordId: string): Evidence | undefined {
     const r = this.store.get(recordId);
     return r ? structuredClone(r) : undefined;

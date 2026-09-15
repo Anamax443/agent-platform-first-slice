@@ -2,6 +2,39 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-15 (165) — M0 D-4: import cizí evidence do nového případu — celý podepsaný řetěz, lineage lokálně i po purge originálu
+
+**Vlastník: „pokračuj".** Čtvrtý kus části D. Nový případ, který přes lookup (D-3) zjistil, že fakt už byl
+ověřen jinde, si stáhne podepsaný záznam **i všechny jeho předky** ze zrcadla do vlastního ledgeru a přidá
+marker `IMPORTED` jako fakt tohoto případu. Od té chvíle `verify()`/`verifyLineage()` běží čistě lokálně —
+původní objekt může být evikován nebo purgnutý, zrcadlo ztraceno.
+
+**Změny:**
+- `src/platform/evidence.ts`: `EvidenceLedger.importSealed(record)` — přijme jen záznam, který pod klíčem
+  tohoto ledgeru projde `verify()` (jinak throw), identický záznam pod stejným id = `ALREADY_PRESENT`, jiný
+  záznam pod stejným id = throw (nikdy přepis). Pořád append-only; ZLAB-005 seznam metod rozšířen.
+- `src/platform/evidence-import.ts` (nový): `importEvidence(ledger, mirror, recordId, { tenantId,
+  workflowId, now, buildHash })`. Nejdřív rozliší celou ancestry ze zrcadla (rekurzivně přes `parentRefs`,
+  bez zápisu), fail-closed v pořadí **tenant → integrita → expirace kořene → id konflikt**; teprve pak
+  zapíše předky před potomky a přidá marker (`producerId: platform.import`, `result: IMPORTED`,
+  `authorityDomain: platform`, `parentRefs`/`parentHashes` → originál, `workflowId` nového případu).
+  Opakovaný import = stejný marker, `alreadyPresent: true`, žádné duplicity. Výslovně **nerozhodnuto tady:**
+  zda Dojička přijme importovaný záznam, jehož vlastní `workflowId` je starý případ (dnešní aggregator
+  porovnává `workflowId`, Posudek 16 P1-8) — to je pravidlo goal contractu v M5, ne storage.
+- `tests/zlab-import.test.ts`: **ZLAB-DUR-006** (6 testů): tři SQLite soubory = objekt případu 1, sdílené D1,
+  objekt případu 2; soubor případu 1 je **smazán před importem**. Import přenese předka i potomka verbatim,
+  lineage drží lokálně, marker vázaný na wf-2; idempotence; cizí tenant odmítnut dřív, než se cokoli ověří
+  nebo zapíše; řádek editovaný v D1 = `INTEGRITY_FAILED` a nezapíše se ani čistý předek; prošlý kořen =
+  `EXPIRED`; neznámé id = `NOT_FOUND`; jiný podepsaný záznam pod stejným id = `ID_CONFLICT`, původní zůstává;
+  `importSealed` odmítne záznam podepsaný cizím klíčem.
+
+**Brány zelené:** typecheck, arch, farm:check (obě instalace), **498/498 testů** (+6). Nenasazeno.
+**Další krok D-5, poslední v části D a první s live verification:** živé zapojení — `EvidenceLedger` nad
+`SqliteEvidenceStore` v objektu instance, `EvidenceWriter` pro `cz.company.verify`/`cz.vat.verify` v
+`platform-wiring.ts` (dnes záměrně vynechán), `buildHash = gitSha`, podpisový klíč evidence jako secret,
+tabulka v D1 (`ensureD1…`) + zrcadlení v existujícím cyklu auditu, `/farm` počet záznamů a domény bez hodnot;
+pak nasadit, spustit self-test `cz.company.verify`, vynutit restart objektu a ověřit záznam v DO i D1.
+
 ## 2026-09-15 (164) — M0 D-3: zrcadlo evidence do D1 a lookup napříč případy jen referencemi
 
 **Vlastník: „pokračuj".** Třetí kus části D. Zrcadlo je kopie, nikdy zdroj pravdy (D3): řádek v tabulce nic

@@ -91,7 +91,8 @@ describe("ZLAB-004 a hash-only forgery (no access to the platform's private key)
 describe("ZLAB-005 append-only: no update/delete surface exists on the class", () => {
   it("EvidenceLedger has no method that could mutate or remove a sealed record", () => {
     const methods = Object.getOwnPropertyNames(EvidenceLedger.prototype).filter((m) => m !== "constructor");
-    expect(methods.sort()).toEqual(["append", "forTenant", "get", "verify", "verifyLineage"]);
+    // importSealed (M0 D-4) accepts only records this platform already sealed, verbatim — still no update/delete.
+    expect(methods.sort()).toEqual(["append", "forTenant", "get", "importSealed", "verify", "verifyLineage"]);
     expect(methods.some((m) => /update|delete|remove|clear|set|edit|purge|truncate|overwrite/i.test(m))).toBe(false);
   });
 });
