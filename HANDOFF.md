@@ -2,6 +2,35 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-15 (157) — Krok 1 živě: klíč funguje, organizace nemá kredit; nález: 400 kredit = 3× retry a žádný fallback (do M1)
+
+**Co se stalo:** vlastník nastavil `ANTHROPIC_API_KEY` (`wrangler secret put`), farma si secret vzala bez
+redeploye — `/version` hlásí všechny 4 modely dostupné (`cbbe656`). Živý experiment: fixture
+`canonical-invoice-cz` přes `POST /intake` (`document-intake@2`) dvakrát, `model=claude-haiku-4-5` a
+`model=llama-8b`:
+- **Llama 8B:** classify → validate → stamp SUCCEEDED, `INVOICE`, confidence 0,9, 1 pokus.
+- **Claude Haiku:** classify FAILED po 3 pokusech, `MODEL_UNAVAILABLE`; skutečná příčina v
+  `details.reason`: HTTP 400 `invalid_request_error` „Your credit balance is too low to access the
+  Anthropic API". Klíč je platný a API dosáhl, organizace za ním nemá kredit. Id `claude-haiku-4-5`
+  ověřeno proti Claude API referenci jako správné a úplné (bez datového sufixu).
+- Obě testovací instance smazány (`POST /workflow/<id>/purge` → 200, poté 404).
+
+**Nález pro M1 (AI Credential & Usage Layer), ne pro dnešek:** `AnthropicAdapter.complete()` mapuje
+**každou** výjimku na `MODEL_UNAVAILABLE` / DEPENDENCY / `retryable: true` (handlery
+`document-classifier`/`invoice-extractor`). Deterministická 400 (kredit, neplatný klíč, 403) tak vyvolá
+`technicalRetries` (3 pokusy × SDK `maxRetries: 1` = 6 HTTP volání) a pak FAILED celé instance —
+`strategies: ["llm","keyword"]` fallback platí jen pro QUALITY, ne pro DEPENDENCY. Porušení vlastníkova
+pravidla „placený backend selhá → zaskočí free, a je to vidět". Do M1: (a) klasifikovat chyby
+Anthropic SDK — `BadRequestError`/`AuthenticationError`/`PermissionDeniedError` = neretryovatelná
+konfigurační chyba (např. `MODEL_NOT_USABLE`), `RateLimitError`/5xx/connection = retryable DEPENDENCY;
+(b) při konfigurační chybě model označit jako nedostupný stejně jako chybějící secret (`/version`
+`unavailable` s důvodem) a přejít na fallback model podle profilu, viditelně v auditu;
+(c) `response.usage` do auditu. Zapsáno do SEVERKA řádku M1.
+
+**Krok 2 (vlastník):** dobít kredit organizace, ke které klíč patří (Anthropic Console → Plans &
+Billing), nebo nasadit klíč z organizace s kreditem; pak stejný experiment znovu (Haiku vs Llama na
+téže fixture). Brány beze změny, žádný kód.
+
 ## 2026-09-15 (156) — Krůček 1 M0: rozhodovací tabulka FactAddress, R1 k uzavření (žádný kód)
 
 **Podnět:** reviewer (Posudek 17 kolo 6) navrhl projít M0 po malých auditovatelných rozhodnutích
