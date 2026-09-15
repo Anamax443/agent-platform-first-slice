@@ -2,6 +2,40 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-15 (167) — Důkaz podpisu na živé D1: jeden přepsaný řádek = jediný nevalidní, jen s veřejným klíčem
+
+**Vlastník: „chci to vidět co to dělá a jak to dělá, nevěřím" → „uptoyou".** Zvoleno: nejdřív důkaz, který jde
+vidět, pak část C. Cestou přiznána a opravena moje chyba v navigaci: karty krav s tlačítkem „Spustit jen …" jsou
+v **Teletníku** (žádná kráva ještě neprošla certifikací pro tento build), ne ve Stáji — poslal jsem ho špatně,
+protože jsem ověřil jen kde tlačítko v kódu vzniká, ne kde se ukáže. Vlastník si pak sám na Teletníku spustil
+`cz.company.verify` i `cz.vat.verify` a viděl `zlab.json` 15 → 18 → 21, `unmirrored` 0.
+
+**Změny (`ef11c14`):**
+- `src/platform/evidence.ts`: `verifyEvidence(record, { keyId, publicKey })` — samostatná funkce, ověření potřebuje
+  **jen veřejný klíč** (D3: důvěra z podpisu, ne z řádku); `EvidenceLedger.verify()` na ni deleguje.
+- `index.ts`: `GET /farm/zlab.json?verify=1` znovu ověří každý řádek D1 kopie veřejným klíčem odvozeným z
+  `GATEWAY_SIGNING_KEY` a vrátí `d1.checked`, `d1.verified`, `d1.invalid: [{ recordId, reason }]` — jen id a důvod,
+  nikdy hodnota.
+- `page.ts`: odkaz na stránce výsledku self-testu „Zpět na Stáj" → „Zpět na farmu" (vedl na záložku, kde kráva není).
+- `tests/zlab-mirror.test.ts`: nový test v ZLAB-DUR-004 — čtenář jen s veřejným klíčem pozná jediný editovaný řádek
+  D1 podle id (`json_set` přímo v tabulce), ostatní projdou. **500/500.**
+
+**Živě na `apf.maxferit.cz` (`ef11c14`), přes `wrangler d1 execute`, ne přes mou vrstvu:**
+1. `?verify=1`: checked 21, verified 21, invalid `[]`.
+2. `UPDATE evidence_mirror SET json = json_set(json,'$.result','CEASED') WHERE record_id = 'evd-mu2maogz0073a7dda'`
+   → checked 21, verified **20**, invalid `[{ recordId: evd-mu2maogz0073a7dda, reason: "recordHash does not match
+   record content — record was altered after sealing" }]`.
+3. Vrácení na ACTIVE → checked 21, verified 21, invalid `[]`.
+
+Příkazy pro zopakování vlastníkem jsou v chatu; zásah byl na testovacím záznamu self-testu a vrácen.
+
+**Otázka vlastníka „a jak budeme testovat proces?":** zodpovězeno v chatu — dnešní proces (`document-intake`:
+classify → validate → stamp) se testuje z Podatelny reálným dokumentem a sleduje v Deníku; **proces nové
+architektury** se poprvé testuje živě v **M3 (No-n8n Gate)**: tři klikací scénáře — Žlab bez evidence ARES → plán
+obsahuje verify; s čerstvou evidencí → verify zmizí; s prošlou/cizí → vrátí se — bez editace workflow; a naplno v
+**M7** (reálná faktura od vstupu do BC, celý řetěz dohledatelný). Každý milník má exit jako živý scénář s předem
+zapsaným očekáváním, stejně jako dnešní self-test má u každé kontroly „Proč".
+
 ## 2026-09-15 (166) — M0 D-5: durable Žlab živě na farmě — evidence v objektu, zrcadlo v D1, `/farm` to ukazuje; dvě chyby našel až živý test
 
 **Vlastník: „dál" + „rád bych začal testovat step by step, protože toto je nějaká teorie, která potom zase
