@@ -51,7 +51,7 @@ je validuje):
 
 ```json
 "entities": [
-  { "type": "invoice.line", "of": "document.original",
+  { "type": "invoice.line", "of": "document.original", "multiplicity": "many",
     "identityFields": ["invoice.line.description", "invoice.line.quantity", "invoice.line.unitPrice",
                        "invoice.line.netAmount", "invoice.line.vatRate"] }
 ],
@@ -67,10 +67,39 @@ je validuje):
 **typ entity + typ faktu**, nikdy na JSON cestu. Planner z `scope` pozná, že jde o fakt per entita, a hlásí
 chybějící fakty per `entityId`, ne `invoice.lines[]`.
 
+### Rozhodovací tabulka R1 — FactAddress (krůček 1, 15. 9. 2026)
+
+Návrh reviewera (Posudek 17, kolo 6): projít M0 po malých auditovatelných rozhodnutích, první =
+uzavřít, co přesně je adresa jednoho faktu. Tabulka převzata; asistent doplnil tři řádky a dvě úpravy.
+Stav: **K UZAVŘENÍ — čeká na vlastníkovo potvrzení úprav 1 a 2.** Po uzavření je R1 zavřené a další
+krůček je jen canonical entity hash (část B), nic jiného.
+
+| Otázka | Rozhodnutí |
+|---|---|
+| Je `entityId` součástí `factKey`? | **Ne.** Slovník zůstává uzavřený a stabilní (FACT-002/003). |
+| Je `entityId` samostatná souřadnice adresy? | **Ano.** `FactAddress = { key, scope, entityId? }`. |
+| Je `scope` povinný? | **Ano, po normalizaci.** Ve slovníku smí chybět — pak je to `case` (singleton kořen instance workflow). Kanonická adresa scope vždy nese. *(úprava 1: dnešních 23 klíčů zůstává platných bez úpravy souboru; `invoice`/`document` jako pojmenované singleton scope lze deklarovat později)* |
+| Může fakt existovat bez `entityId`? | **Ano** — právě když jeho scope má `multiplicity: "one"` (`case`, dnes i případné `document`/`invoice`). Scope s `multiplicity: "many"` (`invoice.line`) `entityId` **vyžaduje**; scope `"one"` ho **zakazuje**. Přepnutí `one → many` (např. dvě faktury v jednom mailu) nemění klíče, jen adresy. |
+| Musí být `entityId` stabilní po dobu Case? | **Ano.** Jednou vydané id se nikdy nepřepisuje ani nerecykluje. |
+| Smí capability `entityId` sama zvolit? | **Ne.** Přiděluje platforma při uložení výstupu krávy (journal / artifact store), stejně jako `tenantId`. Kráva id jen vrací zpět, cizí id = `UNKNOWN_ENTITY`. |
+| Je pořadí řádku identita? | **Ne.** Indexová forma neexistuje. |
+| Kdy zůstává `entityId` při re-extrakci stejné? | **Právě tehdy, když se `entityHash` nezměnil** (párování podle hashe; u shodných hashů podle pořadí výskytu). Změněný obsah = **nová entita** s novým id, stará je `SUPERSEDED` s `supersededBy` (append-only). *(úprava 2: reviewerovo „entityId může zůstat" → přesné pravidlo. Žádné párování podle pozice ani fuzzy shody — to by pořadí vrátilo jako identitu zadními vrátky.)* |
+| Kanonická textová forma? | `key` pro singleton scope, `key@entityId` pro `many` — jen serializace pro journal, `fieldHashes`, `Evidence.inputField`, audit. Parser nikdy nečte z id hodnotu. |
+
+Tři adversarial příklady (stanou se testy FACT-006 / ENT-004 / ENT-005):
+
+1. **Dva řádky se stejným `description`** (i zcela identické) → dvě entity, dvě id. Evidence je per
+   `key@entityId`, schválení jednoho se nepřenese na druhý.
+2. **Řádky se přehodí** → `entityHash` stejný → `entityId` stejné → evidence platí dál.
+3. **Re-extrakce změní obsah řádku** → jiný `entityHash` → nová entita s novým id, stará `SUPERSEDED`.
+   Evidence staré entity je pro novou `not_bound`. Lidské rozhodnutí o starém řádku se **nepřenáší** —
+   bylo o jiném obsahu.
+
 ### Invarianty
 
 - **A1** `key` je vždy ze slovníku; adresa s neznámým klíčem neexistuje (dnešní FACT-002/003).
-- **A2** `scope` ⇔ `entity`: fakt se `scope` MUSÍ nést entitu právě toho typu; fakt bez `scope` NESMÍ.
+- **A2** `scope` je po normalizaci vždy definován (chybí-li ve slovníku, je to `case`); `entityId` je
+  povinné právě pro scope s `multiplicity: "many"` a zakázané pro `"one"` — viz rozhodovací tabulka R1.
 - **A3** `entityId` nenese žádnou business hodnotu — přiděluje ho platforma (artifact store / EvidenceWriter),
   kráva ho může jen **vrátit zpět**, nikdy vymyslet (stejně jako `tenantId`).
 - **A4** index v poli **není** adresa. Forma `invoice.lines[3]` v platformě neexistuje — ne zákaz, ale
@@ -305,7 +334,7 @@ původního DO se ověří z lokální kopie · **ZLAB-DUR-007** podpis v2 s pre
 
 | # | Otázka | Doporučení |
 |---|---|---|
-| R1 | Kontinuita id podle obsahu při re-extrakci (B) — ano/ne? | **ano** — bez ní každé „přeléčení" zahodí všechna lidská rozhodnutí o řádcích |
+| R1 | FactAddress + kontinuita id podle obsahu při re-extrakci — ano/ne? | **ano** — bez ní každé „přeléčení" zahodí všechna lidská rozhodnutí o řádcích. **Krůček 1 (15. 9.): rozhodovací tabulka v části A, k uzavření po potvrzení úprav 1–2.** |
 | R2 | Revokace: Dojička kontroluje grant **aktuální**, nebo **v době zápisu**? | **aktuální** (fail-closed) — producer odhalený jako kompromitovaný nesmí mít doživotní evidenci |
 | R3 | Retence evidence po purge případu | D1 kopie zůstává podle `retentionDays` instalace (hash IČO je pseudonym, ne hodnota); purge maže DO, ne D1 |
 | R4 | Domain separation + `schemaVersion: "2"` už v M0? | **ano** — tvar záznamu se stejně mění (doména), levné teď, drahé později |

@@ -2,6 +2,20 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-15 (156) — Krůček 1 M0: rozhodovací tabulka FactAddress, R1 k uzavření (žádný kód)
+
+**Podnět:** reviewer (Posudek 17 kolo 6) navrhl projít M0 po malých auditovatelných rozhodnutích
+místo jednoho návrhového skoku; první = uzavřít, co přesně je adresa jednoho faktu. Tabulka převzata,
+doplněny 3 řádky (kanonická forma, kdy zůstává id, multiplicity) a **2 úpravy**: (1) `scope` povinný
+až po normalizaci (chybí-li = `case`), aby dnešních 23 klíčů zůstalo platných; `entityId` povinné
+právě pro `multiplicity: "many"`, zakázané pro `"one"`; (2) reviewerovo „při re-extrakci entityId
+*může* zůstat" → přesné pravidlo: zůstává právě když se `entityHash` nezměnil, jinak nová entita +
+`SUPERSEDED` — „může" v rozhodovací tabulce je zadní vrátka pro pořadí jako identitu. Tři adversarial
+příklady zapsány jako budoucí FACT-006 / ENT-004 / ENT-005. **Stav R1: k uzavření po vlastníkově
+potvrzení úprav 1–2.** Další krůček: jen canonical entity hash (část B), ne authority domain, ne
+durable Žlab, ne kód. Změna: `docs/M0-FACT-CONTRACT-V1.md` (část A, invariant A2, řádek R1). Brány
+beze změny (476/476 z (154)).
+
 ## 2026-09-15 (155) — Roadmapa M0–M8 v SEVERKA, M0 „Fact Contract v1" jako návrhový dokument (žádný kód)
 
 **Podnět:** Posudek 17 kolo 5 — reviewer navrhl 8 milníků; ověřeno proti kódu a `## Pořadí`: 5 úprav
