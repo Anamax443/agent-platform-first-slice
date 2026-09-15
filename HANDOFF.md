@@ -2,6 +2,44 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-15 (163) — M0 D-2: `SqliteEvidenceStore` — Žlab na SQLite, testovaný nad skutečným souborem, append-only na úrovni SQL
+
+**Vlastník: „dál".** Druhý kus části D. Nález cestou: třídy ve `deploy/.../store.ts` (`SqliteJournal`,
+`SqliteAudit`, …) **nemají žádné unit testy** — deploy se jen typechekuje, platformní testy jedou přes
+souborový journal. Pro Žlab to nestačí (D2 invariant = zápis přežije evikci), proto je store platformní
+soubor testovaný nad reálným SQLite.
+
+**Změny:**
+- `src/platform/evidence.ts`: rozhraní `EvidenceStore` (`put`/`get`/`forTenant`, nic víc — store je stejně
+  append-only jako ledger) + `MemoryEvidenceStore` (výchozí; `put` odmítne duplicitní `recordId`);
+  `EvidenceLedger(clock, signing, store = new MemoryEvidenceStore())` — pečetí před `put()`, ověřuje po
+  `get()`, store se nikdy nevěří samotnému (D3).
+- `src/platform/evidence-sqlite.ts` (nový, **bez Cloudflare importu**, ARCH-DEP-001): strukturální
+  `SqlExec { exec(query, ...bindings).toArray() }` — přesně to, co má `ctx.storage.sql`; `SqliteEvidenceStore`
+  (`put`/`get`/`forTenant`/`unmirrored`/`markMirrored`), `SQLITE_EVIDENCE_STATEMENTS` (exportovaná kompletní
+  sada: CREATE/INSERT/SELECT + jediný `UPDATE evidence SET mirrored = 1 WHERE record_id = ?`; `INSERT`, nikdy
+  `INSERT OR REPLACE`), `EVIDENCE_DDL` (tabulka `evidence` se `seq`, `record_id UNIQUE`, `tenant_id`,
+  `workflow_id`, `producer_id`, `input_field`, `input_value_hash`, `authority_domain`, `expires_at`, `json`,
+  `mirrored` + index pro cross-case lookup z D-3). Stejná třída poběží ve workerd i na on-prem farmě.
+- `deploy/cloudflare/apf-gateway/src/store.ts`: `EVIDENCE_DDL` v `DDL` objektu (tabulka vznikne při příštím
+  nasazení), `evidenceStoreOf(sql: SqlStorage)` — továrna, která při `farm:check` dokazuje, že `SqlStorage`
+  strukturálně sedí na `SqlExec`. Živě nic evidenci nezapisuje (D-5).
+- `tests/harness/sqlite.ts`: `NodeSql` nad `node:sqlite` (`DatabaseSync`, Node 24) se stejným `exec().toArray()`
+  tvarem; utlumí jednorázový `ExperimentalWarning`, ať výstup testů zůstane čitelný.
+- `tests/zlab-durable.test.ts`: **ZLAB-DUR-001** (parent/child přežije „evikci" = zavření a znovuotevření
+  souboru: `get`, `verify`, `verifyLineage`, `forTenant` pořadí, cizí tenant nic; parita durable × memory
+  store), **ZLAB-DUR-002** (audit textu statementů; druhý `put()` téhož `recordId` selže a záznam zůstane;
+  reflexe povrchu obou storů), **ZLAB-DUR-003** (`unmirrored()` v pořadí zápisu, `markMirrored` idempotentní,
+  neznámé id neškodí, záznamy byte-identické a ověřitelné po označení).
+- Testy ZLAB-006 / DOJ-008 / KONEV-005 / KONEV-006 simulují útočníka s přístupem do úložiště — přesměrovány
+  z privátního `ledger.byId` na `ledger.store.byId` (stejná simulace, nové místo).
+
+**Brány zelené:** typecheck, arch, farm:check (obě instalace), **486/486 testů** (+6). Nenasazeno — DDL
+přibude na farmě až s dalším nasazením, nikdo do tabulky nepíše. **Další krok D-3:** D1 zrcadlo
+(insert-only tabulka `evidence` v D1, zrcadlení přes `unmirrored`/`markMirrored` jako u auditu) + lookup jen
+referencí `(tenant_id, input_field, input_value_hash, authority_domain, expires_at > now)`,
+ZLAB-DUR-004/005.
+
 ## 2026-09-15 (162) — M0 D-1: evidence záznam v2 — ledger vlastní `schemaVersion`, podpis s prefixem `EVIDENCE:v2:`, pole `authorityDomain`, v1 odmítnuto
 
 **První kód M0** (vlastník: „ano" ke krůčku 4 → návrh schválen, `7b4c699`). Nejmenší kus části D, čistá

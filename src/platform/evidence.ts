@@ -86,13 +86,46 @@ export const EVIDENCE_SCHEMA_VERSION = "2";
 export const EVIDENCE_SIGNATURE_DOMAIN = `EVIDENCE:v${EVIDENCE_SCHEMA_VERSION}:`;
 export const evidenceSignedBytes = (recordHash: string) => utf8Bytes(EVIDENCE_SIGNATURE_DOMAIN + recordHash);
 
-export class EvidenceLedger {
+/**
+ * Storage behind the ledger (docs/M0-FACT-CONTRACT-V1.md část D). Deliberately three read/write calls and nothing
+ * else: no update, no delete — the store's surface is as append-only as the ledger's. The ledger seals (hash + sign)
+ * before `put()`, so a store never sees an unsigned record, and it verifies after `get()`, so a store is never trusted
+ * on its own (D3: trust comes from the signature, never from the row existing).
+ */
+export interface EvidenceStore {
+  put(record: Evidence): void;
+  get(recordId: string): Evidence | undefined;
+  /** Records of one tenant in write order. */
+  forTenant(tenantId: string): Evidence[];
+}
+
+/** Default store: process memory. Tests and the in-process slice; a deployed farm uses a durable store (evidence-sqlite.ts). */
+export class MemoryEvidenceStore implements EvidenceStore {
   private readonly byId = new Map<string, Evidence>();
   private readonly byTenant = new Map<string, string[]>();
 
+  put(record: Evidence): void {
+    if (this.byId.has(record.recordId)) throw new Error(`evidence ${record.recordId} already exists — the Žlab is append-only`);
+    this.byId.set(record.recordId, record);
+    const list = this.byTenant.get(record.tenantId) ?? [];
+    list.push(record.recordId);
+    this.byTenant.set(record.tenantId, list);
+  }
+
+  get(recordId: string): Evidence | undefined {
+    return this.byId.get(recordId);
+  }
+
+  forTenant(tenantId: string): Evidence[] {
+    return (this.byTenant.get(tenantId) ?? []).map((id) => this.byId.get(id) as Evidence);
+  }
+}
+
+export class EvidenceLedger {
   constructor(
     private readonly clock: Clock,
     private readonly signing: EvidenceSigningKey,
+    private readonly store: EvidenceStore = new MemoryEvidenceStore(),
   ) {}
 
   /**
@@ -110,21 +143,18 @@ export class EvidenceLedger {
     const recordHash = sha256(canonicalize(unsigned));
     const platformSignature = toBase64Url(sign(null, evidenceSignedBytes(recordHash), this.signing.privateKey));
     const record: Evidence = Object.freeze({ ...unsigned, recordHash, keyId: this.signing.keyId, platformSignature });
-    this.byId.set(recordId, record);
-    const list = this.byTenant.get(candidate.tenantId) ?? [];
-    list.push(recordId);
-    this.byTenant.set(candidate.tenantId, list);
+    this.store.put(record);
     return structuredClone(record);
   }
 
   get(recordId: string): Evidence | undefined {
-    const r = this.byId.get(recordId);
+    const r = this.store.get(recordId);
     return r ? structuredClone(r) : undefined;
   }
 
   /** Tenant-scoped read (Žlab is tenant-scoped by design, SEVERKA `### Tři role, ne dvě`) — never returns another tenant's records. */
   forTenant(tenantId: string): Evidence[] {
-    return (this.byTenant.get(tenantId) ?? []).map((id) => structuredClone(this.byId.get(id) as Evidence));
+    return this.store.forTenant(tenantId).map((r) => structuredClone(r));
   }
 
   /**
@@ -152,13 +182,13 @@ export class EvidenceLedger {
    * to any ancestor breaks trust in everything built on top of it, not just the ancestor itself.
    */
   verifyLineage(recordId: string): LineageVerification {
-    const record = this.byId.get(recordId);
+    const record = this.store.get(recordId);
     if (!record) return { ok: false, brokenAt: recordId, reason: "record not found" };
     const self = this.verify(record);
     if (!self.ok) return { ok: false, brokenAt: recordId, reason: self.reason };
     const parents: Array<[string, string]> = record.parentRefs.map((parentId, i) => [parentId, record.parentHashes[i] ?? ""]);
     for (const [parentId, expectedParentHash] of parents) {
-      const parent = this.byId.get(parentId);
+      const parent = this.store.get(parentId);
       if (!parent) return { ok: false, brokenAt: parentId, reason: "parent record not found" };
       if (parent.recordHash !== expectedParentHash) {
         return { ok: false, brokenAt: parentId, reason: `parent recordHash changed since ${recordId} referenced it — lineage broken` };

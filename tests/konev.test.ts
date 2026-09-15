@@ -129,7 +129,7 @@ describe("KONEV-005 tampering with underlying evidence *after* sealing breaks ve
     if (!sealed.ok) throw new Error("expected seal to succeed");
     expect(f.sealer.verify(sealed.object)).toEqual({ ok: true });
 
-    const rawStore = (f.ledger as unknown as { byId: Map<string, Evidence> }).byId;
+    const rawStore = (f.ledger as unknown as { store: { byId: Map<string, Evidence> } }).store.byId;
     rawStore.set(bank.recordId, Object.freeze({ ...bank, result: "FAIL" }));
 
     const check = f.sealer.verify(sealed.object);
@@ -143,7 +143,7 @@ describe("KONEV-006 seal() re-verifies evidence itself, not just the AggregateRe
   it("evidence tampered between aggregate() and seal() is refused at seal time, not sealed and only caught later", () => {
     const f = fixture();
     const { bank, result } = readyChain(f);
-    const rawStore = (f.ledger as unknown as { byId: Map<string, Evidence> }).byId;
+    const rawStore = (f.ledger as unknown as { store: { byId: Map<string, Evidence> } }).store.byId;
     rawStore.set(bank.recordId, Object.freeze({ ...bank, result: "FAIL" }));
 
     const sealed = f.sealer.seal({ result, tenantId: TENANT_A, objectType: "invoice", businessPayload: { ...CERTIFIED_PAYLOAD, amount: 18500 } });

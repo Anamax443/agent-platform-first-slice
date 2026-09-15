@@ -9,10 +9,20 @@ import { sha256, type Artifact, type ArtifactWriter } from "../../../../src/plat
 import type { Clock } from "../../../../src/platform/clock.js";
 import { iso } from "../../../../src/platform/clock.js";
 import { newId } from "../../../../src/platform/ids.js";
+import { EVIDENCE_DDL, SqliteEvidenceStore } from "../../../../src/platform/evidence-sqlite.js";
 import type { Instance, JournalStore } from "../../../../src/platform/journal.js";
 import type { ReviewTask, ReviewTaskStore } from "../../../../src/platform/review.js";
 
+/**
+ * Durable Žlab (docs/M0-FACT-CONTRACT-V1.md část D, D-2): the platform's SqliteEvidenceStore runs unchanged over
+ * ctx.storage.sql — this factory exists so `farm:check` proves at compile time that SqlStorage satisfies the platform's
+ * structural SqlExec. Nothing writes evidence live yet (EvidenceWriter wiring is D-5); the table is created by the
+ * object's DDL pass so a deployed object is ready for it.
+ */
+export const evidenceStoreOf = (sql: SqlStorage): SqliteEvidenceStore => new SqliteEvidenceStore(sql);
+
 export const DDL = [
+  ...EVIDENCE_DDL,
   "CREATE TABLE IF NOT EXISTS instance (workflow_id TEXT PRIMARY KEY, status TEXT NOT NULL, updated_at TEXT NOT NULL, json TEXT NOT NULL)",
   "CREATE TABLE IF NOT EXISTS audit (seq INTEGER PRIMARY KEY AUTOINCREMENT, audit_id TEXT NOT NULL UNIQUE, at TEXT NOT NULL, kind TEXT NOT NULL, correlation_id TEXT, workflow_id TEXT, json TEXT NOT NULL, mirrored INTEGER NOT NULL DEFAULT 0)",
   "CREATE TABLE IF NOT EXISTS artifact (artifact_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, sha256 TEXT NOT NULL, received_at TEXT NOT NULL, received_from TEXT NOT NULL, derived_from TEXT, producer TEXT, content_type TEXT, byte_length INTEGER, location TEXT, name TEXT, bytes TEXT NOT NULL, copied INTEGER NOT NULL DEFAULT 0)",

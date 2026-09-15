@@ -106,7 +106,7 @@ describe("ZLAB-006 hash graph: a broken ancestor invalidates everything built on
     expect(ledger.verifyLineage(aresCheck.recordId)).toEqual({ ok: true });
 
     // Simulate storage-level tampering with the ancestor (e.g. someone with DB access "fixes" a value in place).
-    const rawStore = (ledger as unknown as { byId: Map<string, Evidence> }).byId;
+    const rawStore = (ledger as unknown as { store: { byId: Map<string, Evidence> } }).store.byId;
     rawStore.set(extraction.recordId, Object.freeze({ ...extraction, inputValueHash: "hash-of-999999" }));
 
     const lineage = ledger.verifyLineage(aresCheck.recordId);

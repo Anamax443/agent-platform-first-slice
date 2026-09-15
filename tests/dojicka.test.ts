@@ -99,7 +99,7 @@ describe("DOJ-005 tampered evidence fails integrity, decision is REJECT not sile
     const { ledger, aggregator } = fixture();
     const company = ledger.append(candidate({ producerId: "cz.company.verify", inputField: "companyId" }));
     const bank = ledger.append(candidate({ producerId: "cz.vat.verify", inputField: "bankAccount" }));
-    const rawStore = (ledger as unknown as { byId: Map<string, Evidence> }).byId;
+    const rawStore = (ledger as unknown as { store: { byId: Map<string, Evidence> } }).store.byId;
     rawStore.set(bank.recordId, Object.freeze({ ...bank, result: "FAIL" }));
     const result = aggregator.aggregate({ tenantId: TENANT_A, fieldHashes: { companyId: "hash-of-value" }, required: REQUIRED, evidenceRefs: [company.recordId, bank.recordId] });
     expect(result.decision).toBe("REJECT");
@@ -149,7 +149,7 @@ describe("DOJ-008 broken lineage upstream of the referenced evidence -> REJECT",
     const bank = ledger.append(
       candidate({ producerId: "cz.vat.verify", inputField: "bankAccount", inputValueHash: "hash-of-111111", parentRefs: [extraction.recordId], parentHashes: [extraction.recordHash] }),
     );
-    const rawStore = (ledger as unknown as { byId: Map<string, Evidence> }).byId;
+    const rawStore = (ledger as unknown as { store: { byId: Map<string, Evidence> } }).store.byId;
     rawStore.set(extraction.recordId, Object.freeze({ ...extraction, inputValueHash: "hash-of-999999" }));
 
     const result = aggregator.aggregate({ tenantId: TENANT_A, fieldHashes: { companyId: "hash-of-value" }, required: REQUIRED, evidenceRefs: [company.recordId, bank.recordId] });
