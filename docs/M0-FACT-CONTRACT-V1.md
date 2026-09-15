@@ -2,8 +2,9 @@
 
 **Stav: NÁVRH ke schválení vlastníkem. Žádný kód, žádná změna schémat, dokud není schváleno.**
 Postup po krůčcích (jedno rozhodnutí, jedno potvrzení): **krůček 1 FactAddress — UZAVŘENO 15. 9. 2026**
-(část A, R1) · **krůček 2 EntityHash — UZAVŘENO 15. 9. 2026** (část B) · krůček 3 AuthorityGrant —
-k uzavření (část C, tabulka; zavírá i R2 a R6) · krůček 4 DurableFactStore (D). Kód až po uzavření všech čtyř, v pořadí implementace D → C → A → B.
+(část A, R1) · **krůček 2 EntityHash — UZAVŘENO 15. 9. 2026** (část B) · **krůček 3 AuthorityGrant —
+UZAVŘENO 15. 9. 2026** (část C, R2 + R6) · krůček 4 DurableFactStore — k uzavření (část D, tabulka;
+zavírá R3, R4, R5 — poslední před kódem). Kód až po uzavření všech čtyř, v pořadí implementace D → C → A → B.
 Roadmapa: `SEVERKA.md ## Roadmapa M0–M8`. Vychází z Posudku 17 (`POSUDKY.md`, kola 4–5) a z dnešního
 kódu — každý datový tvar níže je navázaný na existující typ, ne vymyšlený od nuly.
 
@@ -256,8 +257,8 @@ vzor = policy granty ADR-016):
 
 ### Rozhodovací tabulka — AuthorityGrant (krůček 3, 15. 9. 2026)
 
-Stav: **K UZAVŘENÍ — čeká na vlastníkovo potvrzení.** Zavírá zároveň R2 (revokace) a R6 (výchozí TTL).
-Jen rozhodnutí, žádný kód.
+Stav: **UZAVŘENO 15. 9. 2026** — vlastník potvrdil beze změn; R2 (revokace) a R6 (výchozí TTL) tím
+uzavřeny. Další krůček: DurableFactStore (část D).
 
 | Otázka | Rozhodnutí |
 |---|---|
@@ -346,6 +347,34 @@ D1 (sdílené, per instalace), insert-only:
   `keyId` v záznamu zůstává, keyring (P1-11) je mimo M0.
 - `buildHash := gitSha` z nasazení (živý `/version` ho už má) — rozhodnutí R5.
 
+### Rozhodovací tabulka — DurableFactStore (krůček 4, 15. 9. 2026)
+
+Stav: **K UZAVŘENÍ — poslední krůček před kódem.** Zavírá zároveň R3 (retence), R4 (podpis v2) a R5
+(`buildHash`). Jen rozhodnutí, žádný kód.
+
+| Otázka | Rozhodnutí |
+|---|---|
+| Kde je zdroj pravdy Žlabu? | **DO SQLite objektu instance** (`workflowId`), zápis **synchronní před publikací výsledku kroku** (RES-CRASH-001). Stejný vzor jako journal/audit/artifacts dnes. |
+| Co je D1? | **Insert-only kopie** s `mirrored` flagem, pro cross-case lookup. Ztráta D1 = ztráta lookupu, **ne** integrity. |
+| Odkud plyne důvěra v záznam? | **Jen z podpisu** (`verify()`), nikdy z toho, že řádek v tabulce existuje. |
+| Co se smí v uložených záznamech měnit? | **Nic kromě `mirrored`.** Žádný `UPDATE`/`DELETE` nad `json` — ZLAB-005 rozšířeno na SQL text (ZLAB-DUR-002). |
+| Jak se čte napříč případy? | D1 dotaz `(tenant_id, input_field, input_value_hash, authority_domain, expires_at > now)` → **jen reference** (recordId, hash, doména, expirace). Žádná hodnota; z toho vzniká `available` pro `plan()` (M3). |
+| Jak cizí evidence vstoupí do nového případu? | **Explicitním importem**: kopie celého podepsaného záznamu do ledgeru případu jako `IMPORTED`, `parentRefs`/`parentHashes` → originál. Lineage se ověřuje lokálně i po purge původního DO. Auditovatelné, nikdy implicitní. |
+| Retence po purge případu (R3)? | Purge maže DO instance; **D1 kopie zůstává** podle `retentionDays` instalace. Obsahuje jen hashe, výsledky a reference (hash IČO = pseudonym), žádnou hodnotu. |
+| Podpis (R4)? | **v2 s domain-separation prefixem** `EVIDENCE:v2:` + `schemaVersion: "2"`; v1 záznam (bez prefixu) v2 ledger **odmítne**, nikdy tiše nepřijme. `keyId` zůstává; keyring/rotace mimo M0. |
+| `buildHash` (R5)? | **`:= gitSha` z nasazení** (živý `/version` ho už nese). Cloudflare Version Metadata binding ověřit v M1, ne teď. |
+| Tenant izolace čtení? | **Vždy tenant-scoped** (`forTenant`, každý D1 dotaz s `tenant_id`). Cross-tenant dotaz vrací nic. |
+| Co ukazuje `/farm`? | Počet záznamů, čas posledního, domény — **nikdy hodnotu**. |
+| Live verification M0? | Self-test `cz.company.verify` zapíše reálnou evidenci (doména `cz.company.registry`, `buildHash = gitSha`); vynutit restart/evikci objektu; záznam existuje v DO i D1 a `verify()` projde. |
+
+Tři adversarial příklady (stanou se testy ZLAB-DUR-004 / D-adv-2 / ZLAB-DUR-007):
+
+1. **Přístup k D1 a editace `result`** → podpis nesedí, záznam neplatný.
+2. **Padělaný řádek s korektně spočítaným `recordHash`, ale bez privátního klíče** → `platformSignature`
+   chybí nebo nesedí → odmítnuto.
+3. **Záznam v1 bez prefixu podstrčený jako platný** → `schemaVersion` je součást podepsaného obsahu, v2 ledger
+   ho odmítne.
+
 ### Invarianty
 
 - **D1** append-only v obou vrstvách; jediná mutace je `mirrored` (ZLAB-005 reflexe rozšířená na SQL text:
@@ -388,11 +417,11 @@ původního DO se ověří z lokální kopie · **ZLAB-DUR-007** podpis v2 s pre
 | # | Otázka | Doporučení |
 |---|---|---|
 | R1 | FactAddress + kontinuita id podle obsahu při re-extrakci — ano/ne? | **ano** — bez ní každé „přeléčení" zahodí všechna lidská rozhodnutí o řádcích. **UZAVŘENO 15. 9. 2026 (krůček 1): rozhodovací tabulka v části A, úpravy 1–2 potvrzeny vlastníkem.** |
-| R2 | Revokace: Dojička kontroluje grant **aktuální**, nebo **v době zápisu**? | **aktuální** (fail-closed) — producer odhalený jako kompromitovaný nesmí mít doživotní evidenci. **Krůček 3 (15. 9.): součást tabulky v části C, k uzavření.** |
-| R3 | Retence evidence po purge případu | D1 kopie zůstává podle `retentionDays` instalace (hash IČO je pseudonym, ne hodnota); purge maže DO, ne D1 |
-| R4 | Domain separation + `schemaVersion: "2"` už v M0? | **ano** — tvar záznamu se stejně mění (doména), levné teď, drahé později |
-| R5 | `buildHash := gitSha` z nasazení místo Version Metadata bindingu | **ano** pro M0; binding ověřit v M1 |
-| R6 | Výchozí TTL per doména | ARES `P30D`, VAT spolehlivost `P1D` (mění se denně), BC `P7D`, human `P365D` — čísla k ladění, ne dogma |
+| R2 | Revokace: Dojička kontroluje grant **aktuální**, nebo **v době zápisu**? | **aktuální** (fail-closed) — producer odhalený jako kompromitovaný nesmí mít doživotní evidenci. **UZAVŘENO 15. 9. 2026 (krůček 3).** |
+| R3 | Retence evidence po purge případu | D1 kopie zůstává podle `retentionDays` instalace (hash IČO je pseudonym, ne hodnota); purge maže DO, ne D1. **Krůček 4 (15. 9.): v tabulce části D, k uzavření.** |
+| R4 | Domain separation + `schemaVersion: "2"` už v M0? | **ano** — tvar záznamu se stejně mění (doména), levné teď, drahé později. **Krůček 4: k uzavření.** |
+| R5 | `buildHash := gitSha` z nasazení místo Version Metadata bindingu | **ano** pro M0; binding ověřit v M1. **Krůček 4: k uzavření.** |
+| R6 | Výchozí TTL per doména | ARES `P30D`, VAT spolehlivost `P1D` (mění se denně), BC `P7D`, human `P365D` — čísla k ladění, ne dogma. **UZAVŘENO 15. 9. 2026 (krůček 3) jako výchozí hodnoty k ladění.** |
 | R7 | Rozšíření slovníku (`entities[]`, `scope`, `identityFields`) jako aditivní změna v `"1"`, nebo `"2"`? | **`"1"` aditivně** — dnešní soubory zůstávají platné, `FactCatalog.build()` validuje nová pole |
 
 **Mimo M0 (vědomě):** `forEach` krok (M2), keyring/rotace klíče (Posudek 16 P1-11), per-tenant přepsání

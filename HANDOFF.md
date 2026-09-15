@@ -2,6 +2,19 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-15 (161) — M0 krůček 3 uzavřen (AuthorityGrant, R2 + R6), krůček 4 DurableFactStore k uzavření — poslední před kódem
+
+Vlastník: „ano" → **krůček 3 AuthorityGrant UZAVŘEN** beze změn, tím R2 (revokace podle aktuálního
+grantu) a R6 (výchozí TTL k ladění) uzavřeny (`docs/M0-FACT-CONTRACT-V1.md` část C). Zapsán krůček 4:
+rozhodovací tabulka DurableFactStore v části D — zdroj pravdy = DO SQLite synchronně před publikací
+výsledku kroku, D1 = insert-only kopie pro cross-case lookup jen referencí, důvěra jen z podpisu, nic
+se nemění kromě `mirrored`, cizí evidence jen explicitním importem s lineage, retence po purge = D1
+podle `retentionDays` (R3), podpis v2 s prefixem `EVIDENCE:v2:` a odmítnutím v1 (R4), `buildHash :=
+gitSha` (R5), tenant-scoped čtení, `/farm` bez hodnot, live verification = reálná evidence z self-testu
+přežije restart objektu. Tři adversarial příklady. **Čeká na vlastníkovo „ano" — po něm je M0 návrh
+kompletně uzavřen a začíná implementace v pořadí D → C → A → B, každá část vlastní commit + Test ID,
+D navíc live verification.** Žádný kód, brány beze změny.
+
 ## 2026-09-15 (160) — M0 krůček 2 uzavřen (EntityHash), krůček 3 AuthorityGrant k uzavření (žádný kód)
 
 Vlastník: „ano" → **krůček 2 EntityHash UZAVŘEN** beze změn (`docs/M0-FACT-CONTRACT-V1.md` část B).
