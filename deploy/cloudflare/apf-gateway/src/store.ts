@@ -9,6 +9,7 @@ import { sha256, type Artifact, type ArtifactWriter } from "../../../../src/plat
 import type { Clock } from "../../../../src/platform/clock.js";
 import { iso } from "../../../../src/platform/clock.js";
 import { newId } from "../../../../src/platform/ids.js";
+import { EVIDENCE_MIRROR_DDL, SqliteEvidenceMirror, type AsyncSql } from "../../../../src/platform/evidence-mirror.js";
 import { EVIDENCE_DDL, SqliteEvidenceStore } from "../../../../src/platform/evidence-sqlite.js";
 import type { Instance, JournalStore } from "../../../../src/platform/journal.js";
 import type { ReviewTask, ReviewTaskStore } from "../../../../src/platform/review.js";
@@ -20,6 +21,19 @@ import type { ReviewTask, ReviewTaskStore } from "../../../../src/platform/revie
  * object's DDL pass so a deployed object is ready for it.
  */
 export const evidenceStoreOf = (sql: SqlStorage): SqliteEvidenceStore => new SqliteEvidenceStore(sql);
+
+/** Shared D1 copy of the Žlab (part D, D-3): insert-only, lookup by reference. Same database as the audit trail, its own table. */
+export const D1_EVIDENCE_DDL: readonly string[] = EVIDENCE_MIRROR_DDL;
+
+/** D1 behind the platform's AsyncSql: prepare().bind().all()/run(). */
+export const d1Sql = (db: D1Database): AsyncSql => ({
+  all: async (query, ...bindings) => (await db.prepare(query).bind(...bindings).all<Record<string, unknown>>()).results,
+  run: async (query, ...bindings) => {
+    await db.prepare(query).bind(...bindings).run();
+  },
+});
+
+export const evidenceMirrorOf = (db: D1Database): SqliteEvidenceMirror => new SqliteEvidenceMirror(d1Sql(db));
 
 export const DDL = [
   ...EVIDENCE_DDL,

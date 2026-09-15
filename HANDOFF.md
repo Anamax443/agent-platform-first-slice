@@ -2,6 +2,37 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-15 (164) — M0 D-3: zrcadlo evidence do D1 a lookup napříč případy jen referencemi
+
+**Vlastník: „pokračuj".** Třetí kus části D. Zrcadlo je kopie, nikdy zdroj pravdy (D3): řádek v tabulce nic
+nedokazuje, dokazuje jen `verify()` nad celým záznamem; ztráta D1 = ztráta lookupu, ne integrity.
+
+**Změny:**
+- `src/platform/evidence-mirror.ts` (nový, bez Cloudflare importu): strukturální `AsyncSql { all, run }`
+  (D1 je asynchronní, na rozdíl od `ctx.storage.sql`), `EvidenceMirror { insert, lookup, get }`,
+  `SqliteEvidenceMirror`, `SQLITE_MIRROR_STATEMENTS` (kompletní sada: CREATE / `INSERT OR IGNORE` / SELECT —
+  **žádný UPDATE ani DELETE vůbec**, zrcadlený záznam se nikdy nemění), tabulka `evidence_mirror` s indexem
+  `(tenant_id, input_field, input_value_hash, authority_domain, expires_at)`, `EvidenceRef` = recordId,
+  tenantId, adresa, hash hodnoty, doména, observedAt, expiresAt, recordHash — **bez `result`, bez hodnoty**;
+  `lookup()` má `tenantId` a `now` povinné (platforma nečte systémový čas), volitelný filtr domény;
+  `mirrorEvidence(source, mirror)` = `unmirrored()` → insert → `markMirrored()`, bezpečně opakovatelné
+  (pád mezi insert a mark → `INSERT OR IGNORE` nic nezdvojí, další průchod označí).
+- `deploy/cloudflare/apf-gateway/src/store.ts`: `D1_EVIDENCE_DDL`, `d1Sql(db: D1Database): AsyncSql`
+  (`prepare().bind().all()/run()`), `evidenceMirrorOf(db)` — `farm:check` dokazuje typovou shodu. Živě se
+  zatím nezrcadlí ani nevytváří tabulka v D1 (`ensureD1…` a cron = D-5).
+- `tests/harness/sqlite.ts`: `NodeAsyncSql` + `openAsyncSql()` (stejný soubor `node:sqlite`, asynchronní tvar).
+- `tests/zlab-mirror.test.ts`: **ZLAB-DUR-004** (4 testy: zrcadlení zkopíruje čekající, rerun = 0, kopie
+  ověří přes ledger; pád mezi insert a mark se přehraje bez duplicity; řádek editovaný přímo v D1 neprojde
+  `verify()` a originál v objektu zůstává čistý; padělek podepsaný cizím klíčem neprojde; audit textu
+  statementů + reflexe povrchu), **ZLAB-DUR-005** (2 testy: stejný tenant + adresa + hash + doména najde
+  právě jeden záznam a vrací jen referenci bez `result`/`json`/`producerId`; jiný tenant, jiná doména,
+  prošlá evidence i jiná hodnota nic; bez filtru domény se vrací i inferred evidence, pořád jen tenantova).
+
+**Brány zelené:** typecheck, arch, farm:check (obě instalace), **492/492 testů** (+6). Nenasazeno.
+**Další krok D-4:** import cizí evidence do nového případu — kopie celého podepsaného záznamu jako `IMPORTED`
+s `parentRefs`/`parentHashes` na originál, lineage ověřitelná lokálně i po purge původního objektu
+(ZLAB-DUR-006).
+
 ## 2026-09-15 (163) — M0 D-2: `SqliteEvidenceStore` — Žlab na SQLite, testovaný nad skutečným souborem, append-only na úrovni SQL
 
 **Vlastník: „dál".** Druhý kus části D. Nález cestou: třídy ve `deploy/.../store.ts` (`SqliteJournal`,

@@ -353,7 +353,9 @@ Stav: **UZAVŘENO 15. 9. 2026** — vlastník potvrdil beze změn; R3 (retence),
 (`buildHash`) tím uzavřeny. Implementace D: **(D-1) HOTOVO 15. 9. 2026, HANDOFF 162** — tvar záznamu v2 + podpis s prefixem
 `EVIDENCE:v2:` + `authorityDomain` pole + v1 odmítnuto (ZLAB-DUR-007, EW-005) → **(D-2) HOTOVO 15. 9. 2026,
 HANDOFF 163** — `EvidenceStore` rozhraní, `MemoryEvidenceStore`, `SqliteEvidenceStore` v `src/platform/evidence-sqlite.ts`
-(bez Cloudflare importu, testováno nad `node:sqlite`; ZLAB-DUR-001..003), DDL v DO → (D-3) D1 zrcadlo + lookup referencí → (D-4) import s lineage → (D-5) živé
+(bez Cloudflare importu, testováno nad `node:sqlite`; ZLAB-DUR-001..003), DDL v DO → **(D-3) HOTOVO 15. 9. 2026,
+HANDOFF 164** — `src/platform/evidence-mirror.ts` (`AsyncSql`, `SqliteEvidenceMirror`, `mirrorEvidence()`, `EvidenceRef`
+bez hodnot; ZLAB-DUR-004/005), `d1Sql()`/`evidenceMirrorOf()` v deploy store.ts → (D-4) import s lineage → (D-5) živé
 zapojení `EvidenceWriter` pro `cz.*`, `buildHash = gitSha`, `/farm`, live verification.
 
 | Otázka | Rozhodnutí |
