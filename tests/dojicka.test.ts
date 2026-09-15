@@ -25,7 +25,6 @@ function candidate(overrides: Partial<EvidenceCandidate> = {}): EvidenceCandidat
     producerId: "cz.vat.verify",
     capabilityVersion: "1",
     buildHash: "build-abc123",
-    schemaVersion: "1",
     inputField: "bankAccount",
     inputValueHash: "hash-of-value",
     result: "PASS",

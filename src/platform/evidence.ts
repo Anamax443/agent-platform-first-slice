@@ -26,7 +26,15 @@ export interface Evidence {
   capabilityVersion: string;
   /** Ties to the future CertificationRecord (docs/SEVERKA.md `### Admission Gate`): which build produced this. */
   buildHash: string;
+  /** Evidence record schema — set by the ledger itself (EVIDENCE_SCHEMA_VERSION), never by a caller. */
   schemaVersion: string;
+  /**
+   * Who is entitled to assert this fact (docs/M0-FACT-CONTRACT-V1.md část C): an installation-granted authority
+   * domain such as "cz.company.registry" or "tenant.human-review". Stamped by the platform (EvidenceWriter, from the
+   * installation's authority grant), absent = "inferred" — the producer holds no grant for this fact. Part of the
+   * signed content, so it can never be raised after sealing.
+   */
+  authorityDomain?: string;
   /** Which field of which business object this record verifies, e.g. "bankAccount". */
   inputField: string;
   /** Hash of the value being verified at the moment of verification (SEVERKA's `valueHash`). */
@@ -48,7 +56,7 @@ export interface Evidence {
   platformSignature: string;
 }
 
-export type EvidenceCandidate = Omit<Evidence, "recordId" | "observedAt" | "recordHash" | "keyId" | "platformSignature">;
+export type EvidenceCandidate = Omit<Evidence, "recordId" | "observedAt" | "schemaVersion" | "recordHash" | "keyId" | "platformSignature">;
 
 export type EvidenceVerification = { ok: true } | { ok: false; reason: string };
 
@@ -65,6 +73,18 @@ export interface EvidenceSigningKey {
   privateKey: KeyObject;
   publicKey: KeyObject;
 }
+
+/**
+ * Evidence record schema this ledger writes and accepts (docs/M0-FACT-CONTRACT-V1.md část D, R4). v1 records
+ * (bare-hash signature, no authorityDomain) are refused by verify() — never silently accepted.
+ */
+export const EVIDENCE_SCHEMA_VERSION = "2";
+/**
+ * Domain separation (docs/POSUDKY.md Posudek 16 P1-12): the platform signs "EVIDENCE:v2:<recordHash>", never the
+ * bare hash, so an Evidence signature can never be replayed as a Konev (or any other) signature over the same bytes.
+ */
+export const EVIDENCE_SIGNATURE_DOMAIN = `EVIDENCE:v${EVIDENCE_SCHEMA_VERSION}:`;
+export const evidenceSignedBytes = (recordHash: string) => utf8Bytes(EVIDENCE_SIGNATURE_DOMAIN + recordHash);
 
 export class EvidenceLedger {
   private readonly byId = new Map<string, Evidence>();
@@ -86,9 +106,9 @@ export class EvidenceLedger {
   append(candidate: EvidenceCandidate): Evidence {
     const recordId = newId("evd");
     const observedAt = iso(this.clock.now());
-    const unsigned = { ...candidate, recordId, observedAt };
+    const unsigned = { ...candidate, recordId, observedAt, schemaVersion: EVIDENCE_SCHEMA_VERSION };
     const recordHash = sha256(canonicalize(unsigned));
-    const platformSignature = toBase64Url(sign(null, utf8Bytes(recordHash), this.signing.privateKey));
+    const platformSignature = toBase64Url(sign(null, evidenceSignedBytes(recordHash), this.signing.privateKey));
     const record: Evidence = Object.freeze({ ...unsigned, recordHash, keyId: this.signing.keyId, platformSignature });
     this.byId.set(recordId, record);
     const list = this.byTenant.get(candidate.tenantId) ?? [];
@@ -115,10 +135,13 @@ export class EvidenceLedger {
    */
   verify(record: Evidence): EvidenceVerification {
     const { recordHash, keyId, platformSignature, ...rest } = record;
+    if (rest.schemaVersion !== EVIDENCE_SCHEMA_VERSION) {
+      return { ok: false, reason: `unsupported evidence schemaVersion ${JSON.stringify(rest.schemaVersion)} — this ledger accepts only v${EVIDENCE_SCHEMA_VERSION} records (older records are refused, never silently accepted)` };
+    }
     const expectedHash = sha256(canonicalize(rest));
     if (expectedHash !== recordHash) return { ok: false, reason: "recordHash does not match record content — record was altered after sealing" };
     if (keyId !== this.signing.keyId) return { ok: false, reason: `signed by unknown key ${keyId}, this ledger trusts ${this.signing.keyId}` };
-    const sigOk = verify(null, utf8Bytes(recordHash), this.signing.publicKey, fromBase64Url(platformSignature));
+    const sigOk = verify(null, evidenceSignedBytes(recordHash), this.signing.publicKey, fromBase64Url(platformSignature));
     return sigOk ? { ok: true } : { ok: false, reason: "platformSignature does not match recordHash — forged or corrupted" };
   }
 

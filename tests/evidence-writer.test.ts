@@ -53,7 +53,7 @@ function input(overrides: { message?: Partial<MessageEnvelope>; context?: Partia
   return { message: message(overrides.message), context: context(overrides.context) };
 }
 
-const IDENTITY = { producerId: "cz.vat.verify", capabilityVersion: "1", buildHash: "build-vat-123", schemaVersion: "1" };
+const IDENTITY = { producerId: "cz.vat.verify", capabilityVersion: "1", buildHash: "build-vat-123" };
 const CLAIM = { inputField: "bankAccount", inputValueHash: "hash-account", result: "PASS" };
 
 describe("EW-001 write() binds tenantId/workflowId/operationId from the trusted HandlerInput, not from the claim", () => {
@@ -77,8 +77,8 @@ describe("EW-001 write() binds tenantId/workflowId/operationId from the trusted 
 describe("EW-002 producer identity is bound once at construction, never per call", () => {
   it("two writers built for different capabilities always stamp their own identity, regardless of the HandlerInput they're given", () => {
     const { ledger } = fixture();
-    const vatWriter = new EvidenceWriter(ledger, { producerId: "cz.vat.verify", capabilityVersion: "1", buildHash: "build-vat", schemaVersion: "1" });
-    const companyWriter = new EvidenceWriter(ledger, { producerId: "cz.company.verify", capabilityVersion: "1", buildHash: "build-company", schemaVersion: "1" });
+    const vatWriter = new EvidenceWriter(ledger, { producerId: "cz.vat.verify", capabilityVersion: "1", buildHash: "build-vat" });
+    const companyWriter = new EvidenceWriter(ledger, { producerId: "cz.company.verify", capabilityVersion: "1", buildHash: "build-company" });
 
     const sameInput = input();
     const vatEvidence = vatWriter.write(sameInput, CLAIM);
@@ -117,5 +117,19 @@ describe("EW-004 EvidenceWriter exposes only write(), no read/update/delete surf
   it("the class has exactly one method", () => {
     const methods = Object.getOwnPropertyNames(EvidenceWriter.prototype).filter((m) => m !== "constructor");
     expect(methods).toEqual(["write"]);
+  });
+});
+
+// M0 část C (docs/M0-FACT-CONTRACT-V1.md): authority is granted by the installation and bound into the writer at
+// construction — a cow can never raise its own trust through the claim.
+describe("EW-005 authorityDomain comes from the writer's platform-bound identity, never from the claim", () => {
+  it("a writer constructed with a domain stamps it; a claim carrying authorityDomain (even via cast) is ignored", () => {
+    const { ledger } = fixture();
+    const granted = new EvidenceWriter(ledger, { ...IDENTITY, authorityDomain: "cz.vat.registry" });
+    expect(granted.write(input(), CLAIM).authorityDomain).toBe("cz.vat.registry");
+    const ungranted = new EvidenceWriter(ledger, IDENTITY);
+    const smuggled = ungranted.write(input(), { ...CLAIM, authorityDomain: "tenant.human-review" } as never);
+    expect(smuggled.authorityDomain).toBeUndefined();
+    expect(ledger.verify(smuggled)).toEqual({ ok: true });
   });
 });

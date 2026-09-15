@@ -2,6 +2,34 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-15 (162) — M0 D-1: evidence záznam v2 — ledger vlastní `schemaVersion`, podpis s prefixem `EVIDENCE:v2:`, pole `authorityDomain`, v1 odmítnuto
+
+**První kód M0** (vlastník: „ano" ke krůčku 4 → návrh schválen, `7b4c699`). Nejmenší kus části D, čistá
+platforma, žádné runtime zapojení — Žlab je dál in-memory a živě se nezapisuje (to je D-2 až D-5).
+
+**Změny:**
+- `src/platform/evidence.ts`: `EVIDENCE_SCHEMA_VERSION = "2"`, `EVIDENCE_SIGNATURE_DOMAIN = "EVIDENCE:v2:"`,
+  `evidenceSignedBytes()`; `append()` sám nastaví `schemaVersion` (z `EvidenceCandidate` odstraněno —
+  verze záznamu je věc ledgeru, ne writeru) a podepisuje `EVIDENCE:v2:<recordHash>`; `verify()` nejdřív
+  odmítne jiný `schemaVersion` (v1 záznam = `unsupported evidence schemaVersion`, nikdy tiché přijetí),
+  pak hash, keyId, podpis s prefixem. Nové volitelné pole `Evidence.authorityDomain` — součást
+  podepsaného obsahu, po zapečetění nejde zvednout.
+- `src/platform/evidence-writer.ts`: identita `{ producerId, capabilityVersion, buildHash, authorityDomain? }`
+  (bez `schemaVersion`); `write()` razítkuje `authorityDomain` jen z identity, `EvidenceClaim` pole nemá.
+  Grant → doména (`authorities.json`) přijde v části C; teď je to jen platformou vázané pole.
+- `src/slice.ts`: identity writerů bez `schemaVersion`.
+- Testy: **ZLAB-DUR-007** (3 testy: podpis nad prefixem, ne nad holým hashem; v1 záznam podepsaný
+  důvěryhodným klíčem nad holým hashem odmítnut s důvodem `schemaVersion`; `authorityDomain` je pečetěný
+  obsah — tamper = fail, záznam bez něj přežije JSON round trip), **EW-005** (doména jen z identity, claim
+  s doménou přes cast ignorován). Z kandidátů v zlab/dojicka/konev/evidence-writer testech odstraněno
+  `schemaVersion: "1"`.
+- Konev podpis (`konev.ts`) beze změny — domain separation Konve (`CBO:v1:`) je samostatný malý krok,
+  ne součást D-1.
+
+**Brány zelené:** typecheck, arch, farm:check (obě instalace), **480/480 testů** (+4). Nenasazeno — nic
+runtime se nemění, farma dál `cbbe656`. **Další krok D-2:** `SqliteEvidenceStore` jako backend ledgeru
+v DO (ZLAB-DUR-001..003), stejný vzor jako `SqliteJournal`.
+
 ## 2026-09-15 (161) — M0 krůček 3 uzavřen (AuthorityGrant, R2 + R6), krůček 4 DurableFactStore k uzavření — poslední před kódem
 
 Vlastník: „ano" → **krůček 3 AuthorityGrant UZAVŘEN** beze změn, tím R2 (revokace podle aktuálního

@@ -1,7 +1,7 @@
 import type { Evidence, EvidenceCandidate, EvidenceLedger } from "./evidence.js";
 import type { HandlerInput } from "./types.js";
 
-/** What a cow's own handler may claim — deliberately excludes tenantId/producerId/capabilityVersion/buildHash/workflowId/operationId, which EvidenceWriter sources itself. */
+/** What a cow's own handler may claim — deliberately excludes tenantId/producerId/capabilityVersion/buildHash/workflowId/operationId AND authorityDomain, which EvidenceWriter sources itself (a cow can never declare its own authority — M0-FACT-CONTRACT-V1 část C). */
 export interface EvidenceClaim {
   inputField: string;
   inputValueHash: string;
@@ -18,7 +18,7 @@ export interface EvidenceClaim {
  * it likes. `EvidenceWriter` is that missing trust boundary:
  *
  *   - **Identity is bound once, at construction** (`producerId`/`capabilityVersion`/`buildHash`/
- *     `schemaVersion`) — the same instance the platform wiring would hand to exactly one
+ *     `authorityDomain` from the installation grant) — the same instance the platform wiring would hand to exactly one
  *     capability's handler. A handler holding this writer can never claim to be a *different*
  *     capability or build than the one it was actually constructed for; there is no per-call way
  *     to override it, unlike `EvidenceCandidate`'s fields, which are all mutable per call.
@@ -35,7 +35,7 @@ export interface EvidenceClaim {
 export class EvidenceWriter {
   constructor(
     private readonly ledger: EvidenceLedger,
-    private readonly identity: { producerId: string; capabilityVersion: string; buildHash: string; schemaVersion: string },
+    private readonly identity: { producerId: string; capabilityVersion: string; buildHash: string; authorityDomain?: string },
   ) {}
 
   write(input: HandlerInput, claim: EvidenceClaim): Evidence {
@@ -46,7 +46,7 @@ export class EvidenceWriter {
       producerId: this.identity.producerId,
       capabilityVersion: this.identity.capabilityVersion,
       buildHash: this.identity.buildHash,
-      schemaVersion: this.identity.schemaVersion,
+      ...(this.identity.authorityDomain !== undefined ? { authorityDomain: this.identity.authorityDomain } : {}),
       inputField: claim.inputField,
       inputValueHash: claim.inputValueHash,
       result: claim.result,

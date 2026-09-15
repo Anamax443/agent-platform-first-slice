@@ -350,10 +350,10 @@ D1 (sdílené, per instalace), insert-only:
 ### Rozhodovací tabulka — DurableFactStore (krůček 4, 15. 9. 2026)
 
 Stav: **UZAVŘENO 15. 9. 2026** — vlastník potvrdil beze změn; R3 (retence), R4 (podpis v2) a R5
-(`buildHash`) tím uzavřeny. Implementace D začíná: (D-1) tvar záznamu v2 + podpis s prefixem +
-`authorityDomain` pole → (D-2) storage backend `SqliteEvidenceStore` v DO → (D-3) D1 zrcadlo + lookup
-referencí → (D-4) import s lineage → (D-5) živé zapojení `EvidenceWriter` pro `cz.*`, `buildHash = gitSha`,
-`/farm`, live verification.
+(`buildHash`) tím uzavřeny. Implementace D: **(D-1) HOTOVO 15. 9. 2026, HANDOFF 162** — tvar záznamu v2 + podpis s prefixem
+`EVIDENCE:v2:` + `authorityDomain` pole + v1 odmítnuto (ZLAB-DUR-007, EW-005) → (D-2) storage backend
+`SqliteEvidenceStore` v DO → (D-3) D1 zrcadlo + lookup referencí → (D-4) import s lineage → (D-5) živé
+zapojení `EvidenceWriter` pro `cz.*`, `buildHash = gitSha`, `/farm`, live verification.
 
 | Otázka | Rozhodnutí |
 |---|---|

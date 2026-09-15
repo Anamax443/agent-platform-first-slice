@@ -2,9 +2,13 @@
 // Posudek 12 point 11) — a tenant-scoped, append-only, hash-chained, platform-signed evidence
 // store. Not yet wired into any real capability/ExecutorHost step; these tests exercise the
 // primitive itself (same pattern as tests/evd.test.ts EVD-004 for Audit's own append-only guarantee).
+import { sign, verify } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { sha256 } from "../src/platform/artifacts.js";
+import { fromBase64Url, toBase64Url, utf8Bytes } from "../src/platform/bytes.js";
+import { canonicalize } from "../src/platform/canonical.js";
 import { FakeClock } from "../src/platform/clock.js";
-import { EvidenceLedger, type Evidence, type EvidenceCandidate } from "../src/platform/evidence.js";
+import { EVIDENCE_SCHEMA_VERSION, EvidenceLedger, evidenceSignedBytes, type Evidence, type EvidenceCandidate } from "../src/platform/evidence.js";
 import { generateKeyPair } from "../src/platform/signing.js";
 
 const START = "2026-09-13T08:00:00Z";
@@ -24,7 +28,6 @@ function candidate(overrides: Partial<EvidenceCandidate> = {}): EvidenceCandidat
     producerId: "cz.vat.verify",
     capabilityVersion: "1",
     buildHash: "build-abc123",
-    schemaVersion: "1",
     inputField: "bankAccount",
     inputValueHash: "sha256-of-account-value",
     result: "PASS",
@@ -121,5 +124,41 @@ describe("ZLAB-007 Žlab is tenant-scoped: forTenant never returns another tenan
     expect(ledger.forTenant(TENANT_A)).toHaveLength(2);
     expect(ledger.forTenant(TENANT_B)).toHaveLength(1);
     expect(ledger.forTenant(TENANT_A).every((r) => r.tenantId === TENANT_A)).toBe(true);
+  });
+});
+
+// M0 část D, R4 (docs/M0-FACT-CONTRACT-V1.md): v2 record shape — the ledger owns schemaVersion, signs with a domain
+// prefix (Posudek 16 P1-12) and refuses v1 records instead of silently accepting them.
+describe("ZLAB-DUR-007 v2 evidence: ledger-owned schemaVersion, domain-separated signature, v1 refused", () => {
+  it("append() stamps schemaVersion 2 and signs EVIDENCE:v2:<recordHash>, never the bare hash", () => {
+    const { ledger, keyPair } = ledgerFixture();
+    const record = ledger.append(candidate());
+    expect(record.schemaVersion).toBe(EVIDENCE_SCHEMA_VERSION);
+    expect(EVIDENCE_SCHEMA_VERSION).toBe("2");
+    const sig = fromBase64Url(record.platformSignature);
+    expect(verify(null, evidenceSignedBytes(record.recordHash), keyPair.publicKey, sig)).toBe(true);
+    expect(verify(null, utf8Bytes(record.recordHash), keyPair.publicKey, sig)).toBe(false);
+  });
+
+  it("a v1-shaped record signed over the bare hash with the trusted key is refused, never silently accepted", () => {
+    const { ledger, keyPair } = ledgerFixture();
+    const v1Unsigned = { ...candidate(), recordId: "evd-v1", observedAt: START, schemaVersion: "1" };
+    const recordHash = sha256(canonicalize(v1Unsigned));
+    const platformSignature = toBase64Url(sign(null, utf8Bytes(recordHash), keyPair.privateKey));
+    const v1: Evidence = { ...v1Unsigned, recordHash, keyId: "platform-k1", platformSignature };
+    const r = ledger.verify(v1);
+    expect(r.ok).toBe(false);
+    expect((r as { reason: string }).reason).toMatch(/schemaVersion/);
+  });
+
+  it("authorityDomain is sealed content: tampering it breaks verification; a record without it survives a JSON round trip", () => {
+    const { ledger } = ledgerFixture();
+    const stamped = ledger.append(candidate({ authorityDomain: "cz.vat.registry" }));
+    expect(stamped.authorityDomain).toBe("cz.vat.registry");
+    expect(ledger.verify(stamped)).toEqual({ ok: true });
+    expect(ledger.verify({ ...stamped, authorityDomain: "tenant.human-review" }).ok).toBe(false);
+    const plain = ledger.append(candidate());
+    expect(plain.authorityDomain).toBeUndefined();
+    expect(ledger.verify(JSON.parse(JSON.stringify(plain)) as Evidence)).toEqual({ ok: true });
   });
 });
