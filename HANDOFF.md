@@ -2,6 +2,54 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-15 (166) — M0 D-5: durable Žlab živě na farmě — evidence v objektu, zrcadlo v D1, `/farm` to ukazuje; dvě chyby našel až živý test
+
+**Vlastník: „dál" + „rád bych začal testovat step by step, protože toto je nějaká teorie, která potom zase
+bude zpochybněna".** Poslední kus části D a první s live verification — a přesně ta odhalila dvě chyby, které
+480+ zelených testů nechytilo. Část D je tím **hotová a živě ověřená**.
+
+**Změny (4 commity, `f9df265` → `259121a` → `aa2a098` → `b6924d5`):**
+- `platform-wiring.ts`: `WiringOptions.evidence { store, buildHash }`; `wirePlatform` staví jeden `EvidenceLedger`
+  per objekt nad jeho `SqliteEvidenceStore`, podepsaný **stejným Ed25519 klíčem jako dispatch** (domain separation
+  `EVIDENCE:v2:` z D-1 zaručuje, že podpis evidence nikdy nezastoupí podpis obálky a naopak — žádný nový secret);
+  `cz.company.verify`/`cz.vat.verify` dostávají `EvidenceWriter` vázaný na svůj `producerId`, zatím **bez
+  `authorityDomain`** (část C) → všechny záznamy „inferred". HANDOFF 152's „záměrně bez evidence" tím končí.
+- `index.ts`: objekt vlastní `SqliteEvidenceStore` (tabulka `evidence` z DDL), wiring dostává `buildHash = GIT_SHA`
+  (R5); `copyOut()` zrcadlí evidenci do D1 za auditem (`evidence_mirror`, `mirrorEvidence`, insert-only);
+  `evidenceStats()` RPC (záznamy, ověřené, **nezrcadlené**, domény); `GET /farm/zlab.json` (D1 + self-test
+  objekt, čitelná chyba místo 1101); `POST /farm/zlab/mirror` (operátorský synchronní copy-out s výsledkem nebo
+  chybou); `buildFarmModel` → `zlab`.
+- `page.ts`: `ZlabStats`, Přehled lede „Žlab N záznamů (doména n, …)" / „zatím prázdný" / „nedostupný" — počty
+  a domény, nikdy hodnota. `tests/page.test.ts` PAGE-ZLAB.
+
+**Dvě chyby nalezené jen živě (unit testy je chytit nemohly — obě jsou v chování workerd/D1):**
+1. **Souběžné DDL + zapamatovaný odmítnutý slib.** `ensureD1Evidence` spouštěl `CREATE TABLE` a `CREATE INDEX`
+   přes `Promise.all`; index občas dorazil dřív než tabulka → rejection → uložená v modulové proměnné → **celý
+   izolát otrávený** (střídavé `1101` na `/farm/zlab.json` podle izolátu, `copyOut` v objektu tiše padal).
+   Oprava `259121a`: `oncePerIsolate()` — DDL sekvenčně, selhání se nikdy necachuje; stejný tvar dostal i
+   `ensureD1Audit` (latentně stejná chyba). Endpoint vrací `{ error }` 503 místo 1101.
+2. **`waitUntil()` po RPC self-testu nikdy nedoběhl.** Objekt držel 12 ověřených záznamů, D1 nula, audit
+   self-test objektu se do D1 nezrcadlil od nasazení — a nic to neřeklo. `POST /farm/zlab/mirror` (synchronně)
+   proběhl za 21,9 s (první průchod kopíroval i všechny dosud nekopírované artefakty self-test objektu) a
+   dorovnal 12 → 0. Oprava `b6924d5`: `selfTest()` na `copyOut()` **čeká** (try/catch, log), `evidenceStats`
+   hlásí `unmirrored`, aby rozdíl objekt × D1 nikdy nebyl neviditelný. Ostatní `waitUntil(copyOut)` volání
+   (intake/resume) fungují, protože objekt dál běží orchestrátor — ponecháno, ale je to stejná past pro
+   jakýkoli budoucí „RPC a konec" tvar.
+
+**Live verification (exit M0 část D), `b6924d5` na `apf.maxferit.cz`:**
+- po nasazení (= restart objektu): self-test objekt **12 záznamů, 12 ověřených, 0 nezrcadlených**, D1 12 → evidence
+  přežila evikci (D2), podpisy sedí (D3);
+- `POST /farm/self-test?capability=cz.company.verify` 4/4 → okamžitě objekt 15/15/0, D1 15 — zrcadlo se dorovná
+  samo; Přehled: „Žlab 15 záznamů (inferred 15)";
+- řádky v D1 (přes `wrangler d1 execute`, bez hodnot): `schemaVersion 2`, `result` ACTIVE/CEASED/NOT_FOUND a
+  ANO/NE/NENALEZEN, `producerId` cz.company.verify / cz.vat.verify, **`buildHash` = nasazení, které záznam
+  zapečetilo** (`f9df265`, `259121a`, `b6924d5`) — R5 funguje; `authority_domain` null (část C); `input_field`
+  zatím `companyId`/`vatId` = invoice.v1 krátké názvy, mapování na `supplier.companyId` je část A (zapsáno tam).
+
+**Brány zelené:** typecheck, arch, farm:check, **499/499 testů** (+1). **Další: část C (AuthorityGrant)** —
+`authorities.json`, razítko domény v `EvidenceWriter`, Dojička podle domény, TTL z grantu; live verification =
+`/farm/zlab.json` `byDomain` ukáže `cz.company.registry` místo `inferred`.
+
 ## 2026-09-15 (165) — M0 D-4: import cizí evidence do nového případu — celý podepsaný řetěz, lineage lokálně i po purge originálu
 
 **Vlastník: „pokračuj".** Čtvrtý kus části D. Nový případ, který přes lookup (D-3) zjistil, že fakt už byl
