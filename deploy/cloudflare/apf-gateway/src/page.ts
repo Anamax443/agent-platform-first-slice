@@ -113,10 +113,18 @@ export interface CapabilityRow {
   derivedStatus: LifecycleStatus;
 }
 
+/** Durable Žlab as seen from the shared D1 copy (M0 D-5): counts and authority domains only — never a value, never a result. */
+export interface ZlabStats {
+  total: number;
+  byDomain: { domain: string; records: number; last: string }[];
+}
+
 export interface FarmModel {
   installation: string;
   gitSha: string;
   gatewaySigning: string;
+  /** Absent = D1 unreachable when the page was built (rendered as "nedostupný", never as zero). */
+  zlab?: ZlabStats;
   deployables: DeployableStatus[];
   capabilities: CapabilityRow[];
   instances: FarmInstanceRow[];
@@ -861,6 +869,14 @@ const cowWorkshopModelForm = (models: ModelsInfo): string => {
 };
 
 // -----------------------------------------------------------------------------------------------------------
+/** Žlab one-liner for Přehled (M0 D-5): honest words for "unreachable" and "empty", counts per authority domain otherwise. */
+const zlabSummary = (z: ZlabStats | undefined): string => {
+  if (z === undefined) return "nedostupný";
+  if (z.total === 0) return "zatím prázdný";
+  const noun = z.total === 1 ? "záznam" : z.total < 5 ? "záznamy" : "záznamů";
+  return `${z.total} ${noun} (${z.byDomain.map((d) => `${esc(d.domain)} ${d.records}`).join(", ")})`;
+};
+
 // Průsvitná stáj — nová IA (13. 9. 2026): Přehled · Podatelna · Ohrada · Stáj · Argos · Výsledek · Deník.
 // -----------------------------------------------------------------------------------------------------------
 
@@ -969,7 +985,7 @@ export function renderFarm(m: FarmModel): string {
       id: "prehled",
       icon: mascot("farmar", MASCOT_BG.prehled),
       label: "Přehled",
-      body: `<div class="pagehead"><h1>${mascot("farmar", MASCOT_BG.prehled, "lg")} Přehled farmy</h1></div><p class="lede">${esc(m.installation)} · ${up}/${m.deployables.length} Workerů OK · podpis ${esc(m.gatewaySigning)}</p>
+      body: `<div class="pagehead"><h1>${mascot("farmar", MASCOT_BG.prehled, "lg")} Přehled farmy</h1></div><p class="lede">${esc(m.installation)} · ${up}/${m.deployables.length} Workerů OK · podpis ${esc(m.gatewaySigning)} · Žlab ${zlabSummary(m.zlab)}</p>
       <div class="toolbar" style="margin-top:0">${stateBadge(effectiveLevel)}<span class="dim">${activeFindings.length === 0 ? "žádné otevřené nálezy" : `${activeFindings.length} ${activeFindings.length === 1 ? "nález" : "nálezy"} vyžaduje pozornost`}</span></div>
       <div class="stat-row">
         <div class="stat"><b>${m.stats.processedToday}</b><span>zpracováno dnes</span></div>

@@ -580,3 +580,18 @@ describe("Kapability karta ukazuje Argosův živý nález odděleně od formáln
     expect(card).not.toContain("Argos:");
   });
 });
+
+// M0 D-5 (docs/M0-FACT-CONTRACT-V1.md část D): the Přehled lede shows the durable Žlab as counts per authority domain —
+// never a value — and says so honestly when D1 is unreachable or the Žlab is still empty.
+describe("PAGE-ZLAB Přehled shows the Žlab as counts and domains only", () => {
+  it("renders the D1 count with domains, and honest words when empty or unreachable", () => {
+    const withZlab = renderFarm({
+      ...model,
+      zlab: { total: 3, byDomain: [{ domain: "cz.company.registry", records: 2, last: "2026-09-15T10:00:00Z" }, { domain: "inferred", records: 1, last: "2026-09-15T10:01:00Z" }] },
+    });
+    expect(withZlab).toContain("Žlab 3 záznamy (cz.company.registry 2, inferred 1)");
+    expect(renderFarm({ ...model, zlab: { total: 0, byDomain: [] } })).toContain("Žlab zatím prázdný");
+    const { zlab: _omitted, ...withoutZlab } = { ...model, zlab: undefined };
+    expect(renderFarm(withoutZlab)).toContain("Žlab nedostupný");
+  });
+});

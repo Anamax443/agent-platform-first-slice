@@ -21,6 +21,8 @@ import type { ArtifactWriter } from "../../../../src/platform/artifacts.js";
 import type { AuditTrail } from "../../../../src/platform/audit.js";
 import { iso, type Clock } from "../../../../src/platform/clock.js";
 import { CredentialResolver } from "../../../../src/platform/credentials.js";
+import { EvidenceLedger, type EvidenceStore } from "../../../../src/platform/evidence.js";
+import { EvidenceWriter } from "../../../../src/platform/evidence-writer.js";
 import { ExecutorHost } from "../../../../src/platform/executor-host.js";
 import { Gateway, IdentityProvider } from "../../../../src/platform/gateway.js";
 import { policyFor } from "../../../../src/platform/policy.js";
@@ -194,19 +196,25 @@ export interface WiringOptions {
   ares?: AresAdapter;
   aresTimeoutMs?: number;
   /** Any MojeDaneAdapter: FakeMojeDaneAdapter (default) or HttpMojeDaneAdapter once a real adisrws.mfcr.cz
-   * baseUrl is an installation value (SEVERKA.md "## Pořadí" bod 6, HANDOFF 136). Deliberately no `evidence`
-   * option here yet (HANDOFF 152) — the Žlab is still in-memory-only (POSUDKY.md Posudek 16 punch list,
-   * "durable Žlab storage" still open, owner's call on ordering) — sealing live evidence that a Durable
-   * Object eviction could silently lose would be exactly the kind of failure this platform's audit trail
-   * is built never to allow. */
+   * baseUrl is an installation value (SEVERKA.md "## Pořadí" bod 6, HANDOFF 136). */
   mojeDane?: MojeDaneAdapter;
   mojeDaneTimeoutMs?: number;
+  /**
+   * Durable Žlab (docs/M0-FACT-CONTRACT-V1.md část D, D-5). HANDOFF 152 deliberately left `evidence` out while the
+   * Žlab was in-memory-only; D-2..D-4 made it durable, so cz.company.verify/cz.vat.verify now seal into the object's
+   * SqliteEvidenceStore. Absent = no evidence is written (tests that don't care). The ledger signs with the same
+   * Ed25519 key as dispatch, domain-separated ("EVIDENCE:v2:", evidence.ts), so neither signature can stand in for
+   * the other. `buildHash` = the running deploy (GIT_SHA), stamped on every record (R5).
+   */
+  evidence?: { store: EvidenceStore; buildHash: string };
 }
 
 export interface Wiring {
   transport: DispatchTransport;
   signing: "secret" | "ephemeral";
   keyId: string;
+  /** The object's Žlab, present when WiringOptions.evidence was given. Read-only use outside the handlers (stats, import). */
+  evidence?: EvidenceLedger;
 }
 
 export function wirePlatform(o: WiringOptions): Wiring {
@@ -225,6 +233,12 @@ export function wirePlatform(o: WiringOptions): Wiring {
   const registry = new KeyRegistry();
   registry.add({ keyId: o.keyId, publicKey: createPublicKey(privateKey), validFrom: iso(new Date(0)) });
   const gateway = new Gateway({ identities: new IdentityProvider(profile.identities), signer: new Signer(o.keyId, privateKey), clock: o.clock });
+  // Durable Žlab (M0 D-5): one ledger per object over its SQLite store, sealed with the platform key. Each evidence-
+  // writing capability gets its own EvidenceWriter bound at construction to its producerId (evidence-writer.ts) —
+  // no authorityDomain yet: that is part C (installation authority grants), until then every record is "inferred".
+  const evidence = o.evidence ? new EvidenceLedger(o.clock, { keyId: o.keyId, privateKey, publicKey: createPublicKey(privateKey) }, o.evidence.store) : undefined;
+  const writerFor = (producerId: string): { evidence?: EvidenceWriter } =>
+    evidence && o.evidence ? { evidence: new EvidenceWriter(evidence, { producerId, capabilityVersion: "1", buildHash: o.evidence.buildHash }) } : {};
   const router = new Router({ registry, clock: o.clock, audit: o.audit, lifecycle: o.installation.lifecycle });
   const policy = (capability: string) => policyFor(o.installation.policies, capability, "1");
 
@@ -277,6 +291,7 @@ export function wirePlatform(o: WiringOptions): Wiring {
           ares: o.ares ?? new FakeAresAdapter(),
           clock: o.clock,
           ...(o.aresTimeoutMs !== undefined ? { aresTimeoutMs: o.aresTimeoutMs } : {}),
+          ...writerFor(COMPANY_VERIFY),
         }),
       },
     ],
@@ -293,6 +308,7 @@ export function wirePlatform(o: WiringOptions): Wiring {
           mojeDane: o.mojeDane ?? new FakeMojeDaneAdapter(),
           clock: o.clock,
           ...(o.mojeDaneTimeoutMs !== undefined ? { mojeDaneTimeoutMs: o.mojeDaneTimeoutMs } : {}),
+          ...writerFor(VAT_VERIFY),
         }),
       },
     ],
@@ -332,5 +348,5 @@ export function wirePlatform(o: WiringOptions): Wiring {
       return o.notWired(message, actorId);
     },
   };
-  return { transport, signing, keyId: o.keyId };
+  return { transport, signing, keyId: o.keyId, ...(evidence ? { evidence } : {}) };
 }

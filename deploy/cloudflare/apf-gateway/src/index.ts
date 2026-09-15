@@ -56,7 +56,10 @@ import {
 import { COW_WORKSHOP, describeModels, gatewayCatalog, modelAdapterFor, wirePlatform, type Wiring } from "./platform-wiring.js";
 import { runSelfTest, requiredTestsFor, selfTestCapabilityForTick, SELF_TEST_CAPABILITIES, SELF_TEST_WORKFLOW_ID } from "./self-test.js";
 import { newSession, sendMessage, type WorkshopSession } from "./workshop.js";
-import { D1_AUDIT_DDL, DDL, SqliteArtifacts, SqliteAudit, SqliteJournal, SqliteReviewTaskStore } from "./store.js";
+import { D1_AUDIT_DDL, D1_EVIDENCE_DDL, d1Sql, DDL, evidenceMirrorOf, evidenceStoreOf, SqliteArtifacts, SqliteAudit, SqliteJournal, SqliteReviewTaskStore } from "./store.js";
+import { mirrorEvidence } from "../../../../src/platform/evidence-mirror.js";
+import type { SqliteEvidenceStore } from "../../../../src/platform/evidence-sqlite.js";
+import type { ZlabStats } from "./page.js";
 import { visuallyStamp } from "./visual-stamp.js";
 
 export interface Env {
@@ -533,6 +536,17 @@ class NotWiredTransport {
 
 let d1AuditReady: Promise<unknown> | undefined;
 const ensureD1Audit = (db: D1Database): Promise<unknown> => (d1AuditReady ??= db.prepare(D1_AUDIT_DDL).run());
+/** Durable Žlab's shared copy (M0 D-5): the evidence_mirror table in the same D1 as the audit trail, its own DDL. */
+let d1EvidenceReady: Promise<unknown> | undefined;
+const ensureD1Evidence = (db: D1Database): Promise<unknown> => (d1EvidenceReady ??= Promise.all(D1_EVIDENCE_DDL.map((stmt) => db.prepare(stmt).run())));
+
+/** Žlab as seen from the shared D1 copy: counts and domains only — never a value, never a result. */
+async function zlabStats(env: Env): Promise<ZlabStats> {
+  await ensureD1Evidence(env.AUDIT);
+  const rows = await d1Sql(env.AUDIT).all("SELECT authority_domain AS domain, COUNT(*) AS records, MAX(observed_at) AS last FROM evidence_mirror GROUP BY authority_domain ORDER BY records DESC, domain");
+  const byDomain = rows.map((r) => ({ domain: (r.domain as string | null) ?? "inferred", records: Number(r.records), last: String(r.last) }));
+  return { total: byDomain.reduce((n, d) => n + d.records, 0), byDomain };
+}
 
 /** One Durable Object per workflow instance: its SQLite is the journal, the audit and the artifact store of that instance. */
 export class WorkflowInstance extends DurableObject<Env> {
@@ -541,6 +555,8 @@ export class WorkflowInstance extends DurableObject<Env> {
   private readonly audit: SqliteAudit;
   private readonly artifacts: SqliteArtifacts;
   private readonly reviewStore: SqliteReviewTaskStore;
+  /** Durable Žlab of this object (M0 D-5): sealed evidence in the same SQLite, mirrored to D1 by copyOut(). */
+  private readonly evidenceStore: SqliteEvidenceStore;
   private wiringCache: Wiring | undefined;
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -550,6 +566,7 @@ export class WorkflowInstance extends DurableObject<Env> {
     this.audit = new SqliteAudit(ctx.storage.sql, this.clock);
     this.artifacts = new SqliteArtifacts(ctx.storage.sql, this.clock);
     this.reviewStore = new SqliteReviewTaskStore(ctx.storage.sql);
+    this.evidenceStore = evidenceStoreOf(ctx.storage.sql);
   }
 
   /** Built on first use so that a broken wiring (missing secret) fails the intake with a message, not the object. */
@@ -567,6 +584,7 @@ export class WorkflowInstance extends DurableObject<Env> {
       clock: this.clock,
       keyId: this.env.SIGNING_KEY_ID,
       signingKeyPem: this.env.GATEWAY_SIGNING_KEY,
+      evidence: { store: this.evidenceStore, buildHash: this.env.GIT_SHA },
       notWired: (m, a) => notWired.dispatch(m, a),
     });
     return this.wiringCache;
@@ -711,7 +729,7 @@ export class WorkflowInstance extends DurableObject<Env> {
    * workflow instance created (this DO's own "self-test" identity never shows up in "Poslední instance").
    */
   async selfTest(only?: { capability?: string; worker?: string }): Promise<SelfTestRow[]> {
-    return runSelfTest({
+    const rows = await runSelfTest({
       transport: this.wiring().transport,
       artifacts: this.artifacts,
       clock: this.clock,
@@ -719,6 +737,26 @@ export class WorkflowInstance extends DurableObject<Env> {
       deadlineMs: 60_000,
       only,
     });
+    // cz.company.verify/cz.vat.verify fixtures seal real evidence into this object's Žlab (M0 D-5) — copy it out.
+    this.ctx.waitUntil(this.copyOut());
+    return rows;
+  }
+
+  /** Žlab as held by THIS object (M0 D-5 live verification): counts per authority domain and how many records verify — never a value. */
+  evidenceStats(): { records: number; verified: number; byDomain: Record<string, number> } {
+    const ledger = this.wiring().evidence;
+    const byDomain: Record<string, number> = {};
+    let records = 0;
+    let verified = 0;
+    for (const tenantId of installation.profile.tenants) {
+      for (const r of ledger?.forTenant(tenantId) ?? []) {
+        records += 1;
+        if (ledger?.verify(r).ok) verified += 1;
+        const domain = r.authorityDomain ?? "inferred";
+        byDomain[domain] = (byDomain[domain] ?? 0) + 1;
+      }
+    }
+    return { records, verified, byDomain };
   }
 
   view(): InstanceView | null {
@@ -859,7 +897,7 @@ export class WorkflowInstance extends DurableObject<Env> {
     return updated;
   }
 
-  /** Text artifacts to R2 (immutable, keyed by tenant + sha256) and audit records to the shared D1 trail. Idempotent. */
+  /** Text artifacts to R2 (immutable, keyed by tenant + sha256), audit records and sealed evidence to the shared D1. Idempotent. */
   private async copyOut(): Promise<void> {
     for (const a of this.artifacts.uncopied()) {
       const key = `${a.derivedFrom ? "derived" : "originals"}/${a.tenantId}/${a.sha256}`;
@@ -872,15 +910,22 @@ export class WorkflowInstance extends DurableObject<Env> {
       this.artifacts.markCopied(a.artifactId);
     }
     const pending = this.audit.unmirrored();
-    if (pending.length === 0) return;
-    await ensureD1Audit(this.env.AUDIT);
-    const insert = this.env.AUDIT.prepare(
-      "INSERT OR IGNORE INTO audit (audit_id, at, kind, correlation_id, workflow_id, tenant_id, actor_id, capability, json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    );
-    await this.env.AUDIT.batch(
-      pending.map((r) => insert.bind(r.auditId, r.at, r.kind, r.correlationId ?? null, r.workflowId ?? null, r.tenantId ?? null, r.actorId ?? null, r.capability ?? null, JSON.stringify(r))),
-    );
-    this.audit.markMirrored(pending.map((r) => r.auditId));
+    if (pending.length > 0) {
+      await ensureD1Audit(this.env.AUDIT);
+      const insert = this.env.AUDIT.prepare(
+        "INSERT OR IGNORE INTO audit (audit_id, at, kind, correlation_id, workflow_id, tenant_id, actor_id, capability, json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      );
+      await this.env.AUDIT.batch(
+        pending.map((r) => insert.bind(r.auditId, r.at, r.kind, r.correlationId ?? null, r.workflowId ?? null, r.tenantId ?? null, r.actorId ?? null, r.capability ?? null, JSON.stringify(r))),
+      );
+      this.audit.markMirrored(pending.map((r) => r.auditId));
+    }
+    // Durable Žlab (M0 D-5): sealed evidence goes to the shared D1 copy the same way — insert-only, replay-safe,
+    // marked after (evidence-mirror.ts mirrorEvidence). The object's SQLite stays the source of truth.
+    if (this.evidenceStore.unmirrored().length > 0) {
+      await ensureD1Evidence(this.env.AUDIT);
+      await mirrorEvidence(this.evidenceStore, evidenceMirrorOf(this.env.AUDIT));
+    }
   }
 }
 
@@ -1301,6 +1346,8 @@ async function buildFarmModel(env: Env, instanceLimit: number, instanceWindow: s
     latestCowWorkshopModelKey(env),
     listWorkshopSessions(env),
   ]);
+  // Žlab summary from D1 (M0 D-5) — an unreachable D1 shows as "nedostupný" on the page, never as zero.
+  const zlab = await zlabStats(env).catch(() => undefined);
   // Admission Gate visibility (HANDOFF 70/71): the same LifecycleRegistry the Router enforces, read here only —
   // this page never writes it. Quarantining a module still means editing config/<installation>/lifecycle.json
   // and redeploying (a human decision with its own commit), not a button on this page.
@@ -1343,6 +1390,7 @@ async function buildFarmModel(env: Env, instanceLimit: number, instanceWindow: s
     installation: INSTALLATION,
     gitSha: env.GIT_SHA,
     gatewaySigning: signingMode(env),
+    ...(zlab ? { zlab } : {}),
     deployables: [
       { ...deployableName("apf-gateway"), ok: true, status: 200, body: { isolation: "self", wired: wiredOf(env) } },
       { ...deployableName("apf-document-host"), ...documentHost },
@@ -1435,6 +1483,13 @@ export default {
     // wf-... so apf-document-host's artifact fetch-back resolves to it too) so it never pollutes "Poslední instance"
     // (recentInstances() excludes it explicitly) or clashes with a real document's workflowId; purgeable like any
     // instance at /workflow/wf-selftest/purge if its artifact store grows.
+    // Durable Žlab (M0 D-5 live verification): what the shared D1 copy holds and what the self-test object holds
+    // locally — counts, domains, how many records verify under the platform key. Never a value, never a result.
+    if (url.pathname === "/farm/zlab.json" && request.method === "GET") {
+      const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(SELF_TEST_WORKFLOW_ID));
+      const [d1, selfTestObject] = await Promise.all([zlabStats(env), stub.evidenceStats()]);
+      return Response.json({ gitSha: env.GIT_SHA, d1, selfTestObject });
+    }
     if (url.pathname === "/farm/self-test" && (request.method === "POST" || request.method === "GET")) {
       // Owner's request 2026-09-09: "chci vidět kontroly a i si je být schopen individuálně vyvolat" — an
       // Argos capability card or a Kravičky worker card can each post their own narrower run instead of
