@@ -2,6 +2,23 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-15 (158) — Krok 2 živě: klíč z organizace s kreditem, první skutečný běh Claude na farmě prošel
+
+**Co se stalo:** po (157) vlastník nahrál nový `ANTHROPIC_API_KEY`. První pokus vrátil `401
+authentication_error: invalid x-api-key` (hodnota poškozená při vložení do maskovaného promptu —
+předchozí klíč byl platný, jen bez kreditu). Doporučeno: klíč do souboru
+`C:\Users\<user>\.secrets\anthropic-apf.key` (mimo repo, stejný vzor jako JobWatch) a rourou
+`Get-Content -Raw … | npx wrangler secret put ANTHROPIC_API_KEY -c …`, plus lokální ověření stejnou
+placenou cestou (`messages.create`, `max_tokens: 1`) — nikdy přes `GET /v1/models`, ten projde i bez
+kreditu. Druhý pokus: **`document-intake@2` s `model=claude-haiku-4-5` živě SUCCEEDED** — classify
+`claude-haiku-4-5`, `INVOICE`, 1 pokus → validate → stamp. Testovací instance smazány (401 i úspěšný
+běh, purge 200 → 404). Farma dál `cbbe656`, secret se mění bez redeploye.
+
+**Stav modelů na farmě:** Llama 8B i Claude Haiku 4.5 prošly stejný řetězec na téže fixture se stejným
+výsledkem (`INVOICE`, confidence = konstanta 0,9 — Posudek 17 2-2). Rozdíl v extrakci (`invoice.extract`)
+zatím měřit nejde: self-test model volit neumí a `invoice.extract` není v žádném workflow — to je M1
+(model per capability/tier) a M2 (korpus + metriky), ne dnešní krok. Žádný kód. Brány beze změny.
+
 ## 2026-09-15 (157) — Krok 1 živě: klíč funguje, organizace nemá kredit; nález: 400 kredit = 3× retry a žádný fallback (do M1)
 
 **Co se stalo:** vlastník nastavil `ANTHROPIC_API_KEY` (`wrangler secret put`), farma si secret vzala bez
