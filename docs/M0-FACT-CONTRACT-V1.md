@@ -327,8 +327,13 @@ vzor = policy granty ADR-016):
 Stav: **UZAVŘENO 15. 9. 2026** — vlastník potvrdil beze změn; R2 (revokace) a R6 (výchozí TTL) tím
 uzavřeny. Implementace C: **(C-1) HOTOVO A ŽIVĚ OVĚŘENO 16. 9. 2026, HANDOFF 169** — `authorities.ts`,
 `authorities.json` v obou instalacích, writer razítkuje doménu / odmítá fakt mimo rozsah / ořezává TTL, `zlab.json`
-`byDomain` ukazuje `cz.company.registry` a `cz.vat.registry` → (C-2) Dojička podle domény + revokace podle
-aktuálního grantu a Lifecycle + lidské rozhodnutí jako evidence `tenant.human-review` (AUTH-004/005/007).
+`byDomain` ukazuje `cz.company.registry` a `cz.vat.registry` → **(C-2 částečně) AUTH-004/005 HOTOVO, netestováno
+živě 16. 9. 2026, HANDOFF 170** — `EvidenceAggregator` (Dojička) požaduje `authorityDomain` místo `producerId`
+(swap producenta požadavek nerozbije), revokace kontroluje aktuální `AuthorityRegistry` + `LifecycleRegistry`
+(`revoked` → REVIEW, fail-closed); Dojička dosud nikde živě zapojená, takže bez farm verification. **AUTH-007
+(lidské rozhodnutí jako evidence `tenant.human-review`) čeká na rozhodnutí vlastníka** — doslovné „`parentRefs` →
+audit záznam" nejde implementovat (lineage ověřuje jen proti `Evidence`, ne proti nepodepsanému `AuditRecord`
+v jiném store) a `ReviewTask` dnes nenese, který fakt bylo rozhodnutí o; navržena oprava v HANDOFF 170.
 
 | Otázka | Rozhodnutí |
 |---|---|

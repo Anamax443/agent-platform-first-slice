@@ -2,6 +2,42 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-16 (170) — M0 C-2 zahájeno: Dojička podle domény + revokace; lidské rozhodnutí jako evidence zůstává otevřené
+
+**Vlastník: „budeme pokračovat"** po C-1 (`30af0ec`/`e716eea`, oba potvrzené proti gitu a živé farmě). Z tří položek C-2
+(AUTH-004/005/007) hotové první dvě, mechanické a jednoznačně dané rozhodovací tabulkou v `M0-FACT-CONTRACT-V1.md`;
+třetí zůstává otevřená, protože narazila na skutečnou mezeru v kontraktu (níže).
+
+- `src/platform/aggregator.ts` (`EvidenceAggregator` = Dojička): `RequiredEvidence.producerId` se stal volitelným,
+  přibylo `authorityDomain?` jako primární cesta — „kdo smí tvrdit tento fakt", ne „kdo to dělá dnes"
+  (**AUTH-004**: výměna producenta za jiného se stejnou doménou požadavek nerozbije; `producerId` zůstal jen jako
+  explicitní výjimka pro testy/diagnostiku, přesně podle rozhodovací tabulky část C).
+- Konstruktor `EvidenceAggregator` přibral dva nové volitelné parametry, `AuthorityRegistry` + `LifecycleRegistry`
+  (fail-closed výchozí: žádné granty, každý producent QUARANTINED) — nový nález `FindingKind "revoked"`: záznam
+  s `authorityDomain` se teď kontroluje proti **aktuálnímu** grantu a Lifecycle, ne stavu v době zápisu
+  (**AUTH-005**, R2). Producent odebraný z grantu nebo v karanténě → `revoked` → **REVIEW**, i když podpis i
+  lineage stále sedí — pokrývá i adversarial C-adv-4. Evidence bez `authorityDomain` (inferred) kontrolou neprochází
+  vůbec, takže žádný z existujících 12 DOJ testů se nezměnil.
+- 6 nových testů v `tests/auth.test.ts` (AUTH-004 ×2, AUTH-005 ×4: odebrání z grantu, karanténa, chybějící záznam v
+  Lifecycle vůbec, a kontrolní test že inferred evidence revokaci neřeší). **515/515** (+6), typecheck, `npm run arch`,
+  `npm run farm:check` všechno zelené.
+- **Žádná živá verifikace na farmě** — na rozdíl od C-1 (kde `EvidenceWriter` byl už zapojený do běžícího
+  `apf-gateway`), Dojička (`EvidenceAggregator`) dnes nikde v `src/components`/`apf-*` není volaná — zůstává čistě
+  testovaný primitiv (stejný status jako `EvidenceLedger` sám měl před 13. 9.). Farma dál běží `30af0ec`, nic
+  runtime se touhle změnou nemění, není co nasazovat.
+
+**AUTH-007 (lidské rozhodnutí jako evidence `tenant.human-review`) zůstalo neimplementované — skutečná mezera, ne
+odkládání:** `M0-FACT-CONTRACT-V1.md` řádek „Jak vstupuje lidské rozhodnutí do Žlabu?" píše `parentRefs` → audit
+záznam `review-decision`, ale `Evidence.parentRefs`/`parentHashes` jsou typované a `verifyLineage()` je ověřuje
+výhradně proti jiným `Evidence` záznamům ve stejném `EvidenceStore` (`ledger.get(parentId)`) — `AuditRecord`
+(`audit.ts`) není podepsaný a žije v jiném store, takže doslovné čtení věty by `verifyLineage()` rozbilo (parent by
+nikdy nebyl nalezen). Druhá mezera: `ReviewTask`/`CreateTask` (`review.ts`) dnes nenese, **který fakt** (FactAddress)
+bylo rozhodnutí o — jen `stepId`/`reasonCode`/`currentValue`. Návrh k potvrzení: nové volitelné pole
+`Evidence.sourceAuditId?: string` (mimo `parentRefs`, žádná změna sémantiky lineage) vyplňované jen důvěryhodným
+kódem uvnitř `ReviewService.decide()` (má `AuditRecord` z vlastního `audit.append()` po ruce), plus `CreateTask`
+dostane povinné pole pro cílový fakt. Čeká na vlastníkovo rozhodnutí, ne na sólo volbu asistenta — schéma `Evidence`
+se mění jen s rozvahou (stejná disciplína jako u C-1/D-1).
+
 ## 2026-09-16 (169) — M0 C-1: autority instalace — doména razítkovaná platformou, rozsah faktů vynucený, TTL evidence ořezaný; živě `cz.company.registry` v `zlab.json`
 
 **Vlastník: „ano" ke krůčku 5 → část 0 uzavřena, pokračuje C.** První kus části C (`30af0ec`):

@@ -1,6 +1,8 @@
+import { AuthorityRegistry } from "./authorities.js";
 import type { Clock } from "./clock.js";
 import { iso } from "./clock.js";
 import type { Evidence, EvidenceLedger } from "./evidence.js";
+import { LifecycleRegistry } from "./lifecycle.js";
 
 export type AggregateDecision = "READY" | "REVIEW" | "REJECT";
 
@@ -13,7 +15,8 @@ export type FindingKind =
   | "lineage_broken" // Evidence.verifyLineage() found a changed ancestor
   | "conflict" // two valid pieces of evidence for the same field disagree
   | "rejected" // required evidence exists but its result is not in acceptableResults (e.g. an explicit FAIL)
-  | "not_bound"; // evidence's inputValueHash does not match the caller's authoritative fieldHashes for that field
+  | "not_bound" // evidence's inputValueHash does not match the caller's authoritative fieldHashes for that field
+  | "revoked"; // evidence carries an authorityDomain but its producer no longer holds that grant, or is quarantined (M0-FACT-CONTRACT-V1 část C, R2)
 
 export interface AggregateFinding {
   field: string;
@@ -40,7 +43,15 @@ export interface AggregateResult {
 
 export interface RequiredEvidence {
   field: string;
-  producerId: string;
+  /** Which authority domain the accepted evidence must currently carry (M0-FACT-CONTRACT-V1 část C,
+   * C-2) — "who is entitled to assert this fact", not which producer happens to do it today.
+   * Swapping the producer behind an unchanged domain (AUTH-004) never breaks this requirement. */
+  authorityDomain?: string;
+  /** Explicit producer override, bypassing the domain/revocation check entirely — kept only "jako
+   * explicitní výjimka pro testy/diagnostiku" (M0-FACT-CONTRACT-V1 část C). Prefer authorityDomain
+   * for anything that reflects a real installation grant. Exactly one of authorityDomain/producerId
+   * must be set. */
+  producerId?: string;
   /** Which Evidence.result values count as satisfying this requirement. Default ["PASS"] — an
    * explicit non-acceptable result (e.g. FAIL, NENALEZEN) is a "rejected" finding (REJECT), never
    * silently treated the same as no evidence at all ("missing", REVIEW). Found by an adversarial
@@ -57,16 +68,27 @@ const DEFAULT_ACCEPTABLE_RESULTS = ["PASS"];
  * instance of docs/POSUDKY.md Posudek 11 point 7 / Posudek 12 point 9's `invoice.verification.
  * aggregate`, generalized to any named set of required (field, producer) pairs rather than being
  * invoice-specific — same generality as EvidenceLedger itself. By construction this class:
- *   - carries no LLM adapter and no external credential (constructor takes only a ledger + clock);
+ *   - carries no LLM adapter and no external credential (constructor takes only a ledger, clock and
+ *     two read-only installation registries);
  *   - never writes to the ledger (no `evidence.append` reference anywhere below) — it can decide
  *     READY/REVIEW/REJECT, but can never manufacture, edit or "helpfully fix" a missing value;
  *   - only reads Evidence already sealed by the platform (`EvidenceLedger.verify`/`verifyLineage`),
  *     never accepts a claim structure of its own that could be substituted for real evidence.
+ *
+ * `authorities`/`lifecycle` back the M0 part C-2 revocation check (docs/M0-FACT-CONTRACT-V1.md, R2):
+ * evidence that carries an `authorityDomain` is only as trustworthy as its producer's *current*
+ * standing, never its standing at write time — a producer removed from its grant or quarantined
+ * after the fact must not keep certifying, even though its old evidence still verifies and
+ * lineage-checks clean. Both default to fail-closed empty registries (no grants, every producer
+ * QUARANTINED) so a caller that forgets to wire them gets REVIEW on domain-stamped evidence, never a
+ * silent pass; evidence without an `authorityDomain` (inferred) is unaffected either way.
  */
 export class EvidenceAggregator {
   constructor(
     private readonly ledger: EvidenceLedger,
     private readonly clock: Clock,
+    private readonly authorities: AuthorityRegistry = AuthorityRegistry.empty(),
+    private readonly lifecycle: LifecycleRegistry = new LifecycleRegistry(),
   ) {}
 
   /**
@@ -113,22 +135,41 @@ export class EvidenceAggregator {
         findings.push({ field: record.inputField, kind: "expired", reason: `${recordId} expired at ${record.expiresAt} (now ${now})` });
         continue;
       }
+      if (record.authorityDomain) {
+        const grant = this.authorities.forProducer(record.producerId);
+        const stillGranted = grant?.domain === record.authorityDomain;
+        const active = this.lifecycle.statusOf(record.producerId) === "ACTIVE";
+        if (!stillGranted || !active) {
+          findings.push({
+            field: record.inputField,
+            kind: "revoked",
+            reason: `${recordId}: producer ${record.producerId} no longer holds an active grant for domain ${record.authorityDomain} (checked now, not at write time — fail-closed)`,
+          });
+          continue;
+        }
+      }
       const list = byField.get(record.inputField) ?? [];
       list.push(record);
       byField.set(record.inputField, list);
     }
 
     for (const req of input.required) {
+      if (!req.producerId && !req.authorityDomain) throw new Error(`required evidence for field ${req.field} names neither authorityDomain nor producerId — cannot match anything`);
       const acceptable = req.acceptableResults ?? DEFAULT_ACCEPTABLE_RESULTS;
-      const candidates = (byField.get(req.field) ?? []).filter((r) => r.producerId === req.producerId);
+      const pool = byField.get(req.field) ?? [];
+      // producerId is the explicit test/diagnostic override (M0-FACT-CONTRACT-V1 část C); the normal
+      // path matches by authorityDomain so swapping the producer behind an unchanged domain (AUTH-004)
+      // never breaks this requirement.
+      const by = req.producerId ? `producer ${req.producerId}` : `authority domain ${req.authorityDomain}`;
+      const candidates = req.producerId ? pool.filter((r) => r.producerId === req.producerId) : pool.filter((r) => r.authorityDomain === req.authorityDomain);
       if (candidates.length === 0) {
-        findings.push({ field: req.field, kind: "missing", reason: `no valid, unexpired, same-tenant evidence from ${req.producerId} for field ${req.field}` });
+        findings.push({ field: req.field, kind: "missing", reason: `no valid, unexpired, same-tenant, currently-authorized evidence from ${by} for field ${req.field}` });
         continue;
       }
       const anyAcceptable = candidates.some((r) => acceptable.includes(r.result));
       if (!anyAcceptable) {
         const seen = [...new Set(candidates.map((r) => r.result))].join(", ");
-        findings.push({ field: req.field, kind: "rejected", reason: `evidence from ${req.producerId} for ${req.field} has result [${seen}], none of which is acceptable (expected one of [${acceptable.join(", ")}])` });
+        findings.push({ field: req.field, kind: "rejected", reason: `evidence from ${by} for ${req.field} has result [${seen}], none of which is acceptable (expected one of [${acceptable.join(", ")}])` });
       }
     }
 

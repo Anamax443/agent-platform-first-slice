@@ -1,15 +1,19 @@
-// AUTH family (docs/M0-FACT-CONTRACT-V1.md část C, step C-1): authority is granted by the installation
+// AUTH family (docs/M0-FACT-CONTRACT-V1.md část C): authority is granted by the installation
 // (config/<installation>/authorities.json) and enforced by the EvidenceWriter — the domain is stamped from the
 // grant, a fact outside the grant's scope is refused with nothing written, and the grant caps how long evidence may
-// be trusted. A cow never declares any of this. AUTH-004/005/007 (Dojička by domain, revocation, human review) are C-2.
+// be trusted. A cow never declares any of this (AUTH-001/002/003/006, step C-1). AUTH-004/005 (Dojička by domain,
+// revocation — step C-2) live here too, since they're the read side of the same grant. AUTH-007 (human review as
+// evidence) is still open — it needs a design decision on how a ReviewTask names the fact it decided, not just code.
 import { cpSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadInstallationFromDir } from "../src/installation-node.js";
+import { EvidenceAggregator } from "../src/platform/aggregator.js";
 import { AuthorityError, AuthorityRegistry, parseIsoDuration } from "../src/platform/authorities.js";
 import { FakeClock, iso, plus } from "../src/platform/clock.js";
 import { EvidenceLedger } from "../src/platform/evidence.js";
 import { EvidenceWriter, type WriterAuthority } from "../src/platform/evidence-writer.js";
+import { LifecycleRegistry } from "../src/platform/lifecycle.js";
 import { generateKeyPair } from "../src/platform/signing.js";
 import type { HandlerInput, MessageEnvelope, TrustedContext } from "../src/platform/types.js";
 import { loadComponents, realCatalog } from "./harness/facts.js";
@@ -107,6 +111,127 @@ describe("AUTH-003 a fact outside the grant's scope is refused and nothing is wr
     const { ledger, clock } = fixture();
     const platform = new EvidenceWriter(ledger, { ...IDENTITY, producerId: "platform.entity", authority: { domain: "platform", facts: "*", maxEvidenceTtlMs: null } }, clock);
     expect(platform.write(input(), { inputField: "invoice.line@ent-1", inputValueHash: "entity-hash", result: "OBSERVED" }).authorityDomain).toBe("platform");
+  });
+});
+
+describe("AUTH-004 the Dojička requires a domain, not a producer — swapping the producer behind it never breaks the requirement", () => {
+  it("evidence from either of two producers granted the same domain satisfies the same authorityDomain requirement", () => {
+    const { ledger, clock } = fixture();
+    const registry = AuthorityRegistry.build({
+      schemaVersion: "1",
+      domains: { "cz.company.registry": { producers: ["cz.company.verify", "cz.company.verify.v2"], facts: ["supplier.companyId"], maxEvidenceTtl: "P30D" } },
+      tenants: {},
+    });
+    const lifecycle = new LifecycleRegistry({ "cz.company.verify": "ACTIVE", "cz.company.verify.v2": "ACTIVE" });
+    const aggregator = new EvidenceAggregator(ledger, clock, registry, lifecycle);
+    const required = [{ field: "supplier.companyId", authorityDomain: "cz.company.registry", acceptableResults: ["ACTIVE"] }];
+    const writeAs = (producerId: string) => new EvidenceWriter(ledger, { producerId, capabilityVersion: "1", buildHash: "build-1", authority: registry.forProducer(producerId) }, clock).write(input(), CLAIM);
+
+    const fromOriginal = writeAs("cz.company.verify");
+    const resultOriginal = aggregator.aggregate({ tenantId: "tenant-a", fieldHashes: { "supplier.companyId": CLAIM.inputValueHash }, required, evidenceRefs: [fromOriginal.recordId] });
+    expect(resultOriginal.decision).toBe("READY");
+
+    const fromReplacement = writeAs("cz.company.verify.v2");
+    const resultReplacement = aggregator.aggregate({ tenantId: "tenant-a", fieldHashes: { "supplier.companyId": CLAIM.inputValueHash }, required, evidenceRefs: [fromReplacement.recordId] });
+    expect(resultReplacement.decision).toBe("READY");
+  });
+
+  it("an explicit producerId requirement is unaffected — it still pins to one producer, ignoring the domain", () => {
+    const { ledger, clock } = fixture();
+    const registry = AuthorityRegistry.build({
+      schemaVersion: "1",
+      domains: { "cz.company.registry": { producers: ["cz.company.verify", "cz.company.verify.v2"], facts: ["supplier.companyId"], maxEvidenceTtl: "P30D" } },
+      tenants: {},
+    });
+    const lifecycle = new LifecycleRegistry({ "cz.company.verify": "ACTIVE", "cz.company.verify.v2": "ACTIVE" });
+    const aggregator = new EvidenceAggregator(ledger, clock, registry, lifecycle);
+    const fromReplacement = new EvidenceWriter(ledger, { producerId: "cz.company.verify.v2", capabilityVersion: "1", buildHash: "build-1", authority: registry.forProducer("cz.company.verify.v2") }, clock).write(input(), CLAIM);
+    const result = aggregator.aggregate({
+      tenantId: "tenant-a",
+      fieldHashes: { "supplier.companyId": CLAIM.inputValueHash },
+      required: [{ field: "supplier.companyId", producerId: "cz.company.verify", acceptableResults: ["ACTIVE"] }],
+      evidenceRefs: [fromReplacement.recordId],
+    });
+    expect(result.decision).toBe("REVIEW");
+    expect(result.findings.some((f) => f.kind === "missing")).toBe(true);
+  });
+});
+
+describe("AUTH-005 a producer removed from its grant (or quarantined) after evidence was sealed is caught at read time, not write time", () => {
+  it("removed from the grant entirely -> revoked, even though the record still verifies and lineage-checks clean", () => {
+    const { ledger, clock } = fixture();
+    const grantedRegistry = AuthorityRegistry.build({
+      schemaVersion: "1",
+      domains: { "cz.company.registry": { producers: ["cz.company.verify"], facts: ["supplier.companyId"], maxEvidenceTtl: "P30D" } },
+      tenants: {},
+    });
+    const evidence = new EvidenceWriter(ledger, { producerId: "cz.company.verify", capabilityVersion: "1", buildHash: "build-1", authority: grantedRegistry.forProducer("cz.company.verify") }, clock).write(input(), CLAIM);
+    expect(ledger.verify(evidence)).toEqual({ ok: true });
+
+    const revokedRegistry = AuthorityRegistry.build({ schemaVersion: "1", domains: {}, tenants: {} });
+    const aggregator = new EvidenceAggregator(ledger, clock, revokedRegistry, new LifecycleRegistry({ "cz.company.verify": "ACTIVE" }));
+    const result = aggregator.aggregate({
+      tenantId: "tenant-a",
+      fieldHashes: { "supplier.companyId": CLAIM.inputValueHash },
+      required: [{ field: "supplier.companyId", authorityDomain: "cz.company.registry", acceptableResults: ["ACTIVE"] }],
+      evidenceRefs: [evidence.recordId],
+    });
+    expect(result.decision).toBe("REVIEW");
+    expect(result.findings.some((f) => f.kind === "revoked")).toBe(true);
+    expect(ledger.verify(evidence)).toEqual({ ok: true });
+    expect(ledger.verifyLineage(evidence.recordId)).toEqual({ ok: true });
+  });
+
+  it("quarantined in LifecycleRegistry (grant untouched) -> revoked, the same fail-closed outcome", () => {
+    const { ledger, clock } = fixture();
+    const grantedRegistry = AuthorityRegistry.build({
+      schemaVersion: "1",
+      domains: { "cz.company.registry": { producers: ["cz.company.verify"], facts: ["supplier.companyId"], maxEvidenceTtl: "P30D" } },
+      tenants: {},
+    });
+    const evidence = new EvidenceWriter(ledger, { producerId: "cz.company.verify", capabilityVersion: "1", buildHash: "build-1", authority: grantedRegistry.forProducer("cz.company.verify") }, clock).write(input(), CLAIM);
+    const aggregator = new EvidenceAggregator(ledger, clock, grantedRegistry, new LifecycleRegistry({ "cz.company.verify": "QUARANTINED" }));
+    const result = aggregator.aggregate({
+      tenantId: "tenant-a",
+      fieldHashes: { "supplier.companyId": CLAIM.inputValueHash },
+      required: [{ field: "supplier.companyId", authorityDomain: "cz.company.registry", acceptableResults: ["ACTIVE"] }],
+      evidenceRefs: [evidence.recordId],
+    });
+    expect(result.decision).toBe("REVIEW");
+    expect(result.findings.some((f) => f.kind === "revoked")).toBe(true);
+  });
+
+  it("a producer missing from LifecycleRegistry entirely defaults to QUARANTINED (fail-closed by omission), same as usbguardian/lifecycle.ts elsewhere", () => {
+    const { ledger, clock } = fixture();
+    const grantedRegistry = AuthorityRegistry.build({
+      schemaVersion: "1",
+      domains: { "cz.company.registry": { producers: ["cz.company.verify"], facts: ["supplier.companyId"], maxEvidenceTtl: "P30D" } },
+      tenants: {},
+    });
+    const evidence = new EvidenceWriter(ledger, { producerId: "cz.company.verify", capabilityVersion: "1", buildHash: "build-1", authority: grantedRegistry.forProducer("cz.company.verify") }, clock).write(input(), CLAIM);
+    const aggregator = new EvidenceAggregator(ledger, clock, grantedRegistry); // no lifecycle argument at all
+    const result = aggregator.aggregate({
+      tenantId: "tenant-a",
+      fieldHashes: { "supplier.companyId": CLAIM.inputValueHash },
+      required: [{ field: "supplier.companyId", authorityDomain: "cz.company.registry", acceptableResults: ["ACTIVE"] }],
+      evidenceRefs: [evidence.recordId],
+    });
+    expect(result.decision).toBe("REVIEW");
+    expect(result.findings.some((f) => f.kind === "revoked")).toBe(true);
+  });
+
+  it("evidence without an authorityDomain (inferred) is never subject to the revocation check", () => {
+    const { ledger, clock } = fixture();
+    const inferred = new EvidenceWriter(ledger, { producerId: "cz.company.verify", capabilityVersion: "1", buildHash: "build-1" }, clock).write(input(), CLAIM);
+    expect(inferred.authorityDomain).toBeUndefined();
+    const aggregator = new EvidenceAggregator(ledger, clock); // fail-closed defaults: no grants, no ACTIVE producers
+    const result = aggregator.aggregate({
+      tenantId: "tenant-a",
+      fieldHashes: { "supplier.companyId": CLAIM.inputValueHash },
+      required: [{ field: "supplier.companyId", producerId: "cz.company.verify", acceptableResults: ["ACTIVE"] }],
+      evidenceRefs: [inferred.recordId],
+    });
+    expect(result.decision).toBe("READY");
   });
 });
 
