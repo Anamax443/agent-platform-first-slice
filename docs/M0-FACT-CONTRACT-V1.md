@@ -325,7 +325,10 @@ vzor = policy granty ADR-016):
 ### Rozhodovací tabulka — AuthorityGrant (krůček 3, 15. 9. 2026)
 
 Stav: **UZAVŘENO 15. 9. 2026** — vlastník potvrdil beze změn; R2 (revokace) a R6 (výchozí TTL) tím
-uzavřeny. Další krůček: DurableFactStore (část D).
+uzavřeny. Implementace C: **(C-1) HOTOVO A ŽIVĚ OVĚŘENO 16. 9. 2026, HANDOFF 169** — `authorities.ts`,
+`authorities.json` v obou instalacích, writer razítkuje doménu / odmítá fakt mimo rozsah / ořezává TTL, `zlab.json`
+`byDomain` ukazuje `cz.company.registry` a `cz.vat.registry` → (C-2) Dojička podle domény + revokace podle
+aktuálního grantu a Lifecycle + lidské rozhodnutí jako evidence `tenant.human-review` (AUTH-004/005/007).
 
 | Otázka | Rozhodnutí |
 |---|---|

@@ -2,6 +2,41 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-16 (169) — M0 C-1: autority instalace — doména razítkovaná platformou, rozsah faktů vynucený, TTL evidence ořezaný; živě `cz.company.registry` v `zlab.json`
+
+**Vlastník: „ano" ke krůčku 5 → část 0 uzavřena, pokračuje C.** První kus části C (`30af0ec`):
+- `src/platform/authorities.ts` (nový): `AuthorityRegistry` nad `config/<instalace>/authorities.json` — producent drží
+  **přesně jednu** doménu, `facts` = klíče slovníku nebo `["*"]`, `maxEvidenceTtl` ISO doba (P30D, PT12H, P1DT6H)
+  nebo `null`, `tenants` rezervováno (musí být `{}`), fail-closed validace (`AuthorityError`).
+- `src/installation.ts`: `Installation.authorities`; `assembleInstallation(…, authoritiesJson?)` odmítne grant jménu,
+  které není capability s policy ani `platform.*`; `installation-node.ts` + `scripts/farm-config.mjs` soubor
+  načítají/vkládají stejně jako `lifecycle.json` (chybí = žádné granty = vše „inferred", fail-closed mlčením).
+- `src/platform/evidence-writer.ts`: identita nese `authority { domain, facts, maxEvidenceTtlMs }` + volitelné `clock`;
+  `write()` razítkuje doménu, **odmítne fakt mimo rozsah grantu** (`AUTHORITY_SCOPE`, nic nezapsáno — stejný tvar jako
+  Router × policy grant) a **ořeže `expiresAt`** na grant (kráva může jen zkrátit, Posudek 16 P1-10); grant s TTL
+  bez hodin je odmítnut při konstrukci.
+- `src/slice.ts`, `platform-wiring.ts`: každý writer vázaný na grant instalace pro svého producenta.
+- `cz.company.verify`/`cz.vat.verify` pečetí `inputField` jako klíče slovníku `supplier.companyId`/`supplier.vatId`
+  (první přejmenování z části A — rozsah grantů je jmenuje).
+- `config/{farm-bass443,local-fakes}/authorities.json`: `cz.company.registry` P30D, `cz.vat.registry` P1D,
+  `tenant.businessCentral` P7D (zatím bez producenta), `tenant.human-review` P365D, `platform` bez expirace.
+- Testy: **AUTH-001** (bez grantu inferred / s grantem doména), **AUTH-002** (ořez TTL: bez nároku = strop, nad
+  strop = strop, kratší = zachován, `null` = nárok), **AUTH-003** (fakt mimo rozsah → throw, ledger prázdný; `*` cokoli),
+  **AUTH-REG** (schemaVersion, producent ve dvou doménách, špatná doba, prázdné facts, smíšený wildcard, tenants,
+  instalace s grantem neznámému jménu), **AUTH-006** (obě instalace × slovník × descriptory × parita domén);
+  CZV-EVD ověřuje doménu a ořez přes živý řez. **509/509** (+9), typecheck, arch, farm:check.
+
+**Live verification (`30af0ec` na `apf.maxferit.cz`):** před self-testy 39 záznamů, vše `inferred` (přes noc +18
+z plánovaných self-testů — čekané `copyOut` funguje i z cronu, `unmirrored` 0). Po `cz.company.verify` 4/4 a
+`cz.vat.verify` 4/4: **objekt 45/45/0 s `byDomain { inferred: 39, cz.company.registry: 3, cz.vat.registry: 3 }`, D1
+45, `?verify=1` 45/45 platných**, Přehled „Žlab 45 záznamů (inferred 39, cz.company.registry 3, cz.vat.registry 3)".
+Řádky v D1: doménové záznamy nesou `expires_at` = observed + P30D resp. + P1D, `buildHash 30af0ec`. Staré záznamy
+zůstávají `inferred` a `input_field companyId/vatId` — append-only, nic se nepřepisuje.
+
+**Další: C-2** — Dojička podle domény (`RequiredEvidence.authorityDomain` místo `producerId`), revokace podle
+aktuálního grantu + Lifecycle (`revoked` → REVIEW), lidské rozhodnutí jako evidence `tenant.human-review`
+(AUTH-004/005/007). Pak A (slovník: `impulse.*`, `entities`, `scope`), B, E.
+
 ## 2026-09-16 (168) — Revize M0 před dalšími kravami: impuls, Case a neomezený vstup — kanál nikdy neurčuje význam (žádný kód)
 
 **Podnět:** Posudek 17 kolo 6 (reviewer + vlastník: „unlimited input", „nový kanál nesmí znamenat nový proces",
