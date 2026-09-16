@@ -2,6 +2,36 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-16 (174) — Živý bojový test mail-intake + M0 B-1 (EntityHash mechanismus)
+
+**Živý test (vlastníkovo "chtěl bych to ověřit bojem"):** Email Routing pravidlo `apf-intake@maxferit.cz` →
+`apf-mail-ingest` založeno (dřív padalo do catch-all, nikdy se nedostalo na farmu). 5 reálných e-mailů posláno,
+zjištěno:
+- Malý e-mail bez přílohy → projde až po Human Review (`STAMP_NOT_ALLOWED`, `documentType: OTHER`).
+- **Nález 1:** `mail-ingest/input.schema.json`'s `rawMail.maxLength: 65536` (64 KB) vs Workerova vlastní
+  `MAX_RAW_BYTES: 1048576` (1 MB) — nekonzistence. Reálná faktura s přílohou (Anthropic účtenka, 2× PDF) o
+  216 922 B spadla hned na `mail.ingest` s `SCHEMA_VALIDATION_FAILED`, nikdy se nedostala ke klasifikaci.
+  **Neopraveno** — čeká na vlastníka (zvednout `maxLength` na 1 MB, ať sedí s Workerem).
+- **Nález 2:** schválení (`APPROVE`) review úlohy `STAMP_NOT_ALLOWED` **bez opravy typu** (`correction` = stejná
+  hodnota `OTHER`) nechá workflow doběhnout až na `document.stamp`, kde spadne na `SCHEMA_VALIDATION_FAILED` —
+  nejasná technická chyba místo srozumitelného "tvoje oprava pořád není razítkovatelná". Žádná druhá review
+  (`stamp` krok nemá `onFailed` politiku v `mail-intake.v2.json`). **Neopraveno**, zapsáno jako nález.
+- **Nález 3 (vlastníkův, zásadní):** review obrazovka (`/farm`, "Text dokumentu") ukazuje surové MIME bajty
+  (hlavičky `Received:`/`DKIM-Signature:`/`ARC-Seal:` napřed), ne čitelný náhled (Subject/tělo) — reviewer
+  **nemá z čeho reálně rozhodnout**. Asistent si navíc sám špatně přiřadil, který workflow patří ke kterému
+  e-mailu (15.9 kB instance byla omylem označena za fakturu, byla to ve skutečnosti nesouvisející otázka
+  „kurz" — oprava přes `Subject:` header ověření přímo z API).
+- Žádný e-mail dnes neprošel celým řetězcem až k `notify` — 3× FAILED, 1× WAITING v Ohradě.
+
+**Rozhodnutí o dalším postupu:** vlastník chtěl „skutečnou architektonickou opravu" (ne záplatu review
+obrazovky) — to je `ingress.email` + `content.classify`/`intent.resolve` (M1/M2), ale to potřebuje napřed
+**část B** (EntityHash) a **část E** (Case), obě dnes nezačaté. Dohodnuto: **držet pořadí**, začít částí B.
+
+**Implementace B-1 (mechanismus, bez živého zapojení):** viz `M0-FACT-CONTRACT-V1.md` část B — `computeEntityHash`,
+`reconcileEntities`, `entitySnapshotCandidate` v `src/platform/entity-continuity.ts`, testy ENT-001..006,
+537/537, typecheck/arch/farm:check zelené. **Zbývá v části B:** nic živého — čeká na první reálnou "many" entitu
+(M2 `invoice.line`). **Skutečná oprava (Case, `ingress.email`) je až po dokončení B a E** — nednešní rozsah.
+
 ## 2026-09-16 (173) — M0 A-3: mail-ingest sidecar přepnut na impulse.* (kapabilita mail.ingest zůstává)
 
 Prozkoumáno `mail-ingest/handler.ts` + `workflows/mail-intake.v1/v2.json` před sáhnutím na cokoli živého —

@@ -268,6 +268,16 @@ vázaná na `key@entityId`, takže schválení L1 se nepřenese na L2 (viz B-adv
 
 Stav: **UZAVŘENO 15. 9. 2026** — vlastník potvrdil beze změn. Další krůček: AuthorityGrant (část C).
 
+**Implementace (B-1, mechanismus) HOTOVO 16. 9. 2026, HANDOFF 174** — `src/platform/entity-continuity.ts`:
+`computeEntityHash(type, fields)` (`sha256(canonicalize({type, fields}))`, jen `identityFields`), `reconcileEntities()`
+(kontinuita id: stejný hash → zděděné id, párováno v pořadí výskytu i pro duplicitní hashe, nespárovaný živý
+záznam → superseded), `entitySnapshotCandidate()` (Evidence tvar `producerId: platform.entity`, `authorityDomain:
+platform`, `inputField: <type>@<entityId>` — záměrně mimo `fact-address.ts`, protože entity `type` není fakt ve
+slovníku, jen podobně vypadající tvar). Testy **ENT-001..006** (pořadí polí, změna identityField, odvozený fakt
+mimo hash, duplicitní řádky, re-extrakce se supersede, `not_bound` přes **existující** Dojička mechanismus beze
+změny). 537/537, typecheck, arch, farm:check zelené. **Žádná živá entita zatím `entitySnapshotCandidate()`
+nevolá** (žádná "many" kapabilita neexistuje — `invoice.line` je M2) — stejný vzor jako A-1 před `impulse.attachment`.
+
 | Otázka | Rozhodnutí |
 |---|---|
 | Z čeho se `entityHash` počítá? | **Jen z `identityFields`** entity deklarovaných ve slovníku (zdrojová pole z dokumentu), přes `canonicalize()` + `sha256()`. Pořadí polí nehraje roli. |
