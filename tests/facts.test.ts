@@ -1,11 +1,17 @@
 // FACT family (Posudek 17, 15. 9. 2026): contracts/facts.v1.json (what a key MEANS) and src/components/*/facts.json (which
 // keys each capability consumes/produces) must be one consistent, value-free catalog. Negative cases build a small
 // synthetic namespace so each rule is shown to actually bite, not just to pass on today's files.
+// FACT-005/006/007 (M0-FACT-CONTRACT-V1.md část A, krůček 1) add entities/scope to the same catalog and the
+// canonical FactAddress form on top of it. A-adv-1/2/4 (a cow's own id ignored, reordering, a scope-less fact
+// smuggling an entity) are intentionally NOT tested here yet — they need a real entity-issuing capability
+// (platform assigns EntityId when a "many"-scope output is stored) that does not exist until M2's invoice.line;
+// A-adv-3 (a malformed id, or an id on the wrong fact) is covered below since it's pure address validation.
 import { describe, expect, it } from "vitest";
-import { FactCatalog, FactCatalogError, type FactNamespace, type ModuleFacts } from "../src/platform/fact-catalog.js";
+import { formatFactAddress, FactAddressError, parseFactAddress } from "../src/platform/fact-address.js";
+import { CASE_SCOPE, FactCatalog, FactCatalogError, type EntityDecl, type FactNamespace, type ModuleFacts } from "../src/platform/fact-catalog.js";
 import { loadComponents, loadNamespace, realCatalog } from "./harness/facts.js";
 
-const ns = (facts: FactNamespace["facts"]): FactNamespace => ({ schemaVersion: "1", facts });
+const ns = (facts: FactNamespace["facts"], entities?: readonly EntityDecl[]): FactNamespace => ({ schemaVersion: "1", facts, ...(entities ? { entities } : {}) });
 const MINI = ns([
   { key: "doc.original", kind: "artifact" },
   { key: "doc.type", kind: "fact", type: "string", authority: "derived" },
@@ -113,5 +119,107 @@ describe("FACT-004 no component invents a fact, a capability or a kind", () => {
     const b = FactCatalog.build(MINI, [mod("m2", { "a.do": flow }), mod("m1", { "z.do": flow })]).producersOf("doc.type").map((p) => p.capability);
     expect(a).toEqual(["a.do", "z.do"]);
     expect(b).toEqual(a);
+  });
+});
+
+const LINE_ENTITY: EntityDecl = { type: "invoice.line", multiplicity: "many", identityFields: ["invoice.line.description"] };
+const ENTITY_NS = ns(
+  [
+    { key: "invoice.line.description", kind: "fact", authority: "source", scope: "invoice.line" },
+    { key: "invoice.line.accountCode", kind: "fact", authority: "derived", scope: "invoice.line" },
+    { key: "supplier.companyId", kind: "fact", authority: "source" },
+  ],
+  [LINE_ENTITY],
+);
+const addressCode = (fn: () => unknown): string => {
+  try {
+    fn();
+  } catch (e) {
+    if (e instanceof FactAddressError) return e.code;
+    throw e;
+  }
+  return "OK";
+};
+
+describe("FACT-005 a fact's scope must name a declared entity, or the reserved case scope", () => {
+  it("the real namespace still builds with the entities field present but empty (no real 'many' entity yet)", () => {
+    expect(() => FactCatalog.build(loadNamespace(), [])).not.toThrow();
+  });
+  it("a fact scoped to a declared entity builds; the reserved case scope needs no declaration at all", () => {
+    expect(() => FactCatalog.build(ENTITY_NS, [])).not.toThrow();
+    expect(() => FactCatalog.build(ns([{ key: "a.b", kind: "fact", authority: "source", scope: CASE_SCOPE }]), [])).not.toThrow();
+  });
+  it("a fact scoped to an undeclared name is refused", () => {
+    expect(code(() => FactCatalog.build(ns([{ key: "a.b", kind: "fact", scope: "invoice.line" }]), []))).toBe("UNKNOWN_SCOPE");
+  });
+  it("declaring the reserved case scope as an entity is refused", () => {
+    expect(code(() => FactCatalog.build(ns([], [{ type: CASE_SCOPE, multiplicity: "one", identityFields: ["a.b"] }]), []))).toBe("RESERVED_ENTITY_TYPE");
+  });
+  it("a duplicate entity type, a bad multiplicity and empty identityFields are all refused", () => {
+    expect(code(() => FactCatalog.build(ns([], [LINE_ENTITY, LINE_ENTITY]), []))).toBe("DUPLICATE_ENTITY");
+    expect(code(() => FactCatalog.build(ns([], [{ ...LINE_ENTITY, multiplicity: "few" as never }]), []))).toBe("INVALID_MULTIPLICITY");
+    expect(code(() => FactCatalog.build(ns([], [{ ...LINE_ENTITY, identityFields: [] }]), []))).toBe("EMPTY_IDENTITY_FIELDS");
+  });
+});
+
+describe("FACT-006 canonical FactAddress form round-trips and rejects a malformed or misplaced entity id", () => {
+  it("a case-scope address and a many-scope address both round-trip through format/parse", () => {
+    const catalog = FactCatalog.build(ENTITY_NS, []);
+    const plain = parseFactAddress("supplier.companyId", catalog);
+    expect(plain).toEqual({ key: "supplier.companyId", scope: CASE_SCOPE });
+    expect(parseFactAddress(formatFactAddress(plain), catalog)).toEqual(plain);
+
+    const entityId = "ent-mu3o0000abc";
+    const row = parseFactAddress(`invoice.line.description@${entityId}`, catalog);
+    expect(row).toEqual({ key: "invoice.line.description", scope: "invoice.line", entityId });
+    expect(formatFactAddress(row)).toBe(`invoice.line.description@${entityId}`);
+    expect(parseFactAddress(formatFactAddress(row), catalog)).toEqual(row);
+  });
+  it("more than one '@', or an empty key before it, is malformed", () => {
+    const catalog = FactCatalog.build(ENTITY_NS, []);
+    expect(addressCode(() => parseFactAddress("a@b@c", catalog))).toBe("MALFORMED");
+    expect(addressCode(() => parseFactAddress("@ent-1", catalog))).toBe("MALFORMED");
+  });
+  it("a fact without a 'many' scope may never carry an entity id (fakt bez scope s entitou)", () => {
+    const catalog = FactCatalog.build(ENTITY_NS, []);
+    expect(addressCode(() => parseFactAddress("supplier.companyId@ent-1", catalog))).toBe("ENTITY_ID_FORBIDDEN");
+  });
+  it("a 'many' scope address without an entity id is ambiguous", () => {
+    const catalog = FactCatalog.build(ENTITY_NS, []);
+    expect(addressCode(() => parseFactAddress("invoice.line.description", catalog))).toBe("ENTITY_ID_REQUIRED");
+  });
+  it("an entity id that is not the platform's own id shape is refused, even on a 'many' scope fact (A-adv-3)", () => {
+    const catalog = FactCatalog.build(ENTITY_NS, []);
+    expect(addressCode(() => parseFactAddress("invoice.line.description@L-12345678", catalog))).toBe("INVALID_ENTITY_ID");
+  });
+  it("an unknown key is refused", () => {
+    const catalog = FactCatalog.build(ENTITY_NS, []);
+    expect(addressCode(() => parseFactAddress("nobody.knows.this", catalog))).toBe("UNKNOWN_KEY");
+  });
+});
+
+describe("FACT-007 identityFields are source-authority facts of the entity's own scope, nothing else", () => {
+  it("a derived fact, a fact of a different scope, and an unknown key are all refused as identityFields", () => {
+    expect(code(() => FactCatalog.build(ns([{ key: "invoice.line.accountCode", kind: "fact", authority: "derived", scope: "invoice.line" }], [{ ...LINE_ENTITY, identityFields: ["invoice.line.accountCode"] }]), []))).toBe(
+      "INVALID_IDENTITY_FIELD",
+    );
+    expect(
+      code(() =>
+        FactCatalog.build(
+          ns(
+            [
+              { key: "invoice.line.description", kind: "fact", authority: "source", scope: "invoice.line" },
+              { key: "supplier.companyId", kind: "fact", authority: "source" },
+            ],
+            [{ ...LINE_ENTITY, identityFields: ["supplier.companyId"] }],
+          ),
+          [],
+        ),
+      ),
+    ).toBe("INVALID_IDENTITY_FIELD");
+    expect(code(() => FactCatalog.build(ns([], [{ ...LINE_ENTITY, identityFields: ["invoice.line.missing"] }]), []))).toBe("INVALID_IDENTITY_FIELD");
+  });
+  it("source-authority facts of the entity's own scope are accepted", () => {
+    expect(() => FactCatalog.build(ENTITY_NS, [])).not.toThrow();
   });
 });

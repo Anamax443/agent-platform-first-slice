@@ -7,6 +7,10 @@
 
 export type FactKind = "fact" | "artifact" | "evidence" | "effect";
 export type FactAuthority = "source" | "derived";
+export type EntityMultiplicity = "one" | "many";
+
+/** The reserved singleton scope every fact has when it declares no "scope" of its own (M0-FACT-CONTRACT-V1.md část A, R1). Never declared in "entities" — it always exists. */
+export const CASE_SCOPE = "case";
 
 export interface FactEntry {
   readonly key: string;
@@ -17,12 +21,29 @@ export interface FactEntry {
   readonly for?: string;
   /** Evidence only: the closed set of Evidence.result values the producer seals. */
   readonly resultVocabulary?: readonly string[];
+  /** Which entity type this fact is per-instance of, e.g. "invoice.line" (M0 část A). Absent = the reserved "case" scope: one value per Case, never addressed with an entityId. */
+  readonly scope?: string;
   readonly description?: string;
+}
+
+/**
+ * A per-instance thing a fact can be "about" (M0-FACT-CONTRACT-V1.md část A) — e.g. "invoice.line": many rows
+ * per invoice, each with a platform-assigned EntityId. "one" scopes (the implicit "case" and any future named
+ * singleton like "invoice"/"document") never appear here; only "many" scopes need a declared identity.
+ */
+export interface EntityDecl {
+  readonly type: string;
+  /** Documentation only, not validated: what this entity is a collection within, e.g. "document.original". */
+  readonly of?: string;
+  readonly multiplicity: EntityMultiplicity;
+  /** Source-authority facts of this scope whose combined value is the entity's identity (EntityHash, část B). Re-extraction keeps the same EntityId iff every one of these hashes the same as before. */
+  readonly identityFields: readonly string[];
 }
 
 export interface FactNamespace {
   readonly $comment?: string;
   readonly schemaVersion: string;
+  readonly entities?: readonly EntityDecl[];
   readonly facts: readonly FactEntry[];
 }
 
@@ -66,7 +87,13 @@ export type FactCatalogErrorCode =
   | "UNKNOWN_KEY"
   | "KIND_MISMATCH"
   | "SELF_PRODUCE"
-  | "EMPTY_PRODUCES";
+  | "EMPTY_PRODUCES"
+  | "RESERVED_ENTITY_TYPE"
+  | "DUPLICATE_ENTITY"
+  | "INVALID_MULTIPLICITY"
+  | "EMPTY_IDENTITY_FIELDS"
+  | "INVALID_IDENTITY_FIELD"
+  | "UNKNOWN_SCOPE";
 
 export class FactCatalogError extends Error {
   constructor(
@@ -90,7 +117,9 @@ export const FACT_KEY_PATTERN = /^[a-z][a-zA-Z0-9]*(?:\.[a-z][a-zA-Z0-9]*)+$/;
 const KEY = FACT_KEY_PATTERN;
 const KINDS: readonly FactKind[] = ["fact", "artifact", "evidence", "effect"];
 const AUTHORITIES: readonly FactAuthority[] = ["source", "derived"];
-const ENTRY_FIELDS: ReadonlySet<string> = new Set(["key", "kind", "type", "authority", "for", "resultVocabulary", "description"]);
+const ENTRY_FIELDS: ReadonlySet<string> = new Set(["key", "kind", "type", "authority", "for", "resultVocabulary", "scope", "description"]);
+const ENTITY_FIELDS: ReadonlySet<string> = new Set(["type", "of", "multiplicity", "identityFields"]);
+const MULTIPLICITIES: readonly EntityMultiplicity[] = ["one", "many"];
 const CONSUME_GROUPS: Readonly<Record<string, FactKind>> = { artifacts: "artifact", facts: "fact", evidence: "evidence" };
 const PRODUCE_GROUPS: Readonly<Record<string, FactKind>> = { ...CONSUME_GROUPS, effects: "effect" };
 const byName = (a: { capability: string }, b: { capability: string }): number => (a.capability < b.capability ? -1 : a.capability > b.capability ? 1 : 0);
@@ -98,6 +127,7 @@ const byName = (a: { capability: string }, b: { capability: string }): number =>
 export class FactCatalog {
   private constructor(
     private readonly entries: ReadonlyMap<string, FactEntry>,
+    private readonly entities: ReadonlyMap<string, EntityDecl>,
     private readonly flows: ReadonlyMap<string, CapabilityFlow>,
     private readonly producers: ReadonlyMap<string, readonly CapabilityFlow[]>,
   ) {}
@@ -105,6 +135,20 @@ export class FactCatalog {
   /** Fail-closed: any inconsistency between the namespace and a sidecar throws with a FactCatalogErrorCode. */
   static build(namespace: FactNamespace, modules: readonly ModuleFacts[]): FactCatalog {
     if (namespace.schemaVersion !== "1") fail("NAMESPACE_VERSION", `expected schemaVersion "1", got ${JSON.stringify(namespace.schemaVersion)}`);
+
+    const entities = new Map<string, EntityDecl>();
+    for (const decl of namespace.entities ?? []) {
+      for (const f of Object.keys(decl)) {
+        if (!ENTITY_FIELDS.has(f)) fail("UNKNOWN_FIELD", `entities: "${f}" is not an entity-decl field`);
+      }
+      if (decl.type === CASE_SCOPE) fail("RESERVED_ENTITY_TYPE", `entities: "${CASE_SCOPE}" is the reserved singleton scope every fact has by default — it is never declared`);
+      if (typeof decl.type !== "string" || !KEY.test(decl.type)) fail("INVALID_KEY", `entities: ${JSON.stringify(decl.type)} (expected dotted lowerCamel segments, e.g. invoice.line)`);
+      if (entities.has(decl.type)) fail("DUPLICATE_ENTITY", decl.type);
+      if (!MULTIPLICITIES.includes(decl.multiplicity)) fail("INVALID_MULTIPLICITY", `${decl.type}: multiplicity ${JSON.stringify(decl.multiplicity)}`);
+      if (!Array.isArray(decl.identityFields) || decl.identityFields.length === 0) fail("EMPTY_IDENTITY_FIELDS", `${decl.type}: an entity without identityFields has no way to compute an EntityHash`);
+      entities.set(decl.type, decl);
+    }
+
     const entries = new Map<string, FactEntry>();
     for (const e of namespace.facts) {
       for (const f of Object.keys(e)) {
@@ -114,7 +158,16 @@ export class FactCatalog {
       if (entries.has(e.key)) fail("DUPLICATE_KEY", e.key);
       if (!KINDS.includes(e.kind)) fail("INVALID_KIND", `${e.key}: kind ${JSON.stringify(e.kind)}`);
       if (e.authority !== undefined && !AUTHORITIES.includes(e.authority)) fail("INVALID_KIND", `${e.key}: authority ${JSON.stringify(e.authority)}`);
+      if (e.scope !== undefined && e.scope !== CASE_SCOPE && !entities.has(e.scope)) fail("UNKNOWN_SCOPE", `${e.key}: scope ${JSON.stringify(e.scope)} is not declared in "entities" (FACT-005)`);
       entries.set(e.key, e);
+    }
+    for (const decl of entities.values()) {
+      for (const field of decl.identityFields) {
+        const target = entries.get(field);
+        if (!target) fail("INVALID_IDENTITY_FIELD", `${decl.type}: identityFields names ${JSON.stringify(field)}, which is not in the fact namespace`);
+        if (target.kind !== "fact" || target.authority !== "source") fail("INVALID_IDENTITY_FIELD", `${decl.type}: identityFields entry ${field} must be a source-authority fact, not ${target.kind}${target.authority ? `/${target.authority}` : ""} (FACT-007)`);
+        if ((target.scope ?? CASE_SCOPE) !== decl.type) fail("INVALID_IDENTITY_FIELD", `${decl.type}: identityFields entry ${field} has scope ${JSON.stringify(target.scope ?? CASE_SCOPE)}, expected ${decl.type} (FACT-007)`);
+      }
     }
     for (const e of entries.values()) {
       if (e.kind === "evidence") {
@@ -150,7 +203,7 @@ export class FactCatalog {
         producers.set(k, list);
       }
     }
-    return new FactCatalog(entries, flows, producers);
+    return new FactCatalog(entries, entities, flows, producers);
   }
 
   entry(key: string): FactEntry | undefined {
@@ -159,6 +212,17 @@ export class FactCatalog {
 
   keys(): string[] {
     return [...this.entries.keys()];
+  }
+
+  /** The fact's scope — its own declared "scope", or the reserved CASE_SCOPE default. undefined iff the key is not in the namespace. */
+  scopeOf(key: string): string | undefined {
+    const e = this.entries.get(key);
+    return e ? (e.scope ?? CASE_SCOPE) : undefined;
+  }
+
+  /** The entity declaration for a "many"-multiplicity scope, or undefined for CASE_SCOPE / an unknown scope. */
+  entityOf(scope: string): EntityDecl | undefined {
+    return this.entities.get(scope);
   }
 
   capabilities(): string[] {

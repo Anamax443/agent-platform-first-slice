@@ -2,6 +2,38 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-16 (171) — M0 C-2 uzavřeno (AUTH-007 vědomě do M4/M5); část A zahájena: FactAddress mechanismus (entity/scope)
+
+**C-2 uzavřeno:** AUTH-007 (lidské rozhodnutí jako evidence `tenant.human-review`) přesunuto z „otevřená otázka
+k proberání" na **vědomě odloženo do M4/M5** — dnešní `ReviewTask` je vázaný na krok workflow (`stepId`), ne na
+fakt, takže `factAddress` na `CreateTask` by dnes neměl reálného volajícího (oba dnešní `review.create()` v
+`orchestrator.ts` jsou o selhání kroku, ne o konkrétním faktu); M4 (BC Read World) a M5 (Readiness & Composition)
+už samy v `SEVERKA.md`'s roadmapě říkají, že tam `tenant.human-review` evidence patří. `M0-FACT-CONTRACT-V1.md`
+zaktualizován, část C uzavřena celá.
+
+**Část A zahájena (A-1, obecný mechanismus, bez skutečné entity):**
+- `src/platform/fact-catalog.ts`: `FactNamespace.entities?: EntityDecl[]` (`{ type, of?, multiplicity: "one"|"many",
+  identityFields }`), `FactEntry.scope?` (chybí = `CASE_SCOPE`, reservované jméno, nikdy nedeklarované jako entita).
+  `FactCatalog.build()` validuje: entity type dotted-key + ne `"case"` + unikátní, `multiplicity` ∈ {one,many},
+  `identityFields` neprázdné a každé z nich existující source-authority fakt téhož scope (FACT-007); fakt se
+  `scope`, co není deklarovaná entita ani `case`, je `UNKNOWN_SCOPE` (FACT-005). Nové query metody `scopeOf()`/
+  `entityOf()`.
+- `src/platform/fact-address.ts` (nový): `FactAddress { key, scope, entityId? }`, `parseFactAddress()`/
+  `formatFactAddress()` nad kanonickou textovou formou (`supplier.companyId`, `invoice.line.description@ent-…`),
+  `newEntityId()` = `newId("ent")`. Přesně 0 nebo 1 `@`; scope „many" vyžaduje entityId, `case`/„one" ho zakazuje;
+  entityId musí sedět na `^ent-[a-z0-9]+$`, jinak `INVALID_ENTITY_ID` (A-adv-3).
+- Testy: **FACT-005** (scope⇔entity), **FACT-006** (round-trip + odmítnutí `a@b@c`, `@ent-1`,
+  `supplier.companyId@ent-1`), **FACT-007** (identityFields jen zdrojové fakty téhož scope). **528/528** (+13),
+  typecheck, arch, farm:check zelené. **A-adv-1/2/4 vědomě neotestováno** (potřebují reálnou entity-vydávající
+  kapabilitu, přijde s M2 `invoice.line`) — stejný princip jako u odloženého AUTH-007.
+- **Žádná runtime změna** — `contracts/facts.v1.json` samotný soubor dnes nemá žádnou `"many"` entitu (žádné
+  `invoice.line` zatím existuje), takže `entities` pole je v reálném slovníku prázdné/chybí; mechanismus čeká na
+  M2.
+
+**Další v části A:** `impulse.*` fakty + entita `impulse.attachment` (krůček 5, HANDOFF 168) — potřebuje nejdřív
+znovu přečíst `SEVERKA.md ## Impuls, Case a neomezený vstup`, než se vymyslí konkrétní klíče. Pak část B
+(EntityHash), pak E (Case).
+
 ## 2026-09-16 (170) — M0 C-2 zahájeno: Dojička podle domény + revokace; lidské rozhodnutí jako evidence zůstává otevřené
 
 **Vlastník: „budeme pokračovat"** po C-1 (`30af0ec`/`e716eea`, oba potvrzené proti gitu a živé farmě). Z tří položek C-2

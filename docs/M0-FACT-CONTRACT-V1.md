@@ -5,7 +5,8 @@ Implementace v pořadí D → C → A → B, každá část po malých commitech
 verification.** Postup po krůčcích: **krůček 1 FactAddress — UZAVŘENO** (část A, R1) · **krůček 2
 EntityHash — UZAVŘENO** (část B) · **krůček 3 AuthorityGrant — UZAVŘENO** (část C, R2 + R6) · **krůček 4
 DurableFactStore — UZAVŘENO** (část D, R3 + R4 + R5) · **krůček 5 Impuls a Case — UZAVŘENO 16. 9. 2026** (část 0; zavádí
-část E Case). Implementace pokračuje: **C → A → B → E**. Kód až po uzavření všech čtyř, v pořadí implementace D → C → A → B.
+část E Case). **Část C implementačně hotová 16. 9. 2026** (C-1 živě ověřeno, C-2 AUTH-004/005 hotovo, AUTH-007
+vědomě odloženo do M4/M5 — viz část C níže). Implementace pokračuje: **A → B → E**.
 Roadmapa: `SEVERKA.md ## Roadmapa M0–M8`. Vychází z Posudku 17 (`POSUDKY.md`, kola 4–5) a z dnešního
 kódu — každý datový tvar níže je navázaný na existující typ, ne vymyšlený od nuly.
 
@@ -144,6 +145,16 @@ Návrh reviewera (Posudek 17, kolo 6): projít M0 po malých auditovatelných ro
 uzavřít, co přesně je adresa jednoho faktu. Tabulka převzata; asistent doplnil tři řádky a dvě úpravy.
 Stav: **UZAVŘENO 15. 9. 2026** — vlastník potvrdil obě úpravy. Další krůček je jen canonical entity hash
 (část B, rozhodovací tabulka níže), nic jiného.
+
+**Implementace (A-1) HOTOVO 16. 9. 2026, HANDOFF 171** — obecný mechanismus, zatím bez skutečné entity
+(`invoice.line` je jen ilustrace v M2, ne dnešní slovník): `contracts/facts.v1.json`'s `FactNamespace` dostal
+volitelné `entities[]` (`EntityDecl { type, of?, multiplicity, identityFields }`), `FactEntry` volitelné `scope`
+(chybí = `CASE_SCOPE`, reservováno, nikdy nedeklarované), `FactCatalog.build()` validuje scope⇔entity a
+identityFields⇔source fakt téhož scope. Nový `fact-address.ts`: `FactAddress { key, scope, entityId? }`,
+`parseFactAddress`/`formatFactAddress` nad kanonickou textovou formou, `newEntityId()` (stejná `newId()` rodina).
+Testy **FACT-005/006/007** + A-adv-3 (neplatný tvar id). **A-adv-1/2/4 vědomě neotestováno** — potřebují
+skutečnou entity-vydávající kapabilitu (platforma přiděluje `EntityId` při uložení výstupu), která dnes
+neexistuje (přijde s M2 `invoice.line`); testovat je dřív by bylo o neexistujícím volajícím.
 
 | Otázka | Rozhodnutí |
 |---|---|
@@ -327,13 +338,15 @@ vzor = policy granty ADR-016):
 Stav: **UZAVŘENO 15. 9. 2026** — vlastník potvrdil beze změn; R2 (revokace) a R6 (výchozí TTL) tím
 uzavřeny. Implementace C: **(C-1) HOTOVO A ŽIVĚ OVĚŘENO 16. 9. 2026, HANDOFF 169** — `authorities.ts`,
 `authorities.json` v obou instalacích, writer razítkuje doménu / odmítá fakt mimo rozsah / ořezává TTL, `zlab.json`
-`byDomain` ukazuje `cz.company.registry` a `cz.vat.registry` → **(C-2 částečně) AUTH-004/005 HOTOVO, netestováno
-živě 16. 9. 2026, HANDOFF 170** — `EvidenceAggregator` (Dojička) požaduje `authorityDomain` místo `producerId`
-(swap producenta požadavek nerozbije), revokace kontroluje aktuální `AuthorityRegistry` + `LifecycleRegistry`
-(`revoked` → REVIEW, fail-closed); Dojička dosud nikde živě zapojená, takže bez farm verification. **AUTH-007
-(lidské rozhodnutí jako evidence `tenant.human-review`) čeká na rozhodnutí vlastníka** — doslovné „`parentRefs` →
-audit záznam" nejde implementovat (lineage ověřuje jen proti `Evidence`, ne proti nepodepsanému `AuditRecord`
-v jiném store) a `ReviewTask` dnes nenese, který fakt bylo rozhodnutí o; navržena oprava v HANDOFF 170.
+`byDomain` ukazuje `cz.company.registry` a `cz.vat.registry` → **(C-2) HOTOVO 16. 9. 2026, HANDOFF 170/171** —
+`EvidenceAggregator` (Dojička) požaduje `authorityDomain` místo `producerId` (swap producenta požadavek nerozbije,
+AUTH-004), revokace kontroluje aktuální `AuthorityRegistry` + `LifecycleRegistry` (`revoked` → REVIEW, fail-closed,
+AUTH-005); Dojička dosud nikde živě zapojená, takže bez farm verification (nic runtime se nemění). **AUTH-007
+(lidské rozhodnutí jako evidence `tenant.human-review`) vědomě odloženo do M4/M5** — dnešní `ReviewTask` je vázaný
+na krok workflow (`stepId`), ne na fakt (`FactAddress`), takže by šlo o spekulativní schéma bez skutečného
+volajícího; M4 (BC Read World) a M5 (Readiness & Composition Safety) samy v `SEVERKA.md`'s roadmapě říkají, že tam
+lidské rozhodnutí jako `tenant.human-review` evidence přirozeně patří — tam se AUTH-007 doimplementuje s reálným
+voláním po ruce, ne dřív. Část C tímto uzavřena celá, pokračuje A.
 
 | Otázka | Rozhodnutí |
 |---|---|
