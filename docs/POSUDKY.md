@@ -666,3 +666,16 @@ Vlastník doplnil tři povinné exit vrstvy (functional / adversarial / live far
 M0 jako návrhový dokument se čtyřmi částmi (invarianty · datový tvar · validace · adversarial) — kód
 až po schválení. Výsledek: SEVERKA `## Roadmapa M0–M8` (mapování Pořadí 1–10 na milníky),
 `docs/M0-FACT-CONTRACT-V1.md` s rozhodnutími R1–R7 (HANDOFF 155).
+
+### Kolo 6 — impuls, Case a neomezený vstup; revize M0 před dalšími kravami (16. 9. 2026)
+
+Po dni živých testů Žlabu (HANDOFF 162–167) reviewer + vlastník: revidovat nejdřív model Žlabu a **vstupu**, pak
+katalog krav, Farmáře až nakonec („jinak bychom mu navrhovali rozhodování nad špatně definovaným světem"). Nové
+pořadí 0 impuls → 1 normalizace → 2 Case + Žlab → 3 krávy + catalog → 4 goal → 5 deterministický planner →
+6 Farmář (LLM jen když je potřeba). Invariant *Ingress channel carries the impulse; it never determines its
+semantic meaning, intent, goal, or workflow* (`Channel ≠ intent ≠ content ≠ goal`), dva druhy goal (explicitní ×
+discovery), „nevíme, co to je" jako validní stav, nový kanál = jen adapter. **Dispozice: P.** Ověřeno v kódu:
+dnes kanál workflow **vybírá** (`index.ts:672/1317/1746`), slovník má `mail.*` klíče, objekt = jedno workflow
+(Case neexistuje). Zapsáno: SEVERKA `## Impuls, Case a neomezený vstup`, M0 část 0 (krůček 5, k uzavření) včetně
+revize, co dnešní `facts.v1.json`/`facts.json`/`plan()`/Žlab unesou (ano, aditivně; `plan()` beze změny) a co ne
+(objekt instance, intake cesty → nová část E Case). Žádný kód (HANDOFF 168).

@@ -912,6 +912,48 @@ control plane ani farmy jako celku.*
 
 ---
 
+## Impuls, Case a neomezený vstup — kanál nikdy neurčuje význam (16. 9. 2026)
+
+Z Posudku 17 kola 6 (`docs/POSUDKY.md`) po dni živých testů Žlabu. Vlastník: „můžeme použít i Slack nebo cokoli
+dalšího, prostě unlimited input" — a **nový kanál nesmí znamenat nový proces**. Dnešní diskuse odhalila něco
+základnějšího než fakturu: **Farma musí umět začít z úplně neznámého impulsu.**
+
+**Tvrdý invariant:** *Ingress channel carries the impulse; it never determines its semantic meaning, intent, goal,
+or workflow.* Kanál říká jen **odkud** · obsah říká **co přišlo** · intent říká **co to znamená / co chce
+uživatel** · goal říká **čeho má systém dosáhnout**. `Channel ≠ intent ≠ content ≠ goal.`
+
+```
+UNLIMITED INPUT CHANNELS (e-mail, Telegram, Slack, Teams, web, upload, API, webhook, mobil, hlas, scanner,
+IoT event, bankovní event, ERP event, cokoli dalšího)
+        │  každý = JEN ingress adapter (převod tvaru), nikdy workflow
+        ▼
+NORMALIZED IMPULSE  { channel, sender?, receivedAt, text?, artifacts[], thread?, metadata }
+        ▼
+CASE  (jeden impuls · jeden Žlab · N workflow instancí v čase)
+        ▼
+ŽLAB  — na začátku smí znamenat i „nevíme, co to je ani co s tím máme dělat" (validní stav, ne chyba)
+```
+
+**Pořadí, ve kterém se má svět definovat (a teprve pak Farmář nad ním rozhodovat):** 0 impuls → 1 normalizace →
+2 Case + Žlab → 3 krávy + capability catalog (nezávislé na kanálu: ✓ `content.classify`, `intent.resolve`,
+`document.classify`, `invoice.extract`, `cz.company.verify`; ✗ `telegram.invoice.process`, `email.invoice.workflow`)
+→ 4 goal → 5 deterministický planner → 6 Farmář (LLM jen když je skutečně potřeba). **Farmáře teď nepředělávat** —
+navrhovali bychom mu rozhodování nad špatně definovaným světem.
+
+**Dva druhy goal:** *explicitní* („zjisti počasí zítra v Brně" — cíl je v impulsu) a *discovery* („zjisti, co
+tento impuls znamená a zda vyžaduje další akci"). Discovery goal je běžný `plan()` nad `impulse.*` klíči s cílem
+`impulse.intent`; teprve z odvozeného intentu vznikne (deterministickou mapou instalace) explicitní goal a druhý
+plán. LLM přijde **jen uvnitř krávy `intent.resolve`**, po žebříku vlastníka (pravidla → free → Haiku → silnější),
+nikdy ve Farmáři jako plánovači — deterministický `plan()` stojí 0 tokenů.
+
+**Ověřeno proti kódu 16. 9. 2026 — dnes invariant neplatí:** `apf-gateway/src/index.ts:672` mail → `mail-intake`
+natvrdo, `:1317` schránka R2 → `document-intake`, `:1746` formulář → pole `workflow` (kanál **vybírá** workflow);
+`contracts/facts.v1.json` má kanálově vázané klíče `mail.raw`/`mail.sender`/`mail.subject`; `index.ts:612/670`
+objekt instance = přesně jedno workflow (`already exists`) — **Case dnes neexistuje**, Case = WorkflowInstance je
+dnešní zjednodušení. Co už sedí: `### Canonical vstup/výstup` (IncomingArtifact stejný pro všechny vstupy),
+`Artifact.receivedFrom` (zárodek metadat kanálu), `mail.ingest` je de facto ingress adaptér. Návrh, co s tím a co
+dnešní slovník/planner/Žlab unesou: `docs/M0-FACT-CONTRACT-V1.md` část 0 (krůček 5).
+
 ## Roadmapa M0–M8 — od first-slice k prvnímu autonomně skládanému případu (15. 9. 2026)
 
 Z Posudku 17, kolo 5 (`docs/POSUDKY.md`): reviewer navrhl 8 milníků, asistent je ověřil proti kódu
@@ -947,7 +989,10 @@ editor workflow, „deset dalších krav". Faktura → BC je vertikální řez, 
 architektonicky potřeba vyřešit.
 
 **Teď:** M0 → M1 → M2 → M3. M3 je brána: dokud změna dostupných faktů sama nemění plán bez editace
-workflow, nepokračuje se k zápisu.
+workflow, nepokračuje se k zápisu. **Doplněno 16. 9. 2026 (`## Impuls, Case a neomezený vstup`):** před dalšími
+kravami se **reviduje návrh M0** o část 0 Impuls a Case (krůček 5, `docs/M0-FACT-CONTRACT-V1.md`); M2 dostává vedle
+`invoice.extract/2` i ingress adaptery + discovery krávy (`content.classify`, `intent.resolve`) a M3 vedle killer
+testu i test discovery goalu (neznámý impuls → intent → goal → plán, bez editace workflow).
 
 ## Pořadí (co je skutečně příští, ne všech vrstev najednou)
 

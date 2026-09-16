@@ -2,6 +2,36 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-16 (168) — Revize M0 před dalšími kravami: impuls, Case a neomezený vstup — kanál nikdy neurčuje význam (žádný kód)
+
+**Podnět:** Posudek 17 kolo 6 (reviewer + vlastník: „unlimited input", „nový kanál nesmí znamenat nový proces",
+„Farmáře teď nepředělávat"). Vlastník výslovně: první konkrétní práce = revize `M0-FACT-CONTRACT-V1` před
+implementací, zapsat do SEVERKY před dalším kódem, pak prověřit, zda `facts.v1.json`, `facts.json` a `plan()` model
+unesou.
+
+**Ověřeno proti kódu (ne převzato):** kanál dnes workflow **vybírá** — `index.ts:672` mail → `mail-intake`
+natvrdo, `:1317` schránka R2 → `document-intake`, `:1746` formulář → pole `workflow`; `contracts/facts.v1.json` má
+kanálově vázané `mail.raw`/`mail.sender`/`mail.subject`; `index.ts:612/670` objekt = přesně jedno workflow
+(`already exists`) → **Case dnes neexistuje**. Co už sedí: `IncomingArtifact` (SEVERKA Canonical vstup/výstup),
+`Artifact.receivedFrom`, `mail.ingest` jako de facto ingress adaptér. V kódu není žádný pojem impulse/intent/case.
+
+**Zapsáno:**
+- `docs/SEVERKA.md`: nová `## Impuls, Case a neomezený vstup` (invariant, řetěz kanály → adapter → NormalizedImpulse
+  → Case → Žlab, pořadí 0–6, dva druhy goal, LLM jen v `intent.resolve` po žebříku, ověření proti kódu); Roadmapa
+  „Teď" doplněna (revize M0 před kravami, M2 + ingress adaptery a discovery krávy, M3 + test discovery goalu).
+- `docs/M0-FACT-CONTRACT-V1.md`: nová **část 0 „Impuls a Case" = krůček 5, k uzavření**: tvar `NormalizedImpulse`
+  (strukturálně bez workflow/goal/intent) a `Case` (impuls · Žlab · N instancí), klíče `impulse.*` včetně
+  `impulse.attachment` jako první reálné entity části A, rozhodovací tabulka (Case ≠ instance; adapter nikdy nevolí
+  workflow; goal z intentu deterministickou mapou instalace; discovery = `plan()` s cílem `impulse.intent`; UNKNOWN
+  je validní stav; nový kanál = adapter + facts.json; tenant jen z identity kanálu; `mail.*` → `impulse.*`;
+  dnešní workflows = explicitní goal templates), **revize únosnosti**: slovník/sidecary/`plan()`/Žlab/Dojička ano
+  (aditivně, `plan()` beze změny — dvě volání), objekt instance a intake cesty **ne** → nová část E „Case";
+  4 adversarial scénáře; pořadí po uzavření: C → A → B → E → M1/M2.
+- `docs/POSUDKY.md`: Posudek 17 kolo 6.
+
+**Čeká na vlastníkovo „ano" ke krůčku 5.** Pak pokračuje část C (AuthorityGrant) beze změny — neovlivněná;
+část A dostane `impulse.*`. Žádný kód, brány beze změny (500/500), farma dál `ef11c14`.
+
 ## 2026-09-15 (167) — Důkaz podpisu na živé D1: jeden přepsaný řádek = jediný nevalidní, jen s veřejným klíčem
 
 **Vlastník: „chci to vidět co to dělá a jak to dělá, nevěřím" → „uptoyou".** Zvoleno: nejdřív důkaz, který jde

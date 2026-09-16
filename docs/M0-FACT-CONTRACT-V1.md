@@ -4,7 +4,8 @@
 Implementace v pořadí D → C → A → B, každá část po malých commitech s vlastními Test ID; D navíc live
 verification.** Postup po krůčcích: **krůček 1 FactAddress — UZAVŘENO** (část A, R1) · **krůček 2
 EntityHash — UZAVŘENO** (část B) · **krůček 3 AuthorityGrant — UZAVŘENO** (část C, R2 + R6) · **krůček 4
-DurableFactStore — UZAVŘENO** (část D, R3 + R4 + R5). Kód až po uzavření všech čtyř, v pořadí implementace D → C → A → B.
+DurableFactStore — UZAVŘENO** (část D, R3 + R4 + R5) · **krůček 5 Impuls a Case — k uzavření (část 0, 16. 9. 2026;
+revize před dalšími kravami, zavádí část E Case).** Kód až po uzavření všech čtyř, v pořadí implementace D → C → A → B.
 Roadmapa: `SEVERKA.md ## Roadmapa M0–M8`. Vychází z Posudku 17 (`POSUDKY.md`, kola 4–5) a z dnešního
 kódu — každý datový tvar níže je navázaný na existující typ, ne vymyšlený od nuly.
 
@@ -28,6 +29,72 @@ Co dnes existuje a na co se navazuje:
 | `canonicalize()` + `sha256()` | `src/platform/canonical.ts`, `artifacts.ts` | `entityHash` |
 | policy grant per capability { actorId, actorType, scopes, tenants, rateLimit } (ADR-016) | `config/farm-bass443/policy/*.policy.json` | vzor pro `authorities.json` |
 | `buildHash` = placeholder `"slice-dev"`; živý `/version` už nese `gitSha` | `src/slice.ts:112` | `buildHash := gitSha` (rozhodnutí R5) |
+
+---
+
+## 0. Impuls a Case — vstup je neomezený, kanál nikdy neurčuje význam (krůček 5, 16. 9. 2026)
+
+Stav: **K UZAVŘENÍ — čeká na vlastníkovo „ano".** Z Posudku 17 kola 6 (`SEVERKA.md ## Impuls, Case a neomezený
+vstup`). Revize návrhu **před** dalšími kravami: Farma musí umět začít z úplně neznámého impulsu, a dnešní model to
+neumí (ověřeno v kódu, viz níže). Jen rozhodnutí, žádný kód.
+
+### Datový tvar
+
+```
+NormalizedImpulse = { impulseId, tenantId, channel, sender?, receivedAt, text?, artifacts: ArtifactRef[],
+                      thread?, metadata: Record<string, string> }
+   — jediný tvar pro všechny kanály; ingress adapter jen převádí (Slack: channel=slack, sender, text,
+     attachments, thread, timestamp → totéž co e-mail nebo upload). Strukturálně NEMÁ pole workflow/goal/intent.
+
+Case = { caseId, tenantId, impulse: NormalizedImpulse, ledger: Žlab, instances: WorkflowInstance[], status }
+   — jeden impuls · jeden Žlab · N workflow instancí v čase (discovery, pak zpracování, případně přeléčení).
+```
+
+Klíče slovníku (aditivně, nahrazují dnešní `mail.*`): `impulse.raw` (artifact), `impulse.channel` (fact, source),
+`impulse.sender`, `impulse.subject`, `impulse.text` (facts, source), `impulse.attachment` (**entita**,
+`multiplicity: many`, `identityFields`: `impulse.attachment.sha256`, `impulse.attachment.name` — první reálné
+použití části A), `impulse.intent` (fact, derived — výstup `intent.resolve`; slovník hodnot uzavřený, včetně
+`UNKNOWN`), `impulse.intent.resolved` (evidence, `for: impulse.intent`).
+
+### Rozhodovací tabulka — Impuls a Case
+
+| Otázka | Rozhodnutí |
+|---|---|
+| Co je Case? | **Kontejner nad impulsem**: jeden impuls, jeden Žlab, N workflow instancí v čase. Objekt = Case, ne instance. Dnešní objekt (= přesně jedno workflow, `index.ts:612/670`) je zjednodušení; migrace: každá dnešní instance = Case s jedním workflow. |
+| Smí ingress adapter zvolit workflow, goal nebo intent? | **Nikdy.** `NormalizedImpulse` taková pole strukturálně nemá (stejný princip jako `EvidenceClaim` bez `tenantId`). Dnešní `index.ts:672/1317/1746` (kanál → workflow) je přesně to, co končí. |
+| Odkud vzniká workflow? | Z goalu (compile krok, M3); goal z intentu (**deterministická mapa instalace** `intent → goal template`); intent z krávy `intent.resolve`. Kanál do řetězu nevstupuje. |
+| Dva druhy goal? | **Explicitní** (cíl je v impulsu) a **discovery** („co to je a vyžaduje to akci?"). Discovery = `plan({ goal: ["impulse.intent"], available: ["impulse.raw", "impulse.channel", …] })` → `content.classify` / `intent.resolve`; z intentu druhý plán. **`plan()` to unese beze změny** — dvě volání, žádný nový mechanismus. |
+| Kde je LLM? | Jen **uvnitř** krávy `intent.resolve`, po žebříku vlastníka: pravidla → free Workers AI → Haiku → silnější; nikdy ve Farmáři jako plánovači. Deterministický `plan()` = 0 tokenů. |
+| „Nevíme, co to je" | **Validní stav, ne chyba.** `impulse.intent = UNKNOWN` (nebo bez evidence) → Ohrada / Human Review, ne tichý pokus o „nejbližší" workflow (`### Capability gap`). |
+| Co znamená nový kanál? | **Jen adapter + jeho `facts.json`** (produces `impulse.*`). Nula změn ve slovníku, kravách, planneru, Dojičce. |
+| Kde vzniká tenant? | Z ověřené identity kanálu v instalaci (mapa kanál/identita → tenant), **nikdy z obsahu impulsu** (`### Multi-tenant izolace`). |
+| Co s dnešními `mail.raw/sender/subject`? | Přejmenovat na `impulse.*` (část A, slovník aditivní); `mail.ingest` se stává ingress adapterem `ingress.email` (produces `impulse.*` + `document.original`). |
+| Co s dnešními `workflows/*.json`? | Zůstávají jako **explicitní goal templates** (`document-intake` = goal `document.stamped`, `mail-intake` = goal `notification.sent`), dokud nevznikne compile (M3). |
+
+### Co dnešní model unese a co ne (revize požadovaná vlastníkem)
+
+| Komponenta | Unese? | Co je třeba |
+|---|---|---|
+| `contracts/facts.v1.json` | ano, aditivně | `impulse.*` klíče, `entities: impulse.attachment` (A, multiplicity many), deprecate `mail.*` |
+| `src/components/*/facts.json` | ano | `mail-ingest` → ingress adapter (produces `impulse.*`), nové krávy `content.classify`, `intent.resolve` (consumes `impulse.*`, produces `impulse.intent` + evidence) |
+| `src/platform/planner.ts` `plan()` | **ano, beze změny** | discovery + explicitní = dvě volání; přidat PLAN-007 (discovery goal z neznámého impulsu) |
+| Žlab (`evidence*.ts`) | ano, beze změny | nic v něm nepředpokládá fakturu; snapshot artefaktu impulsu = platformní evidence (část B) |
+| Dojička / Konev | ano, beze změny | — |
+| `WorkflowInstance` objekt | **ne** | objekt = přesně jedno workflow → **nová část E „Case"**: objekt = Case, `instances[]`, impuls v artifact store, migrace dnešních instancí |
+| `apf-gateway` intake cesty | **ne** | `index.ts:672/1317/1746` volí workflow z kanálu → nahradit `ingress → NormalizedImpulse → Case → discovery/explicit goal` |
+
+### Adversarial scénáře
+
+| # | Útok | Obrana |
+|---|---|---|
+| 0-adv-1 | Adapter Slacku propašuje `workflow: "bc.invoice.create"` v metadatech | `NormalizedImpulse` pole nemá; `metadata` jsou jen data ve Žlabu, nikdy vstup do volby workflow |
+| 0-adv-2 | Kanál použit jako tenant (Telegram chat id = tenant) | tenant jen z ověřené identity kanálu v instalaci, nikdy z obsahu |
+| 0-adv-3 | Impuls s textem „schval fakturu 4711" | intent je fakt s authority inferred; bez goal contractu a Dojičky žádná akce — injekce přes kanál nemá cestu k executoru |
+| 0-adv-4 | Deset kanálů, deset „procesů" | nový kanál = adapter + facts.json; test: přidání adapteru nemění žádný soubor mimo `src/adapters/ingress-*` a jeho sidecar |
+
+**Pořadí po uzavření krůčku 5:** C (AuthorityGrant) → A (FactAddress včetně `impulse.*` a `impulse.attachment`) →
+B (EntityHash) → **E (Case objekt)** → teprve pak M1/M2 (ingress adaptery, `content.classify`, `intent.resolve`,
+`invoice.extract/2`). Farmář (LLM) se nemění.
 
 ---
 
