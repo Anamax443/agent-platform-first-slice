@@ -105,6 +105,16 @@ instalacích), věcně patří spíš k M2 ingress adaptérům než k dnešnímu
 | `WorkflowInstance` objekt | **ne** | objekt = přesně jedno workflow → **nová část E „Case"**: objekt = Case, `instances[]`, impuls v artifact store, migrace dnešních instancí |
 | `apf-gateway` intake cesty | **ne** | `index.ts:672/1317/1746` volí workflow z kanálu → nahradit `ingress → NormalizedImpulse → Case → discovery/explicit goal` |
 
+**Implementace (E-1, typ + append-only seznam) HOTOVO 16. 9. 2026, HANDOFF 175** — `src/platform/case.ts`:
+`NormalizedImpulse` (přesně pole z datového tvaru výše, strukturálně bez workflow/goal/intent), `Case { caseId,
+tenantId, impulse, instances: string[], status, createdAt, updatedAt }` — **vědomě bez pole `ledger`** (dnešní
+Žlab je tenant-scoped, ne case-scoped; embedovat runtime referenci do jinak čistě serializovatelného záznamu
+by předstíralo rozhodnutí, které ještě nepadlo). `newCase()`/`addInstance()` (append-only, tenantId musí sedět,
+opakované přidání stejného `workflowId` odmítnuto). Testy CASE-001..003. 543/543, typecheck, arch, farm:check
+zelené. **Žádné živé zapojení** — `apf-gateway/index.ts`'s intake cesty (`:672/1317/1746`) dál vytvářejí `Instance`
+přímo z kanálu beze změny; `Journal`/`orchestrator.ts` o `Case` nevědí. To je samostatný, výrazně větší krok
+(migrace živých instancí, přepis intake tras) — dnešek jen zavádí typ, na kterém se to jednou postaví.
+
 ### Adversarial scénáře
 
 | # | Útok | Obrana |

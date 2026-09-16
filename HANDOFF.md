@@ -2,6 +2,29 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-16 (175) — M0 E-1: typ Case + NormalizedImpulse (bez živého zapojení)
+
+Vlastník: „chci skutečnou architektonickou opravu" (ne záplatu review obrazovky) → probráno, že to potřebuje
+napřed část B (hotovo #174) a část E (Case) — `ingress.email`/`content.classify`/`intent.resolve` jsou až
+M1/M2, po nich. Drženo pořadí, pokračováno částí E.
+
+- `src/platform/case.ts` (nový): `NormalizedImpulse` (přesně datový tvar z části 0 — `impulseId`, `tenantId`,
+  `channel`, `sender?`, `receivedAt`, `text?`, `artifacts: ArtifactRef[]`, `thread?`, `metadata` — strukturálně
+  žádné pole workflow/goal/intent). `Case { caseId, tenantId, impulse, instances: string[], status, createdAt,
+  updatedAt }` — `instances` jen `workflowId`y (append-only, `Journal` zůstává zdrojem pravdy pro stav každé
+  instance). **Vědomě bez pole `ledger`** — dnešní Žlab je tenant-scoped, ne case-scoped, embedovat sem runtime
+  referenci by předstíralo nerozhodnuté. `newCase()`/`addInstance()`: tenantId musí souhlasit (impuls↔instance,
+  instance↔case), opakované přidání stejného workflowId odmítnuto (žádné tiché zdvojení historie).
+- Testy CASE-001 (nový Case ⇐ impuls+instance, cross-tenant odmítnut), CASE-002 (append-only, re-add odmítnut,
+  cross-tenant odmítnut), CASE-003 (NormalizedImpulse nemá pole navíc — jen to, co část 0 pojmenovala).
+  **543/543** (+6), typecheck, arch, farm:check zelené.
+- **Žádné živé zapojení** — `apf-gateway/index.ts`'s intake cesty (`:672/1317/1746`) dál vytvářejí `Instance`
+  přímo z kanálu, `orchestrator.ts`/`Journal` o `Case` nevědí. Migrace živých instancí + přepis intake tras je
+  samostatný, výrazně větší krok (mění živou Durable Object storage na farmě) — dnešek zavádí jen typ.
+
+**Stav k večeru 16. 9.:** C-2, A-1/A-2/A-3, B-1, E-1 hotové dnes (7 commitů od `30af0ec`). Skutečná oprava
+review náhledu (`ingress.email`) čeká na dokončení Case migrace + M1/M2 — velký, samostatný příští krok.
+
 ## 2026-09-16 (174) — Živý bojový test mail-intake + M0 B-1 (EntityHash mechanismus)
 
 **Živý test (vlastníkovo "chtěl bych to ověřit bojem"):** Email Routing pravidlo `apf-intake@maxferit.cz` →
