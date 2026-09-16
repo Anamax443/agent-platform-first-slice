@@ -62,7 +62,10 @@ klíčů výše + entitu `impulse.attachment` aditivně, `mail.raw`/`mail.sender
 a `mail-ingest` → `ingress.email` je samostatný krok, viz níže, ne dnešní). `FACT-005` ověřuje živou entitu
 (`entityOf("impulse.attachment")`, `scopeOf()`), `FACT-006` má reálný round-trip
 `impulse.attachment.sha256@ent-…`. 529/529, typecheck, arch, farm:check zelené — čistě dictionary, `mail-ingest`
-dál produkuje `mail.*`, žádná runtime změna. **A-3 (sidecar rename) HOTOVO 16. 9. 2026, HANDOFF 173** — `mail-ingest/facts.json` teď konzumuje `impulse.raw` a
+dál produkuje `mail.*`, žádná runtime změna. **Nález z živého testu opraven 16. 9. 2026, HANDOFF 176:** `mail-ingest/input.schema.json`'s `rawMail.maxLength`
+zvednut z 65536 na 1048576 (1 MB), ať sedí s Workerovým `MAX_RAW_BYTES`. Nasazeno na `farm-bass443`.
+
+**A-3 (sidecar rename) HOTOVO 16. 9. 2026, HANDOFF 173** — `mail-ingest/facts.json` teď konzumuje `impulse.raw` a
 produkuje `impulse.sender`/`impulse.subject` místo `mail.*` (kapabilita zůstává `mail.ingest` — jméno kapability
 se nepřejmenovává, to je `ingress.email`, samostatný, výrazně větší krok, viz níže). Zjištěno při prozkoumání:
 `workflows/*.json` a `handler.ts` fakt-slovníkové klíče vůbec nepoužívají (pracují na JSON Schema

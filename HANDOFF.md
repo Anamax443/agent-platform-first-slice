@@ -2,6 +2,15 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-16 (176) — Oprava nálezu 1: 64KB vs 1MB limit sladěny, nasazeno
+
+`src/components/mail-ingest/input.schema.json`'s `rawMail.maxLength` 65536 → 1048576 (1 MB), ať sedí s
+`apf-mail-ingest`'s `MAX_RAW_BYTES`. Validace `mail.ingest` běží uvnitř `apf-gateway` (`Router`/`executor-host.ts`),
+ne v `apf-mail-ingest` samotném — nasazovat se musí `apf-gateway`. 543/543, typecheck, arch, farm:check zelené
+před nasazením. `node scripts/farm-deploy.mjs farm-bass443` (dry-run čistý, pak naostro), `/version` potvrzuje
+`gitSha` po commitu níže. Zbývají 2 nálezy z dnešního testu neopravené (nejasné selhání stamp po APPROVE bez
+opravy typu; chybějící čitelný náhled e-mailu v review obrazovce — ten čeká na Case/`ingress.email`, viz #175).
+
 ## 2026-09-16 (175) — M0 E-1: typ Case + NormalizedImpulse (bez živého zapojení)
 
 Vlastník: „chci skutečnou architektonickou opravu" (ne záplatu review obrazovky) → probráno, že to potřebuje

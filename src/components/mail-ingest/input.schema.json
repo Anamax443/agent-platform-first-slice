@@ -4,7 +4,7 @@
   "additionalProperties": false,
   "required": ["rawMail", "receivedFrom"],
   "properties": {
-    "rawMail": { "type": "string", "maxLength": 65536, "description": "Headers, blank line, body. Untrusted end to end." },
+    "rawMail": { "type": "string", "maxLength": 1048576, "description": "Headers, blank line, body. Untrusted end to end. Matches apf-mail-ingest's own MAX_RAW_BYTES (1 MB) — the two limits must agree, or a message the Worker accepts is silently refused one step later (found live 2026-09-16, HANDOFF 174)." },
     "receivedFrom": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@-]*$", "description": "Transport identity (relay, mailbox), not the sender." }
   }
 }
