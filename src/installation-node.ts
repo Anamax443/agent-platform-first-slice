@@ -18,5 +18,8 @@ export function loadInstallationFromDir(dir: string): Installation {
     .map((f) => JSON.parse(readFileSync(join(policyDir, f), "utf8")) as Policy);
   const lifecyclePath = join(dir, "lifecycle.json");
   const lifecycle: Record<string, LifecycleStatus> = existsSync(lifecyclePath) ? (JSON.parse(readFileSync(lifecyclePath, "utf8")) as Record<string, LifecycleStatus>) : {};
-  return assembleInstallation(profile, policies, lifecycle);
+  // authorities.json absent = no grants at all (every producer "inferred") — fail-closed by omission, like lifecycle.json.
+  const authoritiesPath = join(dir, "authorities.json");
+  const authorities: unknown = existsSync(authoritiesPath) ? JSON.parse(readFileSync(authoritiesPath, "utf8")) : undefined;
+  return assembleInstallation(profile, policies, lifecycle, authorities);
 }

@@ -19,7 +19,9 @@ describe("CZV-EVD-001 cz.company.verify seals a Žlab record for a SUCCEEDED (fo
     expect(records).toHaveLength(1);
     const record = records[0]!;
     expect(record.producerId).toBe("cz.company.verify");
-    expect(record.inputField).toBe("companyId");
+    expect(record.inputField).toBe("supplier.companyId");
+    expect(record.authorityDomain).toBe("cz.company.registry"); // stamped from config/local-fakes/authorities.json, never by the cow (M0 C-1)
+    expect(record.expiresAt).toBeDefined(); // capped by the grant TTL (P30D)
     expect(record.inputValueHash).toBe(sha256("27074358"));
     expect(record.result).toBe("ACTIVE");
     expect(record.tenantId).toBe(TENANT_A);
@@ -51,7 +53,9 @@ describe("CZV-EVD-003 cz.vat.verify seals a Žlab record naming vatId, result = 
     expect(records).toHaveLength(1);
     const record = records[0]!;
     expect(record.producerId).toBe("cz.vat.verify");
-    expect(record.inputField).toBe("vatId");
+    expect(record.inputField).toBe("supplier.vatId");
+    expect(record.authorityDomain).toBe("cz.vat.registry");
+    expect(record.expiresAt).toBeDefined();
     expect(record.inputValueHash).toBe(sha256("99999999"));
     expect(record.result).toBe("ANO");
   });

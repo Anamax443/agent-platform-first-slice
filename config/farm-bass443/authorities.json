@@ -1,0 +1,12 @@
+{
+  "$comment": "Authority grants (docs/M0-FACT-CONTRACT-V1.md část C): who is entitled to assert which fact. Same authority layer as policy/*.policy.json and lifecycle.json — changed only by commit + deploy, never at runtime, never by a cow. A producer holds exactly one domain; a producer not listed anywhere produces 'inferred' evidence (no domain). facts: namespace keys of contracts/facts.v1.json or [\"*\"] for platform-level domains. maxEvidenceTtl: ISO duration = upper bound a cow can only shorten (R6 defaults, tune with data), null = never expires by policy. tenants: per-tenant overrides reserved, must stay {} for now.",
+  "schemaVersion": "1",
+  "domains": {
+    "cz.company.registry": { "producers": ["cz.company.verify"], "facts": ["supplier.companyId", "supplier.officialName"], "maxEvidenceTtl": "P30D" },
+    "cz.vat.registry": { "producers": ["cz.vat.verify"], "facts": ["supplier.vatId", "supplier.vatPayerName", "supplier.publishedBankAccounts"], "maxEvidenceTtl": "P1D" },
+    "tenant.businessCentral": { "producers": [], "facts": ["vendor.bcNumber"], "maxEvidenceTtl": "P7D" },
+    "tenant.human-review": { "producers": ["platform.review"], "facts": ["*"], "maxEvidenceTtl": "P365D" },
+    "platform": { "producers": ["platform.entity", "platform.import"], "facts": ["*"], "maxEvidenceTtl": null }
+  },
+  "tenants": {}
+}

@@ -110,6 +110,11 @@ export function createSlice(installation: Installation, secrets: SecretsSource, 
   const evidenceKeyPair = generateKeyPair();
   const evidence = o.evidence ?? new EvidenceLedger(clock, { keyId: "evd-k1", privateKey: evidenceKeyPair.privateKey, publicKey: evidenceKeyPair.publicKey });
   const buildHash = o.buildHash ?? "slice-dev";
+  // Authority grants (M0 C-1): the writer is bound to the installation's grant for its producer — domain stamped, scope enforced, TTL capped.
+  const authorityOf = (producerId: string) => {
+    const g = installation.authorities.forProducer(producerId);
+    return g ? { authority: { domain: g.domain, facts: g.facts, maxEvidenceTtlMs: g.maxEvidenceTtlMs } } : {};
+  };
 
   // Adapters (fakes)
   const dms = o.dms ?? new FakeDmsAdapter();
@@ -209,7 +214,7 @@ export function createSlice(installation: Installation, secrets: SecretsSource, 
           ares,
           clock,
           ...(o.aresTimeoutMs !== undefined ? { aresTimeoutMs: o.aresTimeoutMs } : {}),
-          evidence: new EvidenceWriter(evidence, { producerId: "cz.company.verify", capabilityVersion: "1", buildHash }),
+          evidence: new EvidenceWriter(evidence, { producerId: "cz.company.verify", capabilityVersion: "1", buildHash, ...authorityOf("cz.company.verify") }, clock),
         }),
       },
     ],
@@ -226,7 +231,7 @@ export function createSlice(installation: Installation, secrets: SecretsSource, 
           mojeDane,
           clock,
           ...(o.mojeDaneTimeoutMs !== undefined ? { mojeDaneTimeoutMs: o.mojeDaneTimeoutMs } : {}),
-          evidence: new EvidenceWriter(evidence, { producerId: "cz.vat.verify", capabilityVersion: "1", buildHash }),
+          evidence: new EvidenceWriter(evidence, { producerId: "cz.vat.verify", capabilityVersion: "1", buildHash, ...authorityOf("cz.vat.verify") }, clock),
         }),
       },
     ],

@@ -125,7 +125,7 @@ describe("EW-004 EvidenceWriter exposes only write(), no read/update/delete surf
 describe("EW-005 authorityDomain comes from the writer's platform-bound identity, never from the claim", () => {
   it("a writer constructed with a domain stamps it; a claim carrying authorityDomain (even via cast) is ignored", () => {
     const { ledger } = fixture();
-    const granted = new EvidenceWriter(ledger, { ...IDENTITY, authorityDomain: "cz.vat.registry" });
+    const granted = new EvidenceWriter(ledger, { ...IDENTITY, authority: { domain: "cz.vat.registry", facts: "*", maxEvidenceTtlMs: null } });
     expect(granted.write(input(), CLAIM).authorityDomain).toBe("cz.vat.registry");
     const ungranted = new EvidenceWriter(ledger, IDENTITY);
     const smuggled = ungranted.write(input(), { ...CLAIM, authorityDomain: "tenant.human-review" } as never);

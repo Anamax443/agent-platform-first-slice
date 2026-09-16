@@ -32,11 +32,11 @@ interface Input {
 export function createCompanyVerifier(deps: CompanyVerifierDeps): Handler {
   const failed = (error: ReturnType<typeof capabilityError>): HandlerOutcome => ({ status: "FAILED", error });
   const provenance: Provenance = { producerComponent: descriptor.module, producerVersion: descriptor.componentVersion };
-  // inputField "companyId" matches invoice.v1's supplier.companyId naming (NAVRHOVY-LIST-farma.md
+  // inputField "supplier.companyId" = the fact namespace key (contracts/facts.v1.json, M0 část A), also invoice.v1.s naming (NAVRHOVY-LIST-farma.md
   // krok 8a), not the payload's local "ico" — the Žlab record names the business field being
   // verified, not the wire-level parameter name.
   const seal = (input: HandlerInput, ico: string, result: string) =>
-    deps.evidence?.write(input, { inputField: "companyId", inputValueHash: sha256(ico), result });
+    deps.evidence?.write(input, { inputField: "supplier.companyId", inputValueHash: sha256(ico), result });
 
   return async (input) => {
     const { message } = input;

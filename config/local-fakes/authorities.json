@@ -1,0 +1,12 @@
+{
+  "$comment": "Test installation's authority grants — same shape and same domains as farm-bass443 so the in-process slice proves the exact live behaviour (domain stamped, scope refused, TTL capped). See config/farm-bass443/authorities.json for the field semantics.",
+  "schemaVersion": "1",
+  "domains": {
+    "cz.company.registry": { "producers": ["cz.company.verify"], "facts": ["supplier.companyId", "supplier.officialName"], "maxEvidenceTtl": "P30D" },
+    "cz.vat.registry": { "producers": ["cz.vat.verify"], "facts": ["supplier.vatId", "supplier.vatPayerName", "supplier.publishedBankAccounts"], "maxEvidenceTtl": "P1D" },
+    "tenant.businessCentral": { "producers": [], "facts": ["vendor.bcNumber"], "maxEvidenceTtl": "P7D" },
+    "tenant.human-review": { "producers": ["platform.review"], "facts": ["*"], "maxEvidenceTtl": "P365D" },
+    "platform": { "producers": ["platform.entity", "platform.import"], "facts": ["*"], "maxEvidenceTtl": null }
+  },
+  "tenants": {}
+}

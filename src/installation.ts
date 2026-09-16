@@ -2,6 +2,7 @@
 // Portable (no filesystem): a Worker bundles the JSON, Node reads it through installation-node.ts.
 import profileSchema from "../config/profile.schema.json" with { type: "json" };
 import type { Identity } from "./platform/gateway.js";
+import { AuthorityRegistry } from "./platform/authorities.js";
 import { LifecycleRegistry, type LifecycleStatus } from "./platform/lifecycle.js";
 import type { Policy, PolicySet } from "./platform/policy.js";
 import { compileSchema } from "./platform/schemas.js";
@@ -50,6 +51,9 @@ export interface Installation {
    * missing from it is refused exactly like one explicitly QUARANTINED (changed 2026-09-10, see
    * platform/lifecycle.ts) — every module a Router actually dispatches to must have an explicit entry. */
   lifecycle: LifecycleRegistry;
+  /** producer -> authority domain + fact scope + evidence TTL cap (config/<installation>/authorities.json, M0 část C).
+   * Absent file = no grants: every producer's evidence stays "inferred" — fail-closed by omission. */
+  authorities: AuthorityRegistry;
 }
 
 /** Where secret values come from: env, wrangler secrets, a test map. Undefined = missing = fail-closed at wiring time. */
@@ -61,7 +65,7 @@ const validateProfile = compileSchema(profileSchema);
  * Assemble and cross-check an installation: profile against its schema, every policyRef present, every grant pointing
  * to a known identity that holds the granted scope, every granted tenant known. Anything else throws (fail-closed).
  */
-export function assembleInstallation(profileJson: unknown, policies: Policy[], lifecycleStatuses: Record<string, LifecycleStatus> = {}): Installation {
+export function assembleInstallation(profileJson: unknown, policies: Policy[], lifecycleStatuses: Record<string, LifecycleStatus> = {}, authoritiesJson?: unknown): Installation {
   const v = validateProfile(profileJson);
   if (!v.ok) throw new Error(`installation profile invalid (fail-closed): ${v.errors}`);
   const profile = profileJson as InstallationProfile;
@@ -96,7 +100,17 @@ export function assembleInstallation(profileJson: unknown, policies: Policy[], l
   for (const [capability, cfg] of Object.entries(profile.models ?? {})) {
     if (!cfg.options[cfg.default]) throw new Error(`installation ${profile.installation}: default model ${cfg.default} of ${capability} is not among its options`);
   }
-  return { profile, policies: set, lifecycle: new LifecycleRegistry(lifecycleStatuses) };
+  // Authority grants (M0 část C): a granted producer must be a capability this installation has a policy for, or a
+  // platform-internal producer (platform.*) — a grant to a name nobody dispatches is a typo, refused like a ghost identity.
+  const authorities = authoritiesJson === undefined ? AuthorityRegistry.empty() : AuthorityRegistry.build(authoritiesJson);
+  for (const g of authorities.grants()) {
+    for (const producer of g.producers) {
+      if (!set[producer] && !producer.startsWith("platform.")) {
+        throw new Error(`installation ${profile.installation}: authorities.json grants ${g.domain} to ${producer}, which is neither a capability with a policy nor platform.* (fail-closed)`);
+      }
+    }
+  }
+  return { profile, policies: set, lifecycle: new LifecycleRegistry(lifecycleStatuses), authorities };
 }
 
 /**

@@ -29,9 +29,9 @@ const RELIABILITY = new Set(["ANO", "NE", "NENALEZEN"]);
 export function createVatVerifier(deps: VatVerifierDeps): Handler {
   const failed = (error: ReturnType<typeof capabilityError>): HandlerOutcome => ({ status: "FAILED", error });
   const provenance: Provenance = { producerComponent: descriptor.module, producerVersion: descriptor.componentVersion };
-  // inputField "vatId" matches invoice.v1's supplier.vatId naming (NAVRHOVY-LIST-farma.md krok 8a).
+  // inputField "supplier.vatId" = the fact namespace key (contracts/facts.v1.json, M0 část A), also invoice.v1.s naming (NAVRHOVY-LIST-farma.md krok 8a).
   const seal = (input: HandlerInput, dic: string, result: string) =>
-    deps.evidence?.write(input, { inputField: "vatId", inputValueHash: sha256(dic), result });
+    deps.evidence?.write(input, { inputField: "supplier.vatId", inputValueHash: sha256(dic), result });
 
   return async (input) => {
     const { message } = input;

@@ -234,11 +234,16 @@ export function wirePlatform(o: WiringOptions): Wiring {
   registry.add({ keyId: o.keyId, publicKey: createPublicKey(privateKey), validFrom: iso(new Date(0)) });
   const gateway = new Gateway({ identities: new IdentityProvider(profile.identities), signer: new Signer(o.keyId, privateKey), clock: o.clock });
   // Durable Žlab (M0 D-5): one ledger per object over its SQLite store, sealed with the platform key. Each evidence-
-  // writing capability gets its own EvidenceWriter bound at construction to its producerId (evidence-writer.ts) —
-  // no authorityDomain yet: that is part C (installation authority grants), until then every record is "inferred".
+  // writing capability gets its own EvidenceWriter bound at construction to its producerId AND to the installation's
+  // authority grant for it (M0 C-1: config/<installation>/authorities.json → domain stamped, fact scope enforced,
+  // TTL capped). A producer without a grant writes "inferred" evidence — never a self-declared authority.
   const evidence = o.evidence ? new EvidenceLedger(o.clock, { keyId: o.keyId, privateKey, publicKey: createPublicKey(privateKey) }, o.evidence.store) : undefined;
-  const writerFor = (producerId: string): { evidence?: EvidenceWriter } =>
-    evidence && o.evidence ? { evidence: new EvidenceWriter(evidence, { producerId, capabilityVersion: "1", buildHash: o.evidence.buildHash }) } : {};
+  const writerFor = (producerId: string): { evidence?: EvidenceWriter } => {
+    if (!evidence || !o.evidence) return {};
+    const grant = o.installation.authorities.forProducer(producerId);
+    const authority = grant ? { domain: grant.domain, facts: grant.facts, maxEvidenceTtlMs: grant.maxEvidenceTtlMs } : undefined;
+    return { evidence: new EvidenceWriter(evidence, { producerId, capabilityVersion: "1", buildHash: o.evidence.buildHash, ...(authority ? { authority } : {}) }, o.clock) };
+  };
   const router = new Router({ registry, clock: o.clock, audit: o.audit, lifecycle: o.installation.lifecycle });
   const policy = (capability: string) => policyFor(o.installation.policies, capability, "1");
 

@@ -4,8 +4,8 @@
 Implementace v pořadí D → C → A → B, každá část po malých commitech s vlastními Test ID; D navíc live
 verification.** Postup po krůčcích: **krůček 1 FactAddress — UZAVŘENO** (část A, R1) · **krůček 2
 EntityHash — UZAVŘENO** (část B) · **krůček 3 AuthorityGrant — UZAVŘENO** (část C, R2 + R6) · **krůček 4
-DurableFactStore — UZAVŘENO** (část D, R3 + R4 + R5) · **krůček 5 Impuls a Case — k uzavření (část 0, 16. 9. 2026;
-revize před dalšími kravami, zavádí část E Case).** Kód až po uzavření všech čtyř, v pořadí implementace D → C → A → B.
+DurableFactStore — UZAVŘENO** (část D, R3 + R4 + R5) · **krůček 5 Impuls a Case — UZAVŘENO 16. 9. 2026** (část 0; zavádí
+část E Case). Implementace pokračuje: **C → A → B → E**. Kód až po uzavření všech čtyř, v pořadí implementace D → C → A → B.
 Roadmapa: `SEVERKA.md ## Roadmapa M0–M8`. Vychází z Posudku 17 (`POSUDKY.md`, kola 4–5) a z dnešního
 kódu — každý datový tvar níže je navázaný na existující typ, ne vymyšlený od nuly.
 
@@ -34,8 +34,8 @@ Co dnes existuje a na co se navazuje:
 
 ## 0. Impuls a Case — vstup je neomezený, kanál nikdy neurčuje význam (krůček 5, 16. 9. 2026)
 
-Stav: **K UZAVŘENÍ — čeká na vlastníkovo „ano".** Z Posudku 17 kola 6 (`SEVERKA.md ## Impuls, Case a neomezený
-vstup`). Revize návrhu **před** dalšími kravami: Farma musí umět začít z úplně neznámého impulsu, a dnešní model to
+Stav: **UZAVŘENO 16. 9. 2026** — vlastník potvrdil beze změn. Z Posudku 17 kola 6 (`SEVERKA.md ## Impuls, Case a
+neomezený vstup`). Revize návrhu **před** dalšími kravami: Farma musí umět začít z úplně neznámého impulsu, a dnešní model to
 neumí (ověřeno v kódu, viz níže). Jen rozhodnutí, žádný kód.
 
 ### Datový tvar

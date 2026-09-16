@@ -85,7 +85,9 @@ const fail: (code: FactCatalogErrorCode, message: string) => never = (code, mess
 };
 
 /** Dotted lowerCamel segments, at least two: supplier.companyId, document.type.validated. */
-const KEY = /^[a-z][a-zA-Z0-9]*(?:\.[a-z][a-zA-Z0-9]*)+$/;
+/** Dotted lowerCamel segments, at least two — shared with authorities.ts so a grant can only name real-looking keys. */
+export const FACT_KEY_PATTERN = /^[a-z][a-zA-Z0-9]*(?:\.[a-z][a-zA-Z0-9]*)+$/;
+const KEY = FACT_KEY_PATTERN;
 const KINDS: readonly FactKind[] = ["fact", "artifact", "evidence", "effect"];
 const AUTHORITIES: readonly FactAuthority[] = ["source", "derived"];
 const ENTRY_FIELDS: ReadonlySet<string> = new Set(["key", "kind", "type", "authority", "for", "resultVocabulary", "description"]);
