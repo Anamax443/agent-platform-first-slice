@@ -62,10 +62,21 @@ klíčů výše + entitu `impulse.attachment` aditivně, `mail.raw`/`mail.sender
 a `mail-ingest` → `ingress.email` je samostatný krok, viz níže, ne dnešní). `FACT-005` ověřuje živou entitu
 (`entityOf("impulse.attachment")`, `scopeOf()`), `FACT-006` má reálný round-trip
 `impulse.attachment.sha256@ent-…`. 529/529, typecheck, arch, farm:check zelené — čistě dictionary, `mail-ingest`
-dál produkuje `mail.*`, žádná runtime změna. **Zbývá z „Co s dnešními mail.raw/sender/subject?"** (řádek výše):
-přejmenovat sidecar `mail-ingest/facts.json` na `impulse.*` a kapabilitu na `ingress.email` — to už znamená
-upravit živou, nasazenou komponentu (`handler.ts`, případně `workflows/*.json`), ne jen slovník, takže je to
-vlastní krůček s vlastním ověřením, ne součást A-2.
+dál produkuje `mail.*`, žádná runtime změna. **A-3 (sidecar rename) HOTOVO 16. 9. 2026, HANDOFF 173** — `mail-ingest/facts.json` teď konzumuje `impulse.raw` a
+produkuje `impulse.sender`/`impulse.subject` místo `mail.*` (kapabilita zůstává `mail.ingest` — jméno kapability
+se nepřejmenovává, to je `ingress.email`, samostatný, výrazně větší krok, viz níže). Zjištěno při prozkoumání:
+`workflows/*.json` a `handler.ts` fakt-slovníkové klíče vůbec nepoužívají (pracují na JSON Schema
+`input`/`output` polích typu `rawMail`/`sender`/`subject`), takže tahle vrstva je od runtime kódu úplně
+oddělená — sidecar mění jen to, co `FactCatalog`/`plan()` vidí, žádný Worker se nemění. Jediné, co s renamem
+souviselo, byl `tests/plan.test.ts`'s PLAN-002 („hard gate" reprodukce `mail-intake.v2.json`), který `mail.raw`
+používal jako `available` vstup — přepsáno na `impulse.raw`. Staré `mail.raw`/`mail.sender`/`mail.subject`
+záznamy zůstávají ve slovníku (append-only, „superseded", ne smazané). 529/529, typecheck, arch, farm:check
+zelené, žádná runtime změna.
+
+**Zbývá:** přejmenovat samotnou kapabilitu `mail.ingest` → `ingress.email` (`descriptor.json`, `handler.ts`,
+`workflows/mail-intake.v*.json` odkazují na `"capability": "mail.ingest"`, `config/*/lifecycle.json`/policy
+granty na jméno kapability) — o řád větší zásah (immutable versioned workflows, Router registrace ve dvou
+instalacích), věcně patří spíš k M2 ingress adaptérům než k dnešnímu M0 A. Nerozhodnuto, čeká na vlastníka.
 
 ### Rozhodovací tabulka — Impuls a Case
 

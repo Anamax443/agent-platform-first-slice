@@ -3,8 +3,8 @@
   "module": "mail-ingest",
   "capabilities": {
     "mail.ingest": {
-      "consumes": { "artifacts": ["mail.raw"] },
-      "produces": { "artifacts": ["document.original"], "facts": ["mail.sender", "mail.subject"] }
+      "consumes": { "artifacts": ["impulse.raw"] },
+      "produces": { "artifacts": ["document.original"], "facts": ["impulse.sender", "impulse.subject"] }
     }
   }
 }

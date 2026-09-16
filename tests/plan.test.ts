@@ -26,13 +26,13 @@ describe("PLAN-001 document goal reproduces the document-intake capability chain
 });
 
 describe("PLAN-002 mail goal reproduces the mail-intake capability chain", () => {
-  it("notification.sent from mail.raw + notification.recipientRef = ingest → classify → validate → stamp → notify (v2 and v1)", () => {
-    const r = plan({ goal: ["notification.sent"], available: ["mail.raw", "notification.recipientRef"] }, realCatalog());
+  it("notification.sent from impulse.raw + notification.recipientRef = ingest → classify → validate → stamp → notify (v2 and v1)", () => {
+    const r = plan({ goal: ["notification.sent"], available: ["impulse.raw", "notification.recipientRef"] }, realCatalog());
     expect(chain(r)).toEqual(workflowChain("mail-intake.v2.json"));
     expect(chain(r)).toEqual(workflowChain("mail-intake.v1.json"));
   });
   it("without the recipient reference the mail goal is a gap, not a chain that ends in a send with nobody to send to", () => {
-    const r = plan({ goal: ["notification.sent"], available: ["mail.raw"] }, realCatalog());
+    const r = plan({ goal: ["notification.sent"], available: ["impulse.raw"] }, realCatalog());
     expect(r.status).toBe("CAPABILITY_GAP");
     if (r.status === "CAPABILITY_GAP") expect(r.missing.map((m) => m.key)).toContain("notification.recipientRef");
   });
@@ -100,7 +100,7 @@ describe("PLAN-005 planner output carries no business values", () => {
       "UNSATISFIABLE",
     ]);
     const results = [
-      plan({ goal: ["notification.sent"], available: ["mail.raw", "notification.recipientRef"] }, c),
+      plan({ goal: ["notification.sent"], available: ["impulse.raw", "notification.recipientRef"] }, c),
       plan({ goal: ["supplier.vatId.verified"], available: ["document.original"] }, c),
     ];
     for (const r of results) {

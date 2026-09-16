@@ -2,6 +2,32 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-16 (173) — M0 A-3: mail-ingest sidecar přepnut na impulse.* (kapabilita mail.ingest zůstává)
+
+Prozkoumáno `mail-ingest/handler.ts` + `workflows/mail-intake.v1/v2.json` před sáhnutím na cokoli živého —
+zjištění mění odhad rizika: **workflow definice a handler vůbec nečtou fakt-slovníkové klíče.** Pracují na
+JSON Schema `input`/`output` polích (`rawMail`, `sender`, `subject`, `artifactId` přes `$steps.ingest.payload.X`).
+`mail.raw`/`mail.sender`/`mail.subject` existovaly čistě ve `facts.json` sidecaru pro `FactCatalog`/budoucí
+`plan()` — dvě zcela oddělené vrstvy. Rename je tedy mnohem menší zásah, než vypadal z popisu v M0 docu.
+
+- `src/components/mail-ingest/facts.json`: `consumes.artifacts` `mail.raw` → `impulse.raw`, `produces.facts`
+  `mail.sender`/`mail.subject` → `impulse.sender`/`impulse.subject`. **Kapabilita zůstává `mail.ingest`** —
+  přejmenování na `ingress.email` by znamenalo sáhnout na `descriptor.json`, `handler.ts` a hlavně immutable
+  `workflows/mail-intake.v*.json` (`"capability": "mail.ingest"`) + `config/*/lifecycle.json`/policy grantů ve
+  dvou instalacích — o řád větší, samostatný krok, věcně M2 (ingress adaptéry), ne dnešní A.
+- `tests/plan.test.ts` PLAN-002 (hard-gate reprodukce `mail-intake.v2.json`) používal `mail.raw` jako
+  `available` vstup — jediné místo mimo slovník/sidecar, co se muselo změnit spolu s renamem. Přepsáno na
+  `impulse.raw` (2× v PLAN-002, 1× v PLAN-005).
+- `contracts/facts.v1.json`: staré `mail.raw`/`mail.sender`/`mail.subject` záznamy **zůstávají** (append-only
+  slovník, „superseded" v description, ne smazané); `impulse.raw`/`sender`/`subject` description upraven, že
+  teď mají skutečného konzumenta/producenta.
+- **529/529, typecheck, arch, farm:check zelené — žádná runtime změna** (žádný Worker se nemění, sidecar čte
+  jen `FactCatalog.build()` v testech/build skriptech).
+
+**Zbývá:** samotné přejmenování kapability `mail.ingest` → `ingress.email` — čeká na vlastníka, věcně patří
+spíš k M2 než k dnešnímu M0. Tím je „Co s dnešními mail.raw/sender/subject?" z M0 docu z většiny hotové (jen
+sidecar, capability rename odloženo). **Další v pořadí:** část B (EntityHash), pak E (Case).
+
 ## 2026-09-16 (172) — M0 A-2: impulse.* slovník + první reálná entita impulse.attachment
 
 Znovu přečtena `SEVERKA.md ## Impuls, Case a neomezený vstup` + `M0-FACT-CONTRACT-V1.md ## 0` (krůček 5, už
