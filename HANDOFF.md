@@ -2,6 +2,30 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-16 (172) — M0 A-2: impulse.* slovník + první reálná entita impulse.attachment
+
+Znovu přečtena `SEVERKA.md ## Impuls, Case a neomezený vstup` + `M0-FACT-CONTRACT-V1.md ## 0` (krůček 5, už
+uzavřeno 16. 9. beze změn) — konkrétní klíče tam byly už vlastníkem schválené, žádné nové rozhodnutí, jen
+implementace.
+
+- `contracts/facts.v1.json`: přidáno **aditivně** `impulse.raw` (artifact), `impulse.channel`/`sender`/`subject`/
+  `text` (facts, source), `impulse.attachment.sha256`/`.name` (facts, source, `scope: "impulse.attachment"`),
+  `impulse.intent` (fact, derived), `impulse.intent.resolved` (evidence, `for: impulse.intent`), a entitu
+  `entities: [{ type: "impulse.attachment", of: "impulse.raw", multiplicity: "many", identityFields: [sha256, name] }]`
+  — **první skutečná „many" entita** v reálném slovníku, ne jen syntetická testovací.
+- **Vědomě NEudělané dnes:** `mail.raw`/`mail.sender`/`mail.subject` zůstávají beze změny, `mail-ingest` dál
+  produkuje `mail.*`. Doc řádek „Co s dnešními mail.raw/sender/subject?" říká přejmenovat na `impulse.*` a
+  `mail-ingest` → `ingress.email`, ale to znamená sáhnout na živou nasazenou komponentu (`handler.ts`, sidecar,
+  případně `workflows/*.json`) — jiný řád rizika než přidání klíčů do slovníku, takže samostatný krůček, ne
+  součást dnešního A-2.
+- Testy: `FACT-005` teď ověřuje živou entitu (`realCatalog().entityOf("impulse.attachment")`,
+  `scopeOf("impulse.attachment.sha256")` → `"impulse.attachment"`, `scopeOf("impulse.channel")` → `case`),
+  `FACT-006` má reálný round-trip `impulse.attachment.sha256@ent-…` (dřív jen syntetický `invoice.line`
+  příklad). **529/529** (+1), typecheck, arch, farm:check zelené. Žádná runtime změna — čistě dictionary.
+
+**Zbývá v části A:** rename `mail.* → impulse.*` + `mail-ingest → ingress.email` (samostatný krůček). Pak část B
+(EntityHash), pak E (Case) — viz `## Pořadí po uzavření krůčku 5` v M0 docu.
+
 ## 2026-09-16 (171) — M0 C-2 uzavřeno (AUTH-007 vědomě do M4/M5); část A zahájena: FactAddress mechanismus (entity/scope)
 
 **C-2 uzavřeno:** AUTH-007 (lidské rozhodnutí jako evidence `tenant.human-review`) přesunuto z „otevřená otázka

@@ -7,7 +7,7 @@
 // (platform assigns EntityId when a "many"-scope output is stored) that does not exist until M2's invoice.line;
 // A-adv-3 (a malformed id, or an id on the wrong fact) is covered below since it's pure address validation.
 import { describe, expect, it } from "vitest";
-import { formatFactAddress, FactAddressError, parseFactAddress } from "../src/platform/fact-address.js";
+import { formatFactAddress, FactAddressError, newEntityId, parseFactAddress } from "../src/platform/fact-address.js";
 import { CASE_SCOPE, FactCatalog, FactCatalogError, type EntityDecl, type FactNamespace, type ModuleFacts } from "../src/platform/fact-catalog.js";
 import { loadComponents, loadNamespace, realCatalog } from "./harness/facts.js";
 
@@ -142,8 +142,12 @@ const addressCode = (fn: () => unknown): string => {
 };
 
 describe("FACT-005 a fact's scope must name a declared entity, or the reserved case scope", () => {
-  it("the real namespace still builds with the entities field present but empty (no real 'many' entity yet)", () => {
-    expect(() => FactCatalog.build(loadNamespace(), [])).not.toThrow();
+  it("the real namespace builds with its first real entity, impulse.attachment (krůček 5)", () => {
+    const catalog = realCatalog();
+    const decl = catalog.entityOf("impulse.attachment");
+    expect(decl).toEqual({ type: "impulse.attachment", of: "impulse.raw", multiplicity: "many", identityFields: ["impulse.attachment.sha256", "impulse.attachment.name"] });
+    expect(catalog.scopeOf("impulse.attachment.sha256")).toBe("impulse.attachment");
+    expect(catalog.scopeOf("impulse.channel")).toBe(CASE_SCOPE);
   });
   it("a fact scoped to a declared entity builds; the reserved case scope needs no declaration at all", () => {
     expect(() => FactCatalog.build(ENTITY_NS, [])).not.toThrow();
@@ -174,6 +178,13 @@ describe("FACT-006 canonical FactAddress form round-trips and rejects a malforme
     expect(row).toEqual({ key: "invoice.line.description", scope: "invoice.line", entityId });
     expect(formatFactAddress(row)).toBe(`invoice.line.description@${entityId}`);
     expect(parseFactAddress(formatFactAddress(row), catalog)).toEqual(row);
+  });
+  it("the real impulse.attachment entity round-trips a fact address (first real use of part A)", () => {
+    const catalog = realCatalog();
+    const entityId = newEntityId();
+    const addr = parseFactAddress(`impulse.attachment.sha256@${entityId}`, catalog);
+    expect(addr).toEqual({ key: "impulse.attachment.sha256", scope: "impulse.attachment", entityId });
+    expect(parseFactAddress(formatFactAddress(addr), catalog)).toEqual(addr);
   });
   it("more than one '@', or an empty key before it, is malformed", () => {
     const catalog = FactCatalog.build(ENTITY_NS, []);
