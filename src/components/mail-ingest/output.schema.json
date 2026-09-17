@@ -2,10 +2,12 @@
   "$id": "mail.ingest.output.v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["artifactId", "sha256", "receivedFrom", "sender", "subject"],
+  "required": ["artifactId", "sha256", "originalArtifactId", "attachmentArtifactIds", "receivedFrom", "sender", "subject"],
   "properties": {
-    "artifactId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "artifactId": { "type": "string", "minLength": 1, "maxLength": 128, "description": "The derived body-text artifact — what document.classify/validate/stamp actually read, same as any other channel." },
     "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "originalArtifactId": { "type": "string", "minLength": 1, "maxLength": 128, "description": "The immutable raw MIME message, unchanged — evidence/audit and GET /workflow/:id/attachment/:n, never a capability's input." },
+    "attachmentArtifactIds": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 128 }, "description": "One derived text artifact per e-mail attachment that could be read (best-effort — a failed one is simply absent here, not zeroed out)." },
     "receivedFrom": { "type": "string", "minLength": 1, "maxLength": 128 },
     "sender": {
       "type": "object",

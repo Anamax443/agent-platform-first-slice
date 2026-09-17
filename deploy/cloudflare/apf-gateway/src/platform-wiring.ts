@@ -8,6 +8,7 @@ import { classifyByRules, FakeInvoiceExtractorAdapter, FakeLlmAdapter, KeywordCl
 import { FakeMojeDaneAdapter, type MojeDaneAdapter } from "../../../../src/adapters/moje-dane.js";
 import type { RegistryAdapter } from "../../../../src/adapters/registry.js";
 import { WorkersAiAdapter, type WorkersAiBinding } from "../../../../src/adapters/workers-ai.js";
+import { WorkersAiExtractor } from "../../../../src/adapters/extract.js";
 import * as classifier from "../../../../src/components/document-classifier/handler.js";
 import * as companyVerify from "../../../../src/components/cz-company-verify/handler.js";
 import * as vatVerify from "../../../../src/components/cz-vat-verify/handler.js";
@@ -325,7 +326,9 @@ export function wirePlatform(o: WiringOptions): Wiring {
   // No review-task store wired here (mail.ingest has approval.required:false today) — checkApproval()
   // still fails closed (APPROVAL_REQUIRED) if a future policy ever sets approval.required:true.
   const ingestHost = new ExecutorHost({ hostId: ingest.descriptor.module, clock: o.clock, audit: o.audit, credentials: ingestCredentials, policyFor: policy });
-  ingestHost.register(ingest.createIngestHandler({ artifacts: o.artifacts, clock: o.clock }));
+  // Same extractor as document.extract (below, Podatelna's binary uploads) — one implementation of "binary ->
+  // readable text" regardless of which channel handed the farm the attachment.
+  ingestHost.register(ingest.createIngestHandler({ artifacts: o.artifacts, clock: o.clock, extractor: new WorkersAiExtractor(o.ai) }));
   router.register({
     descriptor: ingest.descriptor as never,
     policies: { "mail.ingest": policy("mail.ingest") },

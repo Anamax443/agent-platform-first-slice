@@ -13,6 +13,7 @@ import { MATICE_ODPOVEDNOSTI_HTML, VYVOJOVY_DIAGRAM_EN_HTML, VYVOJOVY_DIAGRAM_HT
 import { INSTALLATION, installation } from "apf:installation";
 import { FAKES_ORIGIN, HttpRegistryAdapter } from "../../../../src/adapters/registry.js";
 import type { WorkersAiBinding } from "../../../../src/adapters/workers-ai.js";
+import { WorkersAiExtractor } from "../../../../src/adapters/extract.js";
 import type { SecretsSource } from "../../../../src/installation.js";
 import type { AuditRecord } from "../../../../src/platform/audit.js";
 import { sha256Bytes, type Artifact } from "../../../../src/platform/artifacts.js";
@@ -1176,19 +1177,15 @@ async function startIntake(env: Env, req: IntakeRequest): Promise<IntakeOutcome>
       await env.ARTIFACTS.put(location, buf, { httpMetadata: { contentType }, customMetadata: { name, receivedFrom: req.receivedFrom, receivedAt: new Date().toISOString() } });
     }
     original = { kind: "external", sha256: digest, contentType, byteLength: buf.byteLength, location, name };
-    let converted: ConversionResponse;
-    try {
-      converted = await env.AI.toMarkdown({ name, blob: new Blob([buf], { type: contentType }) });
-    } catch (e) {
-      return { ok: false, code: "EXTRACTION_FAILED", message: "Workers AI konverzi neprovedla; originál je uložený, tok nebyl spuštěn.", detail: { sha256: digest, contentType, error: String(e) } };
+    // Same DocumentExtractor mail.ingest uses for e-mail attachments (adapters/extract.ts) — one implementation of
+    // "binary -> readable text" regardless of channel; only the error phrasing below stays specific to this path
+    // ("tok nebyl spuštěn" — intake never even starts a workflow on a document it can't read).
+    const extracted = await new WorkersAiExtractor(env.AI).extract({ name, bytes: new Uint8Array(buf), contentType });
+    if (!extracted.ok) {
+      const suffix = extracted.code === "EXTRACTION_EMPTY" ? "Workers AI ze souboru nezískala žádný text; originál je uložený, tok nebyl spuštěn." : "Workers AI dokument nepřevedla; originál je uložený, tok nebyl spuštěn.";
+      return { ok: false, code: extracted.code, message: suffix, detail: { sha256: digest, contentType, ...extracted.detail } };
     }
-    if (converted.format === "error") {
-      return { ok: false, code: "EXTRACTION_FAILED", message: "Workers AI soubor odmítla; originál je uložený, tok nebyl spuštěn.", detail: { sha256: digest, contentType, error: converted.error } };
-    }
-    if (!converted.data.trim()) {
-      return { ok: false, code: "EXTRACTION_EMPTY", message: "Workers AI ze souboru nezískala žádný text; originál je uložený, tok nebyl spuštěn.", detail: { sha256: digest, contentType } };
-    }
-    extraction = { text: converted.data, format: converted.format, tokens: converted.tokens };
+    extraction = { text: extracted.text, format: extracted.format, tokens: extracted.tokens };
   } else {
     if (!req.content.bytes.trim()) return { ok: false, code: "EMPTY_TEXT", message: "Prázdný text." };
     original = { kind: "text", bytes: req.content.bytes, contentType: req.content.contentType };

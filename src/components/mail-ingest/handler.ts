@@ -1,6 +1,14 @@
 // mail.ingest/1: durable ingest. Stores the raw mail as an immutable original (F7) and derives untrusted metadata by rules (F2).
-import { capabilityError, StorageFull } from "../../platform/api.js";
+// Channel-specific splitting only (owner, 17.9.2026: "je jedno jestli je příloha podaná Podatelnou, Slackem,
+// Telegramem nebo e-mailem, přílohu by měl zpracovávat stejná kráva" — the channel recognizes shape, it never
+// gets its own copy of processing logic): this handler recognizes "an e-mail arrived, here is its body, here are
+// its N attachments" (parseMimeMessage) and derives a text artifact per part, same as Podatelna's direct-upload
+// path already does via the SAME DocumentExtractor (adapters/extract.ts) for anything binary. document.classify
+// downstream never learns any of this happened — it keeps reading whatever artifact `$steps.ingest.payload
+// .artifactId` points to, exactly as it always has, for every channel.
+import { capabilityError, parseMimeMessage, StorageFull } from "../../platform/api.js";
 import type { ArtifactWriter, Clock, FieldValue, HandlerOutcome, HostHandlerSpec } from "../../platform/api.js";
+import type { DocumentExtractor } from "../../adapters/extract.js";
 import descriptor from "./descriptor.json" with { type: "json" };
 import inputSchema from "./input.schema.json" with { type: "json" };
 import outputSchema from "./output.schema.json" with { type: "json" };
@@ -10,10 +18,13 @@ export { descriptor, inputSchema, outputSchema };
 export const INGEST_HANDLER_ID = "mail-ingest-handler";
 const SUBJECT_MAX = outputSchema.properties.subject.maxLength;
 const ADDRESS = /<?([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})>?\s*$/;
+/** Text-ish attachment (e.g. a .csv/.txt sent as an attachment) needs no AI extraction — it's already readable. */
+const isTextish = (contentType: string): boolean => contentType.startsWith("text/");
 
 export interface IngestDeps {
   artifacts: ArtifactWriter;
   clock: Clock;
+  extractor: DocumentExtractor;
 }
 
 /** Deterministic header parse: first blank line ends the headers; only From and Subject are read, everything stays data. */
@@ -43,9 +54,16 @@ export function createIngestHandler(deps: IngestDeps): HostHandlerSpec {
       const address = headers.from ? ADDRESS.exec(headers.from)?.[1] : undefined;
       if (!address) return failed(capabilityError("MAIL_MALFORMED", "VALIDATION", false, "mail has no parseable From header"));
 
+      // One parse serves both the body derivation below and the attachment loop after it.
+      const parsed = parseMimeMessage(p.rawMail);
+
       let stored;
+      let body;
       try {
         stored = deps.artifacts.put({ tenantId: context.tenantId, bytes: p.rawMail, receivedFrom: p.receivedFrom });
+        // The original is the whole raw MIME message, immutable, kept for evidence/audit and for opening the
+        // e-mail/its attachments later (GET /workflow/:id/attachment/:n) — never what a capability classifies.
+        body = deps.artifacts.derive(stored.artifactId, parsed.textBody, "mail-ingest:parseMimeMessage");
       } catch (e) {
         if (e instanceof StorageFull) {
           // RES-STOR-001: no false success; retryable so the caller applies backpressure instead of dropping the mail
@@ -53,10 +71,35 @@ export function createIngestHandler(deps: IngestDeps): HostHandlerSpec {
         }
         throw e;
       }
+
+      // Best-effort per attachment: one unreadable/oversized attachment must not fail the whole message — the raw
+      // bytes stay reachable on the immutable original regardless (GET /workflow/:id/attachment/:n re-parses it).
+      const attachmentArtifactIds: string[] = [];
+      for (const a of parsed.attachments) {
+        try {
+          if (isTextish(a.contentType)) {
+            attachmentArtifactIds.push(deps.artifacts.derive(stored.artifactId, new TextDecoder().decode(a.bytes), "mail-ingest:parseMimeMessage").artifactId);
+            continue;
+          }
+          const extracted = await deps.extractor.extract({ name: a.filename ?? `attachment-${a.index}`, bytes: a.bytes, contentType: a.contentType });
+          if (extracted.ok) attachmentArtifactIds.push(deps.artifacts.derive(stored.artifactId, extracted.text, "mail-ingest:workers-ai-toMarkdown").artifactId);
+        } catch {
+          // StorageFull or an extractor throw on ONE attachment: skip it, the message itself must still get through.
+        }
+      }
+
       const sender: FieldValue<string> = { value: address.toLowerCase(), source: "rules", trustLevel: "untrusted-derived" };
       return {
         status: "SUCCEEDED",
-        payload: { artifactId: stored.artifactId, sha256: stored.sha256, receivedFrom: p.receivedFrom, sender, subject: (headers.subject ?? "").slice(0, SUBJECT_MAX) },
+        payload: {
+          artifactId: body.artifactId,
+          sha256: body.sha256,
+          originalArtifactId: stored.artifactId,
+          attachmentArtifactIds,
+          receivedFrom: p.receivedFrom,
+          sender,
+          subject: (headers.subject ?? "").slice(0, SUBJECT_MAX),
+        },
         provenance: { producerComponent: descriptor.module, producerVersion: descriptor.componentVersion, derivedFrom: [stored.artifactId] },
       };
     },

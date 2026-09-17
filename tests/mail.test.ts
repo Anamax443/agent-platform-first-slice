@@ -2,6 +2,7 @@
 // SEC-CTX-002 between the two flows, IRREVERSIBLE dedup, storage backpressure, journal shared by two workflows.
 import { describe, expect, it } from "vitest";
 import { FakeSmtpAdapter } from "../src/adapters/smtp.js";
+import { FakeExtractor } from "../src/adapters/extract.js";
 import { ArtifactStore } from "../src/platform/artifacts.js";
 import { FakeClock, MINUTE } from "../src/platform/clock.js";
 import { CredentialDenied } from "../src/platform/credentials.js";
@@ -70,9 +71,11 @@ describe("SEC-INJ-001 across the whole mail flow (F2)", () => {
     expect(sends).toHaveLength(1);
     expect(sends[0]?.message.payload.recipientRef).toBe("ops-mailbox");
     // the ingested original keeps the injected subject as data
-    const ingested = instance.steps.find((s) => s.stepId === "ingest")?.result?.payload as { artifactId: string; subject: string };
+    const ingested = instance.steps.find((s) => s.stepId === "ingest")?.result?.payload as { artifactId: string; originalArtifactId: string; subject: string };
     expect(ingested.subject).toContain("audit@attacker.example");
-    expect(slice.artifacts.get(ingested.artifactId)?.bytes).toBe(INJECTION_MAIL);
+    expect(slice.artifacts.get(ingested.originalArtifactId)?.bytes).toBe(INJECTION_MAIL);
+    // classify reads the derived body text (channel-agnostic, same as any other intake), never the raw envelope.
+    expect(slice.artifacts.get(ingested.artifactId)?.bytes).not.toContain("From: attacker");
   });
 });
 
@@ -239,11 +242,17 @@ describe("EVD flow 2", () => {
     const slice = createSlice();
     const instance = await runMailIntake(slice, { rawMail: INVOICE_MAIL, stampText: "VALIDATED INVOICE" });
     const ingest = instance.steps.find((s) => s.stepId === "ingest")?.result;
-    const p = ingest?.payload as { artifactId: string; sender: { trustLevel: string; source: string }; sha256: string };
-    const original = slice.artifacts.get(p.artifactId);
-    expect(original).toMatchObject({ bytes: INVOICE_MAIL, tenantId: TENANT_A, receivedFrom: "smtp:relay.example", sha256: p.sha256 });
+    const p = ingest?.payload as { artifactId: string; originalArtifactId: string; attachmentArtifactIds: string[]; sender: { trustLevel: string; source: string }; sha256: string };
+    const original = slice.artifacts.get(p.originalArtifactId);
+    expect(original).toMatchObject({ bytes: INVOICE_MAIL, tenantId: TENANT_A, receivedFrom: "smtp:relay.example" });
+    // artifactId/sha256 name the derived body text (what document.classify actually reads) — the immutable raw
+    // original is tracked separately, same distinction the direct-upload path already makes (original vs subject).
+    const body = slice.artifacts.get(p.artifactId);
+    expect(body).toMatchObject({ derivedFrom: p.originalArtifactId, producer: "mail-ingest:parseMimeMessage", sha256: p.sha256 });
+    expect(body?.bytes).not.toContain("From:"); // headers stay on the original only, never on what classify reads
+    expect(p.attachmentArtifactIds).toEqual([]); // INVOICE_MAIL has no attachments
     expect(p.sender).toMatchObject({ source: "rules", trustLevel: "untrusted-derived" });
-    expect(ingest?.provenance).toMatchObject({ producerComponent: "mail-ingest", derivedFrom: [p.artifactId] });
+    expect(ingest?.provenance).toMatchObject({ producerComponent: "mail-ingest", derivedFrom: [p.originalArtifactId] });
     const notify = instance.steps.find((s) => s.stepId === "notify")?.result;
     const stamped = String(instance.steps.find((s) => s.stepId === "stamp")?.result?.payload?.stampedArtifactId);
     expect(notify?.provenance).toMatchObject({ producerComponent: "email-executor", derivedFrom: [stamped] });
@@ -257,6 +266,64 @@ describe("EVD flow 2", () => {
     expect(records.filter((r) => r.kind === "write-intent").map((r) => r.capability)).toEqual(["mail.ingest", "document.stamp", "email.send"]);
     expect(records.every((r) => r.kind === "state" || r.capability !== undefined)).toBe(true);
     for (const s of instance.steps) expect(s.result?.correlationId).toBe("cor-mail-evd");
+  });
+});
+
+const CRLF = "\r\n";
+function multipart(boundary: string, parts: string[], topHeaders: string[] = []): string {
+  const headers = [`Content-Type: multipart/mixed; boundary="${boundary}"`, ...topHeaders].join(CRLF);
+  const body = parts.map((p) => `--${boundary}${CRLF}${p}`).join(CRLF) + `${CRLF}--${boundary}--${CRLF}`;
+  return `${headers}${CRLF}${CRLF}${body}`;
+}
+
+describe("mail.ingest attachment splitting (owner, 17.9.2026: 'je jedno jestli je příloha podaná Podatelnou, Slackem, Telegramem nebo e-mailem, přílohu by měl zpracovávat stejná kráva')", () => {
+  const pdfBase64 = Buffer.from("%PDF-1.4 stand-in binary content").toString("base64");
+  const bigMail = multipart(
+    "B1",
+    [
+      `Content-Type: text/plain${CRLF}${CRLF}FAKTURA č. 2026-0142`,
+      `Content-Type: application/pdf; name="invoice.pdf"${CRLF}Content-Disposition: attachment; filename="invoice.pdf"${CRLF}Content-Transfer-Encoding: base64${CRLF}${CRLF}${pdfBase64}`,
+      `Content-Type: text/csv; name="note.csv"${CRLF}Content-Disposition: attachment; filename="note.csv"${CRLF}${CRLF}castka,mena${CRLF}12500,CZK`,
+    ],
+    [`From: Ucto <ucto@dodavatel.example>`, `Subject: Faktura s přílohami`],
+  );
+
+  it("REG-TOKEN-001 the body artifact document.classify reads never contains an attachment's base64 payload — the real bug 17.9.2026 (a forwarded receipt's body still hit 32k+ tokens after stripMimeAttachments, because a base64-encoded text/plain part was never decoded, not because of the attachments themselves)", async () => {
+    const slice = createSlice({ extractor: new FakeExtractor("ok", "extracted PDF text") });
+    const instance = await runMailIntake(slice, { rawMail: bigMail, stampText: "VALIDATED INVOICE" });
+    const ingest = instance.steps.find((s) => s.stepId === "ingest")?.result?.payload as { artifactId: string; originalArtifactId: string; attachmentArtifactIds: string[] };
+    const body = slice.artifacts.get(ingest.artifactId);
+    expect(body?.bytes).toBe("FAKTURA č. 2026-0142");
+    expect(body?.bytes).not.toContain(pdfBase64);
+    expect(instance.status).toBe("SUCCEEDED"); // classify actually ran on a small, real prompt
+  });
+
+  it("a binary attachment (PDF) goes through the same DocumentExtractor Podatelna's direct uploads use, and becomes its own derived, addressable artifact", async () => {
+    const extractor = new FakeExtractor("ok", "extracted PDF text");
+    const slice = createSlice({ extractor });
+    const instance = await runMailIntake(slice, { rawMail: bigMail });
+    const ingest = instance.steps.find((s) => s.stepId === "ingest")?.result?.payload as { attachmentArtifactIds: string[]; originalArtifactId: string };
+    expect(extractor.calls).toEqual([{ name: "invoice.pdf", contentType: "application/pdf" }]); // only the PDF, not the csv
+    expect(ingest.attachmentArtifactIds).toHaveLength(2); // pdf (extracted) + csv (text, decoded directly)
+    const pdfArtifact = slice.artifacts.get(ingest.attachmentArtifactIds[0] as string);
+    expect(pdfArtifact).toMatchObject({ bytes: "extracted PDF text", derivedFrom: ingest.originalArtifactId, producer: "mail-ingest:workers-ai-toMarkdown" });
+    const csvArtifact = slice.artifacts.get(ingest.attachmentArtifactIds[1] as string);
+    expect(csvArtifact).toMatchObject({ bytes: "castka,mena\r\n12500,CZK", derivedFrom: ingest.originalArtifactId, producer: "mail-ingest:parseMimeMessage" });
+  });
+
+  it("one attachment failing extraction does not fail the message — the body still classifies, the other attachment is still derived", async () => {
+    const slice = createSlice({ extractor: new FakeExtractor("failed") });
+    const instance = await runMailIntake(slice, { rawMail: bigMail, stampText: "VALIDATED INVOICE" });
+    expect(instance.status).toBe("SUCCEEDED");
+    const ingest = instance.steps.find((s) => s.stepId === "ingest")?.result?.payload as { attachmentArtifactIds: string[] };
+    expect(ingest.attachmentArtifactIds).toHaveLength(1); // only the csv (text, no extractor needed) made it; the pdf did not
+  });
+
+  it("a plain mail with no attachments carries an empty attachmentArtifactIds, never undefined", async () => {
+    const slice = createSlice();
+    const instance = await runMailIntake(slice, { rawMail: INVOICE_MAIL, stampText: "VALIDATED INVOICE" });
+    const ingest = instance.steps.find((s) => s.stepId === "ingest")?.result?.payload as { attachmentArtifactIds: string[] };
+    expect(ingest.attachmentArtifactIds).toEqual([]);
   });
 });
 

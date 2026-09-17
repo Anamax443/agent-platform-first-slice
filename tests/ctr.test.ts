@@ -81,12 +81,16 @@ for (const [module, { caps, output }] of Object.entries(COMPONENTS)) {
           }
           if (capability === "mail.ingest") {
             // EVD-001 for ingest: the stored original is the raw mail, owned by the tenant of the trusted context
-            const p = run.result.payload as { artifactId: string; sha256: string };
-            const stored = run.slice.artifacts.get(p.artifactId);
-            expect(stored?.bytes).toBe(f.payload.rawMail);
-            expect(stored?.tenantId).toBe(f.actor === "svc-orchestrator-t7" ? TENANT_B : TENANT_A);
-            expect(stored?.receivedFrom).toBe(f.payload.receivedFrom);
-            expect(p.sha256).toBe(sha256(String(f.payload.rawMail)));
+            const p = run.result.payload as { artifactId: string; sha256: string; originalArtifactId: string };
+            const original = run.slice.artifacts.get(p.originalArtifactId);
+            expect(original?.bytes).toBe(f.payload.rawMail);
+            expect(original?.tenantId).toBe(f.actor === "svc-orchestrator-t7" ? TENANT_B : TENANT_A);
+            expect(original?.receivedFrom).toBe(f.payload.receivedFrom);
+            // artifactId/sha256 name the derived body text document.classify actually reads (channel-agnostic,
+            // same as any other intake) — not the raw original anymore; just check it is that derivation of it.
+            const body = run.slice.artifacts.get(p.artifactId);
+            expect(body?.derivedFrom).toBe(p.originalArtifactId);
+            expect(p.sha256).toBe(body && sha256(body.bytes));
           }
           if (capability === "email.send") {
             // effect field recipientRef: every delivery went to an allowlisted address, never to anything from a payload

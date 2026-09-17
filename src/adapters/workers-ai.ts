@@ -4,6 +4,9 @@ import type { LlmAdapter, TokenUsage } from "./llm.js";
 
 export interface WorkersAiBinding {
   run(model: string, inputs: { messages: Array<{ role: "system" | "user"; content: string }>; max_tokens?: number; temperature?: number }): Promise<unknown>;
+  /** Optional: the real `env.AI` binding has it (document conversion, not text generation); a text-completion-only
+   * fake used by classify/extract tests never needs to implement it. See adapters/extract.ts for the consumer. */
+  toMarkdown?(input: { name: string; blob: Blob }): Promise<{ format: string; data?: string; tokens?: number; error?: string }>;
 }
 
 /** Text-generation responses differ by model family: `{ response }` (native) or `{ choices: [{ message: { content } }] }` (OpenAI-shaped). */

@@ -3,6 +3,7 @@
 // Nothing bound to a customer or environment lives here: identities, tenants, policies and credential references
 // come from the installation profile, secret values from a SecretsSource (config/<installation>/, docs/NAVRHOVY-LIST-farma.md).
 import { FakeArchiveAdapter } from "./adapters/archive.js";
+import { FakeExtractor, type DocumentExtractor } from "./adapters/extract.js";
 import { FakeAresAdapter, type AresAdapter } from "./adapters/ares.js";
 import { FakeDmsAdapter } from "./adapters/dms.js";
 import { FakeMojeDaneAdapter, type MojeDaneAdapter } from "./adapters/moje-dane.js";
@@ -63,6 +64,8 @@ export interface SliceOptions {
   registry?: RegistryAdapter;
   archive?: FakeArchiveAdapter;
   smtp?: FakeSmtpAdapter;
+  /** mail.ingest's attachment extraction — same DocumentExtractor port Podatelna's binary uploads use. */
+  extractor?: DocumentExtractor;
   models?: Record<string, LlmAdapter>;
   /** invoice.extract's own model map — separate from `models` (classify's) because the two capabilities'
    * adapters return different response shapes (a single token vs. a JSON object). */
@@ -123,6 +126,9 @@ export function createSlice(installation: Installation, secrets: SecretsSource, 
   const ares: AresAdapter = o.ares ?? new FakeAresAdapter();
   const mojeDane: MojeDaneAdapter = o.mojeDane ?? new FakeMojeDaneAdapter();
   const smtp = o.smtp ?? new FakeSmtpAdapter();
+  // Named documentExtractor, not extractor: that name is already the invoice-extractor capability's own handler
+  // module import above (import * as extractor from "./components/invoice-extractor/handler.js").
+  const documentExtractor = o.extractor ?? new FakeExtractor();
   const models = o.models ?? { llm: new FakeLlmAdapter(), keyword: new KeywordClassifierAdapter() };
   const extractModels = o.extractModels ?? { llm: new FakeInvoiceExtractorAdapter(), rules: new RulesInvoiceExtractorAdapter() };
 
@@ -156,7 +162,7 @@ export function createSlice(installation: Installation, secrets: SecretsSource, 
   emailHost.register(email.createEmailSendHandler({ artifacts, smtp, credentials: emailCredentials, recipients, clock }));
 
   const ingestHost = new ExecutorHost({ hostId: ingest.descriptor.module, clock, audit, credentials: ingestCredentials, idempotency: o.ingestIdempotencyStore, policyFor: policy, reviewTasks: review });
-  ingestHost.register(ingest.createIngestHandler({ artifacts, clock }));
+  ingestHost.register(ingest.createIngestHandler({ artifacts, clock, extractor: documentExtractor }));
 
   // Router: descriptors validated against the frozen schema, policies looked up fail-closed.
   const router = new Router({ registry: keyRegistry, clock, audit, lifecycle: o.lifecycle ?? installation.lifecycle });
@@ -299,6 +305,7 @@ export function createSlice(installation: Installation, secrets: SecretsSource, 
     mojeDane,
     evidence,
     smtp,
+    documentExtractor,
     models,
     recipients,
     router,
