@@ -1,8 +1,21 @@
-/** LLM adapter contract. Components never see a vendor SDK; tests use the fakes below. */
+/** Token counts a real model call actually consumed (FOUNDATION-core §7 audit trail, "model-usage"). Adapters are
+ * the only place that ever sees a vendor SDK's usage shape, so this is the platform-facing normalized form —
+ * src/platform/types.ts declares its own structurally-identical copy for HandlerOutcome.modelUsage rather than
+ * importing this one: ARCH-DEP-001 lets platform/* import nothing from adapters/*, so the two layers each own
+ * their copy of the shape instead of sharing a type import across that boundary. */
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+}
+
+/** LLM adapter contract. Components never see a vendor SDK; tests use the fakes below. `onUsage`, when given, is
+ * called once with the real token counts a call actually consumed — including on a QUALITY failure or refusal
+ * downstream, since the tokens were billed regardless. Optional and additive: none of the deterministic fakes
+ * below call it or need updating. */
 export interface LlmAdapter {
   readonly modelId: string;
   readonly promptVersion: string;
-  complete(prompt: string): Promise<string>;
+  complete(prompt: string, onUsage?: (usage: TokenUsage) => void): Promise<string>;
 }
 
 const UNTRUSTED = /<untrusted>([\s\S]*?)<\/untrusted>/;

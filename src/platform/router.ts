@@ -189,6 +189,19 @@ export class Router {
         res.reconciliationRef = outcome.reconciliationRef;
         break;
     }
+    // Additive audit trail only: modelUsage never touches res / the frozen result-envelope schema, it just
+    // records what a real model call cost, same style as the "dispatch" append in route() above.
+    if (outcome.modelUsage) {
+      this.opts.audit.append({
+        kind: "model-usage",
+        correlationId: m.correlationId,
+        workflowId: m.workflowId,
+        tenantId: env.context.tenantId,
+        actorId: env.context.actorId,
+        capability: m.capability,
+        details: { stepId: m.stepId, executionId, inputTokens: outcome.modelUsage.inputTokens, outputTokens: outcome.modelUsage.outputTokens },
+      });
+    }
     const v = validateContract("result-envelope", res);
     if (!v.ok) throw new Error(`router produced an invalid result envelope: ${v.errors}`);
     return res;

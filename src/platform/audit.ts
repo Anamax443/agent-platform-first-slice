@@ -14,7 +14,8 @@ export type AuditKind =
   | "review-expired"
   | "security"
   | "reconciliation"
-  | "state";
+  | "state"
+  | "model-usage";
 
 export interface AuditRecord {
   auditId: string;

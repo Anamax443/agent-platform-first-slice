@@ -1,7 +1,7 @@
 // LlmAdapter over the Anthropic SDK (paid models on the farm). The API key is resolved by name through the installation's
 // secrets, the model id comes from the profile. Classification needs one short answer, so effort is low and output tiny.
 import Anthropic from "@anthropic-ai/sdk";
-import type { LlmAdapter } from "./llm.js";
+import type { LlmAdapter, TokenUsage } from "./llm.js";
 
 /** Families that take `output_config.effort` (5-series and the 4.6+ line); older ids such as Haiku 4.5 reject it. */
 const EFFORT_FAMILY = /^claude-(fable|opus|sonnet)-(5|4-[678])/;
@@ -20,7 +20,7 @@ export class AnthropicAdapter implements LlmAdapter {
     this.client = new Anthropic({ apiKey, maxRetries: 1 });
   }
 
-  async complete(prompt: string): Promise<string> {
+  async complete(prompt: string, onUsage?: (usage: TokenUsage) => void): Promise<string> {
     const base = {
       model: this.modelId,
       max_tokens: this.opts.maxTokens ?? 64,
@@ -32,6 +32,9 @@ export class AnthropicAdapter implements LlmAdapter {
     const response = FALLBACK_FAMILY.test(this.modelId)
       ? await this.client.beta.messages.create({ ...base, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" })
       : await this.client.messages.create(base);
+    // Before the refusal check: a refused-but-billed request still consumed real tokens (Anthropic bills the
+    // classifier pass), so onUsage fires here rather than being skipped by the throw below.
+    onUsage?.({ inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens });
     if (response.stop_reason === "refusal") throw new Error(`model ${this.modelId} refused the request`);
     return response.content
       .filter((b): b is Extract<(typeof response.content)[number], { type: "text" }> => b.type === "text")

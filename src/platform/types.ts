@@ -111,12 +111,24 @@ export interface ResultEnvelope {
   provenance?: Provenance;
 }
 
-/** What a handler returns before the router wraps it into a ResultEnvelope. */
-export type HandlerOutcome =
+/** Token counts a real model call actually consumed, carried on HandlerOutcome for the router's "model-usage"
+ * audit record — not part of any frozen contract (ResultEnvelope never carries it). Structurally identical to,
+ * but independently declared from, adapters/llm.ts's TokenUsage: ARCH-DEP-001 forbids platform/* importing from
+ * adapters/*, so each layer owns its own copy of the shape rather than sharing a type import across that
+ * boundary (adapters may import only platform/errors.js the other way, never platform/types.js). */
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+}
+
+/** What a handler returns before the router wraps it into a ResultEnvelope. `modelUsage` is additive on every
+ * variant: a handler that never calls an LlmAdapter never sets it, and the router only audits it when present. */
+export type HandlerOutcome = (
   | { status: "SUCCEEDED"; payload: Record<string, unknown>; provenance?: Provenance }
   | { status: "FAILED"; error: ErrorObject }
   | { status: "WAITING"; waitReason: WaitReason; deadline: string; reviewTaskId?: string; payload?: Record<string, unknown> }
-  | { status: "UNKNOWN_OUTCOME"; reconciliationRef: string };
+  | { status: "UNKNOWN_OUTCOME"; reconciliationRef: string }
+) & { modelUsage?: TokenUsage };
 
 export interface HandlerInput {
   message: MessageEnvelope;

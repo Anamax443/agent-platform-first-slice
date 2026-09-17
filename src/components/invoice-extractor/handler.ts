@@ -6,7 +6,7 @@
 // One uniform strategy -> LlmAdapter -> complete() pipeline, no per-strategy branching here, mirroring
 // document-classifier/handler.ts exactly: "rules" (RulesInvoiceExtractorAdapter, src/adapters/llm.ts) is just
 // another LlmAdapter, not a special code path.
-import type { LlmAdapter } from "../../adapters/llm.js";
+import type { LlmAdapter, TokenUsage } from "../../adapters/llm.js";
 import { capabilityError, DependencyTimeout, platformError, sha256, withTimeout } from "../../platform/api.js";
 import type { ArtifactReader, Clock, FieldValue, Handler, HandlerOutcome, Provenance } from "../../platform/api.js";
 import descriptor from "./descriptor.json" with { type: "json" };
@@ -86,7 +86,9 @@ function field<T>(value: T | undefined, source: "llm" | "rules"): FieldValue<T> 
 }
 
 export function createInvoiceExtractor(deps: ExtractorDeps): Handler {
-  const failed = (error: ReturnType<typeof capabilityError>): HandlerOutcome => ({ status: "FAILED", error });
+  // usage carries a second, optional arg so the every-return-point-before-complete() callers below stay
+  // byte-identical to before this change (failed(error) with no modelUsage field).
+  const failed = (error: ReturnType<typeof capabilityError>, usage?: TokenUsage): HandlerOutcome => ({ status: "FAILED", error, ...(usage ? { modelUsage: usage } : {}) });
 
   return async ({ message, context }) => {
     const p = message.payload as unknown as Input;
@@ -103,21 +105,25 @@ export function createInvoiceExtractor(deps: ExtractorDeps): Handler {
     if (!model) return failed(capabilityError("STRATEGY_UNKNOWN", "VALIDATION", false, "no model configured for strategy", { strategy }));
 
     let raw: string;
+    let usage: TokenUsage | undefined;
     try {
-      raw = await withTimeout(model.complete(buildExtractionPrompt(art.bytes)), deps.modelTimeoutMs ?? 5_000);
+      raw = await withTimeout(
+        model.complete(buildExtractionPrompt(art.bytes), (u) => { usage = u; }),
+        deps.modelTimeoutMs ?? 5_000,
+      );
     } catch (e) {
-      if (e instanceof DependencyTimeout) return failed(platformError("DEPENDENCY_TIMEOUT", "model did not answer before the deadline", { strategy, ms: e.ms }));
-      return failed(capabilityError("MODEL_UNAVAILABLE", "DEPENDENCY", true, "model call failed", { strategy, modelId: model.modelId, reason: String(e).slice(0, 200) }));
+      if (e instanceof DependencyTimeout) return failed(platformError("DEPENDENCY_TIMEOUT", "model did not answer before the deadline", { strategy, ms: e.ms }), usage);
+      return failed(capabilityError("MODEL_UNAVAILABLE", "DEPENDENCY", true, "model call failed", { strategy, modelId: model.modelId, reason: String(e).slice(0, 200) }), usage);
     }
 
     let parsed: unknown;
     try {
       parsed = JSON.parse(extractJsonObject(raw));
     } catch {
-      return failed(capabilityError("MODEL_OUTPUT_NOT_ALLOWED", "QUALITY", true, "model output is not valid JSON", { strategy, outputSha256: sha256(raw), outputLength: raw.length }));
+      return failed(capabilityError("MODEL_OUTPUT_NOT_ALLOWED", "QUALITY", true, "model output is not valid JSON", { strategy, outputSha256: sha256(raw), outputLength: raw.length }), usage);
     }
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-      return failed(capabilityError("MODEL_OUTPUT_NOT_ALLOWED", "QUALITY", true, "model output is not a JSON object", { strategy, outputSha256: sha256(raw), outputLength: raw.length }));
+      return failed(capabilityError("MODEL_OUTPUT_NOT_ALLOWED", "QUALITY", true, "model output is not a JSON object", { strategy, outputSha256: sha256(raw), outputLength: raw.length }), usage);
     }
     const candidate = parsed as Record<string, unknown>;
 
@@ -135,6 +141,11 @@ export function createInvoiceExtractor(deps: ExtractorDeps): Handler {
     const totalWithVat = field(normalizeTotal(candidate.totalWithVat), strategy);
     if (totalWithVat) payload.totalWithVat = totalWithVat;
 
-    return { status: "SUCCEEDED", payload, provenance: { ...base, modelId: model.modelId, promptVersion: model.promptVersion } };
+    return {
+      status: "SUCCEEDED",
+      payload,
+      provenance: { ...base, modelId: model.modelId, promptVersion: model.promptVersion },
+      ...(usage ? { modelUsage: usage } : {}),
+    };
   };
 }

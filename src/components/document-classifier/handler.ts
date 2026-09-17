@@ -1,5 +1,5 @@
 // document.classify/1: AI capability. Untrusted document text goes in, one enum value with provenance comes out (F2).
-import type { LlmAdapter } from "../../adapters/llm.js";
+import type { LlmAdapter, TokenUsage } from "../../adapters/llm.js";
 import { capabilityError, DependencyTimeout, platformError, sha256, stripMimeAttachments, withTimeout } from "../../platform/api.js";
 import type { ArtifactReader, Clock, FieldValue, Handler, HandlerOutcome, Provenance } from "../../platform/api.js";
 import descriptor from "./descriptor.json" with { type: "json" };
@@ -46,7 +46,9 @@ export function buildPrompt(text: string, allowed: readonly string[]): string {
 }
 
 export function createDocumentClassifier(deps: ClassifierDeps): Handler {
-  const failed = (error: ReturnType<typeof capabilityError>): HandlerOutcome => ({ status: "FAILED", error });
+  // usage carries a second, optional arg so the every-return-point-before-complete() callers below stay
+  // byte-identical to before this change (failed(error) with no modelUsage field).
+  const failed = (error: ReturnType<typeof capabilityError>, usage?: TokenUsage): HandlerOutcome => ({ status: "FAILED", error, ...(usage ? { modelUsage: usage } : {}) });
 
   return async ({ message, context }) => {
     const p = message.payload as unknown as Input;
@@ -73,12 +75,16 @@ export function createDocumentClassifier(deps: ClassifierDeps): Handler {
     if (!model) return failed(capabilityError("STRATEGY_UNKNOWN", "VALIDATION", false, "no model configured for strategy", { strategy, ...(p.model ? { model: p.model } : {}) }));
 
     let raw: string;
+    let usage: TokenUsage | undefined;
     try {
-      raw = await withTimeout(model.complete(buildPrompt(stripMimeAttachments(art.bytes), DOCUMENT_TYPES)), deps.modelTimeoutMs ?? 5_000);
+      raw = await withTimeout(
+        model.complete(buildPrompt(stripMimeAttachments(art.bytes), DOCUMENT_TYPES), (u) => { usage = u; }),
+        deps.modelTimeoutMs ?? 5_000,
+      );
     } catch (e) {
-      if (e instanceof DependencyTimeout) return failed(platformError("DEPENDENCY_TIMEOUT", "model did not answer before the deadline", { strategy, ms: e.ms }));
+      if (e instanceof DependencyTimeout) return failed(platformError("DEPENDENCY_TIMEOUT", "model did not answer before the deadline", { strategy, ms: e.ms }), usage);
       // The reason is evidence for the operator (wrong model id, quota, network); truncated, never the document.
-      return failed(capabilityError("MODEL_UNAVAILABLE", "DEPENDENCY", true, "model call failed", { strategy, modelId: model.modelId, reason: String(e).slice(0, 200) }));
+      return failed(capabilityError("MODEL_UNAVAILABLE", "DEPENDENCY", true, "model call failed", { strategy, modelId: model.modelId, reason: String(e).slice(0, 200) }), usage);
     }
 
     // F2: the model answer is data. Only an exact allowlist member becomes a value; everything else is a QUALITY failure
@@ -92,6 +98,7 @@ export function createDocumentClassifier(deps: ClassifierDeps): Handler {
           outputLength: raw.length,
           allowed: [...DOCUMENT_TYPES],
         }),
+        usage,
       );
     }
 
@@ -105,6 +112,7 @@ export function createDocumentClassifier(deps: ClassifierDeps): Handler {
       status: "SUCCEEDED",
       payload: { artifactId: art.artifactId, sha256: art.sha256, documentType },
       provenance: { ...base, modelId: model.modelId, promptVersion: model.promptVersion },
+      ...(usage ? { modelUsage: usage } : {}),
     };
   };
 }
