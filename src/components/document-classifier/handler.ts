@@ -1,6 +1,6 @@
 // document.classify/1: AI capability. Untrusted document text goes in, one enum value with provenance comes out (F2).
 import type { LlmAdapter } from "../../adapters/llm.js";
-import { capabilityError, DependencyTimeout, platformError, sha256, withTimeout } from "../../platform/api.js";
+import { capabilityError, DependencyTimeout, platformError, sha256, stripMimeAttachments, withTimeout } from "../../platform/api.js";
 import type { ArtifactReader, Clock, FieldValue, Handler, HandlerOutcome, Provenance } from "../../platform/api.js";
 import descriptor from "./descriptor.json" with { type: "json" };
 import inputSchema from "./input.schema.json" with { type: "json" };
@@ -74,7 +74,7 @@ export function createDocumentClassifier(deps: ClassifierDeps): Handler {
 
     let raw: string;
     try {
-      raw = await withTimeout(model.complete(buildPrompt(art.bytes, DOCUMENT_TYPES)), deps.modelTimeoutMs ?? 5_000);
+      raw = await withTimeout(model.complete(buildPrompt(stripMimeAttachments(art.bytes), DOCUMENT_TYPES)), deps.modelTimeoutMs ?? 5_000);
     } catch (e) {
       if (e instanceof DependencyTimeout) return failed(platformError("DEPENDENCY_TIMEOUT", "model did not answer before the deadline", { strategy, ms: e.ms }));
       // The reason is evidence for the operator (wrong model id, quota, network); truncated, never the document.

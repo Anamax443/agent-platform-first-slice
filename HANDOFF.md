@@ -2,6 +2,32 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-16 (177) — document.classify: MIME přílohy nikdy nejdou do LLM promptu (fáze 1 opravy tokenového přetečení)
+
+Navazuje na #176: po opravě 64KB limitu prošel skutečný test (fakturа+účtenka od Anthropicu, 228 922 B) přes
+`mail.ingest`, ale spadl na `document.classify` — `MODEL_UNAVAILABLE`: 58 684 odhadovaných tokenů proti
+32 000 kontextu `llama-3.1-8b` (free default model). Příčina: `mail.ingest` ukládá **celý surový MIME** (hlavičky
++ base64 přílohy) jako artefakt, `document.classify` ho posílal **celý** do promptu beze změny.
+
+Rozděleno na fáze (vlastník: „rozděl to na vícero fází"), tohle je **fáze 1**:
+- `src/platform/mime.ts` (nový): `stripMimeAttachments()` — čistá, netriviální funkce, nikdy nevyhazuje. Aktivuje
+  se **jen** při rozpoznaném `Content-Type: multipart/...; boundary=...` (žádné falešně pozitivní na běžný
+  dokument/vložený text — nulové riziko regrese na R2-inbox/web-form cesty). Nahradí tělo každé ne-textové MIME
+  části (PDF, obrázek...) krátkým placeholderem (`[attachment removed: filename="X", N chars encoded]`),
+  rekurzivně prochází vnořené multiparty (bounded hloubka 8, fail-closed proti adversarial bombě), a ořeže vnější
+  transportní hlavičky na `Subject`/`From`/`Date` (zahazuje `Received`/`DKIM-Signature`/`ARC-Seal`/`X-MS-Exchange-*`
+  šum). Nikdy se nedotýká uloženého artefaktu — jen kopie textu těsně před promptem.
+- `src/platform/api.ts`: nový export (jediná povolená platformní plocha pro komponenty, ARCH-DEP-001).
+  `document-classifier/handler.ts`: `buildPrompt(art.bytes, ...)` → `buildPrompt(stripMimeAttachments(art.bytes), ...)`.
+- Testy MIME-001..007 včetně reprodukce reálného případu (2× ~34KB base64 PDF + ukecané Outlook hlavičky →
+  výsledek pod 4000 odhadovanými tokeny, hluboko pod 32 000 limitem). **552/552** (+9), typecheck, arch,
+  farm:check zelené.
+
+**Zbývá (fáze 2/3, zapsáno #174/#175):** `MODEL_UNAVAILABLE`/`DEPENDENCY` klasifikace kontextového přetečení je
+pořád špatně (permanentní stav, ne přechodná závislostní chyba — stejný nález jako M1 z 15. 9.); skutečná
+strukturální oprava (přílohy jako `impulse.attachment` entity, `classify` nikdy nevidí payload vůbec) čeká na
+`ingress.email` (M1/M2).
+
 ## 2026-09-16 (176) — Oprava nálezu 1: 64KB vs 1MB limit sladěny, nasazeno
 
 `src/components/mail-ingest/input.schema.json`'s `rawMail.maxLength` 65536 → 1048576 (1 MB), ať sedí s
