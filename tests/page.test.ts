@@ -271,6 +271,64 @@ describe("PAGE-FARM-001 renderFarm() actually runs, not just typechecks", () => 
     expect(ohradaSection).toContain("3 / 1");
   });
 
+  it("Ohrada row shows which model ran the step and how many tokens it used (owner's request 17.9.2026: 'u každého kroku vidět použitý AI model a kolik spotřeboval tokenů') — even on a FAILED attempt, matched by stepId+executionId against m.auditLog", () => {
+    const withUsage: FarmModel = {
+      ...model,
+      now: "2026-09-17T07:00:00Z",
+      openWorkflowProblems: [],
+      instances: [
+        {
+          workflowId: "wf-usage1",
+          workflow: "mail-intake",
+          workflowVersion: "2",
+          tenantId: "tenant-42",
+          actorId: "svc-orchestrator",
+          status: "FAILED",
+          createdAt: "2026-09-17T06:06:06.957Z",
+          updatedAt: "2026-09-17T06:06:08.927Z",
+          steps: [
+            {
+              stepId: "classify",
+              capability: "document.classify",
+              capabilityVersion: "1",
+              sideEffects: "none",
+              executionId: "exec-usage-1",
+              attempt: 1,
+              logicalAttempt: 1,
+              strategyIndex: 0,
+              strategy: "llm",
+              idempotencyKey: "idem-usage-1",
+              status: "FAILED",
+              startedAt: "2026-09-17T06:06:06.957Z",
+              result: {
+                messageId: "m1",
+                inReplyTo: "m0",
+                correlationId: "c1",
+                status: "FAILED",
+                capability: "document.classify",
+                capabilityVersion: "1",
+                schemaVersion: "1",
+                completedAt: "2026-09-17T06:06:07.900Z",
+                error: { code: "MODEL_OUTPUT_NOT_ALLOWED", class: "QUALITY", retryable: true, message: "Model vrátil hodnotu mimo povolený výčet." },
+                provenance: { producerComponent: "document-classifier", modelId: "claude-haiku-4-5", promptVersion: "classify-1" },
+              },
+            },
+          ],
+        },
+      ],
+      auditLog: [
+        { at: "2026-09-17T06:06:07.900Z", kind: "model-usage", workflowId: "wf-usage1", tenantId: "tenant-42", capability: "document.classify", details: { stepId: "classify", executionId: "exec-usage-1", inputTokens: 842, outputTokens: 6 } },
+        // a DIFFERENT executionId for the same stepId (a superseded retry) must never be picked up instead.
+        { at: "2026-09-17T06:06:05.000Z", kind: "model-usage", workflowId: "wf-usage1", tenantId: "tenant-42", capability: "document.classify", details: { stepId: "classify", executionId: "exec-usage-STALE", inputTokens: 999, outputTokens: 999 } },
+      ],
+    };
+    const html = renderFarm(withUsage);
+    const ohradaSection = html.slice(html.indexOf('id="view-ohrada"'), html.indexOf('id="view-staj"'));
+    expect(ohradaSection).toContain("model <code>claude-haiku-4-5</code>");
+    expect(ohradaSection).toContain("model spotřeboval <b>842</b> vstupních / <b>6</b> výstupních tokenů");
+    expect(ohradaSection).not.toContain("999");
+  });
+
   it("Výsledek sekce ukazuje statistiky i poslední instance (SUCCEEDED tam být má, na rozdíl od Ohrady)", () => {
     const html = renderFarm(model);
     const vysledekSection = html.slice(html.indexOf('id="view-vysledek"'), html.indexOf('id="view-denik"'));

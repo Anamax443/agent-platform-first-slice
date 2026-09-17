@@ -969,13 +969,26 @@ export function renderFarm(m: FarmModel): string {
   const penGrid = penGridOf(stajCapabilities);
   const teletnikGrid = penGridOf(teletnikCapabilities);
 
+  // Owner's request 17.9.2026: "u každého kroku [vidět] použitý AI model a kolik spotřeboval tokenů" — matched
+  // against m.auditLog (the farm-wide recent window, already in scope) by workflowId + stepId + executionId,
+  // same discipline as stepsTable()'s per-instance usageFor() on the detail page. Best-effort: an instance old
+  // enough to have scrolled out of that window simply shows no usage line, same as a step that never called a
+  // model at all — never a wrong/stale number.
+  const usageForStep = (workflowId: string, s: Instance["steps"][number]): AuditLogRow | undefined =>
+    m.auditLog.find(
+      (r) =>
+        r.workflowId === workflowId &&
+        r.kind === "model-usage" &&
+        (r.details as Record<string, unknown> | undefined)?.stepId === s.stepId &&
+        (r.details as Record<string, unknown> | undefined)?.executionId === s.executionId,
+    );
   // Owner's request 2026-09-08: what carries the link belongs in column 1, rows collapsed to a one-line summary
   // by default, click to see the steps — a document block is evidence to check, not to always read in full.
   const stepDetailRows = (i: Extract<FarmInstanceRow, { purged?: false }>): string =>
     i.steps
       .map(
         (s) =>
-          `<tr class="step-row" data-wf="${esc(i.workflowId)}" hidden><td class="dim mono">${shortAt(s.startedAt)}</td><td>${esc(s.stepId)}</td><td>${esc(s.capability)}/v${esc(s.capabilityVersion)}</td>${stateTd(s.status)}<td>${s.attempt} / ${s.logicalAttempt} <span class="dim">${esc(s.strategy)}</span></td><td class="wrap">${humanStepResult(s)}</td></tr>`,
+          `<tr class="step-row" data-wf="${esc(i.workflowId)}" hidden><td class="dim mono">${shortAt(s.startedAt)}</td><td>${esc(s.stepId)}</td><td>${esc(s.capability)}/v${esc(s.capabilityVersion)}</td>${stateTd(s.status)}<td>${s.attempt} / ${s.logicalAttempt} <span class="dim">${esc(s.strategy)}</span></td><td class="wrap">${humanStepResult(s, usageForStep(i.workflowId, s))}</td></tr>`,
       )
       .join("");
   // Owner's request 2026-09-17: one generic client-side filter/sort mechanism (wireListTable() in the script
@@ -1020,7 +1033,7 @@ export function renderFarm(m: FarmModel): string {
         const meta = `tenant ${esc(i.tenantId)} · aktér ${esc(i.actorId)} · čeká už ${humanDuration(i.updatedAt, m.now)}`;
         const capabilityCell = esc(capabilityKeyOf(i, step));
         const attemptCell = step ? `${step.attempt} / ${step.logicalAttempt} <small class="dim">${esc(step.strategy)}</small>` : '<span class="dim">—</span>';
-        const resultCell = step ? humanStepResult(step) || '<span class="dim">beze zprávy</span>' : '<span class="dim">bez záznamu kroku</span>';
+        const resultCell = step ? humanStepResult(step, usageForStep(i.workflowId, step)) || '<span class="dim">beze zprávy</span>' : '<span class="dim">bez záznamu kroku</span>';
         const krokKey = i.originalName ?? i.workflowId;
         const head = `<tr class="group-head gh-toggle" data-wf="${esc(i.workflowId)}" aria-expanded="false" data-sort-date="${esc(i.updatedAt)}" data-sort-krok="${esc(krokKey)}" data-sort-capability="${capabilityCell}" data-sort-stav="${esc(i.status)}" data-sort-pokus="${step ? step.attempt : 0}"><td class="dim mono">${shortAt(i.updatedAt)}</td><td><span class="gh-chevron" aria-hidden="true">▸</span> <a href="/workflow/${esc(i.workflowId)}">${linkText}</a>${i.originalName ? ` <small class="dim"><code>${esc(i.workflowId)}</code></small>` : ""}<div class="dim" style="font-size:.85em">${meta}</div></td><td>${capabilityCell}</td>${stateTd(i.status)}<td>${attemptCell}</td><td class="wrap">${resultCell}</td></tr>`;
         return head + stepDetailRows(i);
@@ -1690,10 +1703,11 @@ const barChart = (rows: { type: string; count: number }[]): string => {
 const fmtResult = (s: Instance["steps"][number]): string => {
   const r = s.result;
   if (!r) return "";
-  if (r.error) return `<code>${esc(r.error.code)}</code> <small>${esc(r.error.class)}${r.error.retryable ? ", retryable" : ""}</small><br><small>${esc(r.error.message)}</small>`;
-  if (r.status === "WAITING") return `čeká: ${esc(r.waitReason ?? "")}${r.reviewTaskId ? ` <code>${esc(r.reviewTaskId)}</code>` : ""}`;
-  if (r.payload) return `<code>${esc(JSON.stringify(r.payload).slice(0, 400))}</code>`;
-  return esc(r.status);
+  const model = modelIdNote(s);
+  if (r.error) return `<code>${esc(r.error.code)}</code> <small>${esc(r.error.class)}${r.error.retryable ? ", retryable" : ""}</small><br><small>${esc(r.error.message)}</small>${model}`;
+  if (r.status === "WAITING") return `čeká: ${esc(r.waitReason ?? "")}${r.reviewTaskId ? ` <code>${esc(r.reviewTaskId)}</code>` : ""}${model}`;
+  if (r.payload) return `<code>${esc(JSON.stringify(r.payload).slice(0, 400))}</code>${model}`;
+  return `${esc(r.status)}${model}`;
 };
 
 const artifactCard = (a: Artifact): string => {
@@ -1721,32 +1735,55 @@ const WAIT_REASON_LABEL: Record<string, string> = {
   DEPENDENCY: "jinou instanci",
 };
 
-/** Step result in plain Czech, per capability — for /farm, where there's no renderOutput() above it to carry the human summary. Falls back to collapsed raw JSON for an unknown capability. */
-const humanStepResult = (s: Instance["steps"][number]): string => {
+/** Which model actually ran this step, when the result carries one (Provenance.modelId — a rules/keyword
+ * strategy has one too, e.g. "keyword-rules-1", which is itself useful: it tells the reader plainly this
+ * attempt did NOT call a paid/free AI model at all, same honesty as showing "self-test: nikdy" instead of
+ * hiding the fact nothing ran). Owner's request 17.9.2026: "mohl by být u každého kroku vidět použitý AI
+ * model a kolik spotřeboval tokenů". */
+const modelIdNote = (s: Instance["steps"][number]): string => {
+  const modelId = s.result?.provenance?.modelId;
+  return modelId ? ` <small class="dim" title="model, který krok vykonal">model <code>${esc(modelId)}</code></small>` : "";
+};
+
+/** Token usage line, when a "model-usage" audit record exists for this exact step attempt (matched by stepId
+ * AND executionId, never stepId alone — a stale technical retry's usage must never be shown against the
+ * attempt that superseded it). Absent for the large majority of steps that never call a metered model at all;
+ * that is the normal case, not a gap. */
+const usageNote = (usage: AuditLogRow | undefined, capability: string): string => (usage ? `<br><small class="dim">${auditSummary("model-usage", capability, usage.details)}</small>` : "");
+
+/** Step result in plain Czech, per capability — for /farm, where there's no renderOutput() above it to carry the human summary. Falls back to collapsed raw JSON for an unknown capability. Appends which model ran
+ * and (when known) how many tokens it used — on every branch, including a FAILED attempt: tokens can be spent
+ * even when the step then fails (e.g. a QUALITY rejection), so hiding usage on failure would under-report it. */
+const humanStepResult = (s: Instance["steps"][number], usage?: AuditLogRow): string => {
   const r = s.result;
   if (!r) return "";
+  const model = modelIdNote(s);
+  const usageLine = usageNote(usage, s.capability);
   // Owner's Ohrada screenshot (17.9.2026): "z toho nepoznám o co se jedná" — error.code alone (e.g.
   // MODEL_UNAVAILABLE) is jargon; error.message is the human sentence ErrorObject carries for exactly this.
-  if (r.error) return `${esc(r.error.message)} <code class="dim">${esc(r.error.code)}</code>${r.error.retryable ? " <small>(lze zopakovat)</small>" : ""}`;
-  if (r.status === "WAITING") return `čeká na ${esc(r.waitReason ? (WAIT_REASON_LABEL[r.waitReason] ?? r.waitReason) : "schválení")}`;
+  if (r.error) return `${esc(r.error.message)} <code class="dim">${esc(r.error.code)}</code>${r.error.retryable ? " <small>(lze zopakovat)</small>" : ""}${model}${usageLine}`;
+  if (r.status === "WAITING") return `čeká na ${esc(r.waitReason ? (WAIT_REASON_LABEL[r.waitReason] ?? r.waitReason) : "schválení")}${model}${usageLine}`;
   const p = r.payload as Record<string, unknown> | undefined;
-  if (!p) return esc(r.status);
-  switch (s.capability) {
-    case "document.classify":
-      return `typ: <b>${esc(pick(p, "documentType", "value"))}</b> <small class="dim">jistota ${esc(pick(p, "documentType", "confidence"))}</small>`;
-    case "document.validate":
-      return `${esc(pick(p, "documentType", "validation", "status"))} <small class="dim">razítko ${pick(p, "stampAllowed") ? "povoleno" : "zamítnuto"}</small>`;
-    case "document.stamp":
-      return `<b>${esc(pick(p, "stampText"))}</b> <small class="dim">DMS ${esc(pick(p, "dmsRef"))}</small>`;
-    case "document.archive":
-      return "archivováno";
-    case "mail.ingest":
-      return "e-mail přijat";
-    case "email.send":
-      return `odesláno · příjemce <code>${esc(pick(p, "recipientRef"))}</code>`;
-    default:
-      return rawJson(p);
-  }
+  if (!p) return `${esc(r.status)}${model}${usageLine}`;
+  const base = ((): string => {
+    switch (s.capability) {
+      case "document.classify":
+        return `typ: <b>${esc(pick(p, "documentType", "value"))}</b> <small class="dim">jistota ${esc(pick(p, "documentType", "confidence"))}</small>`;
+      case "document.validate":
+        return `${esc(pick(p, "documentType", "validation", "status"))} <small class="dim">razítko ${pick(p, "stampAllowed") ? "povoleno" : "zamítnuto"}</small>`;
+      case "document.stamp":
+        return `<b>${esc(pick(p, "stampText"))}</b> <small class="dim">DMS ${esc(pick(p, "dmsRef"))}</small>`;
+      case "document.archive":
+        return "archivováno";
+      case "mail.ingest":
+        return "e-mail přijat";
+      case "email.send":
+        return `odesláno · příjemce <code>${esc(pick(p, "recipientRef"))}</code>`;
+      default:
+        return rawJson(p);
+    }
+  })();
+  return `${base}${model}${usageLine}`;
 };
 
 /** Audit "deník" row detail in plain Czech, falling back to collapsed raw JSON when a kind has no phrasing here. */
