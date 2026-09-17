@@ -564,6 +564,77 @@ describe("Ohrada + Výsledek: generický filtr/řazení seznamu (owner's request
   });
 });
 
+describe("Deník: sdílený list-table mechanismus (owner's request 2026-09-17, backend denikFrom/denikTo + GET /audit.csv už přistálo)", () => {
+  const denikFixture: FarmModel = {
+    ...model,
+    denikFrom: "2026-09-01",
+    denikTo: "2026-09-17",
+    auditLog: [
+      { at: "2026-09-17T08:00:00.000Z", kind: "state", workflowId: "wf-ok1", tenantId: "tenant-42", capability: "document.classify", details: { status: "SUCCEEDED" } },
+      { at: "2026-09-17T07:00:00.000Z", kind: "dispatch", workflowId: "wf-ok1", tenantId: "tenant-42", capability: "document.stamp", details: {} },
+      { at: "2026-09-16T06:00:00.000Z", kind: "state", workflowId: null, tenantId: null, capability: null, details: { status: "RUNNING" } },
+    ],
+  };
+  const denikSectionOf = (html: string): string => html.slice(html.indexOf('id="view-denik"'), html.indexOf('id="view-nastaveni"'));
+
+  it("'Datum a čas' je první sloupec (task 1), tabulka má id pro wireListTable(), a každý řádek nese data-sort-date/-kind/-capability", () => {
+    const html = renderFarm(denikFixture);
+    const denikSection = denikSectionOf(html);
+    expect(denikSection).toContain(
+      '<table id="denik-table"><thead><tr><th data-sort-key="date">Datum a čas</th><th data-sort-key="kind">Druh</th><th>Instance</th><th data-sort-key="capability">Capability</th><th>Detail</th></tr></thead>',
+    );
+    // "2026-09-17T08:00:00.000Z" -> shortAt() Europe/Prague local (CEST, UTC+2).
+    expect(denikSection).toContain('<tr data-sort-date="2026-09-17T08:00:00.000Z" data-sort-kind="state" data-sort-capability="document.classify">');
+    expect(denikSection).toContain('<td class="dim mono">2026-09-17 10:00:00</td>');
+    expect(denikSection).toContain('<tr data-sort-date="2026-09-17T07:00:00.000Z" data-sort-kind="dispatch" data-sort-capability="document.stamp">');
+    // null workflowId/capability row: capability attribute falls back to empty string, never "null".
+    expect(denikSection).toContain('<tr data-sort-date="2026-09-16T06:00:00.000Z" data-sort-kind="state" data-sort-capability="">');
+  });
+
+  it("Druh a Capability dropdowny (task 3) obsahují jen distinct hodnoty skutečně přítomné v m.auditLog, stejná konvence jako Ohrada/Výsledek", () => {
+    const html = renderFarm(denikFixture);
+    const denikSection = denikSectionOf(html);
+    expect(denikSection).toContain('<input type="search" id="denik-q"');
+    expect(denikSection).toContain('<select id="denik-druh" aria-label="Druh">');
+    expect(denikSection).toContain('<option value="">Druh: vše</option><option value="dispatch">dispatch</option><option value="state">state</option>');
+    expect(denikSection).toContain('<select id="denik-cap" aria-label="Capability">');
+    expect(denikSection).toContain('<option value="">Capability: vše</option><option value="document.classify">document.classify</option><option value="document.stamp">document.stamp</option>');
+    expect(denikSection).toContain('<span class="dim" id="denik-count"></span>');
+  });
+
+  it("wireListTable() je zapojený i na denik-table, stejným sdíleným mechanismem jako Ohrada/Výsledek (jen 1 definice funkce v celé stránce)", () => {
+    const html = renderFarm(denikFixture);
+    expect(html.split("function wireListTable(").length - 1).toBe(1);
+    expect(html).toContain('wireListTable(document.getElementById("denik-table")');
+  });
+
+  it("period-picker formulář (task 5) se předvyplní z m.denikFrom/m.denikTo a odešle GET na přesně tyto query param jména, stejná konvence jako Výsledkův limit/window picker", () => {
+    const html = renderFarm(denikFixture);
+    const denikSection = denikSectionOf(html);
+    expect(denikSection).toContain('<form method="get" action="/farm#denik"');
+    expect(denikSection).toContain('<input id="denik-from" type="date" name="denikFrom" value="2026-09-01"');
+    expect(denikSection).toContain('<input id="denik-to" type="date" name="denikTo" value="2026-09-17"');
+  });
+
+  it("Stáhnout CSV odkaz (task 6) vede na GET /audit.csv se stejným from/to jako je právě zobrazené, a má download atribut pro reálné stažení", () => {
+    const html = renderFarm(denikFixture);
+    const denikSection = denikSectionOf(html);
+    expect(denikSection).toContain('<a class="btn btn-sm" id="denik-csv-link" href="/audit.csv?from=2026-09-01&amp;to=2026-09-17" download="denik.csv"');
+  });
+
+  it("bez zvoleného období vede CSV odkaz na /audit.csv úplně bez parametrů (export celé historie, žádné prázdné from=/to=)", () => {
+    const html = renderFarm({ ...model, denikFrom: undefined, denikTo: undefined });
+    const denikSection = denikSectionOf(html);
+    expect(denikSection).toContain('<a class="btn btn-sm" id="denik-csv-link" href="/audit.csv" download="denik.csv"');
+  });
+
+  it("prázdný Deník (auditLog: []) ukazuje srozumitelnou větu, ne jen prázdnou tabulku", () => {
+    const html = renderFarm({ ...model, auditLog: [] });
+    const denikSection = denikSectionOf(html);
+    expect(denikSection).toContain('<td colspan="5" class="dim">žádné záznamy</td>');
+  });
+});
+
 describe("computeWatchdog() — Argos's own deterministic verdict (HANDOFF 83, oponentura 'Argos dnes sám nic systematicky nehlídá')", () => {
   it("a farm with a dead worker, a quarantined module and an Ohrada backlog is INCIDENT, not just individually red cards", () => {
     const snapshot = computeWatchdog(model);

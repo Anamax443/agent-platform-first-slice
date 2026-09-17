@@ -132,6 +132,12 @@ export interface FarmModel {
   instanceLimit: number;
   instanceWindow: string;
   auditLog: AuditLogRow[];
+  /** Deník tab's own date-range picker (index.ts GET /farm ?denikFrom=&denikTo=, buildFarmModel) — the currently
+   * active bounds, ISO 8601 date-ish strings, so the page can pre-fill the two date inputs and build the matching
+   * GET /audit.csv?from=&to= export link. Both absent = no range picked, `auditLog` above is just the usual last
+   * 50 (unchanged pre-existing behavior). */
+  denikFrom?: string;
+  denikTo?: string;
   inbox: { pending: InboxItem[]; failed: InboxItem[]; batchLimit: number };
   workflows: string[];
   models: ModelsInfo;
@@ -345,6 +351,10 @@ th[data-sort-key]:hover{color:var(--text)}
 th[data-sort-key].sort-asc::after{content:" ▲"}
 th[data-sort-key].sort-desc::after{content:" ▼"}
 .f-hidden{display:none!important}
+/* Deník table (owner's request 2026-09-17, ITDashboard-style pattern): header stays visible while the row list
+   scrolls under it — sticks to .app-main, the page's own scrolling container (app-main{overflow-y:auto}). Needs
+   an opaque background of its own or rows would show through underneath as they scroll past. */
+#denik-table thead th{position:sticky;top:0;background:var(--bg);z-index:1}
 .wrap{white-space:normal!important;overflow:visible!important;text-overflow:clip!important;word-break:break-word;line-height:1.4}
 .term{margin:0;height:22rem;overflow-y:auto;background:var(--chrome);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;font-family:var(--font-mono);font-size:.87em;line-height:1.6}
 .term .t-line{white-space:pre-wrap;word-break:break-word}
@@ -1027,32 +1037,54 @@ export function renderFarm(m: FarmModel): string {
   const ohradaCapabilityOptions = distinctSorted(nonPurged(ohradaInstances).map((i) => capabilityKeyOf(i, ohradaStepFor(i))));
   const vysledekCapabilityOptions = distinctSorted(nonPurged(m.instances).map((i) => capabilityKeyOf(i, lastStepOf(i))));
   const vysledekStavOptions = distinctSorted(nonPurged(m.instances).map((i) => i.status));
-  const listToolbar = (idPrefix: string, stavOptions: { value: string; label: string }[], capabilityOptions: string[]): string =>
+  // Generalized 2026-09-17 (owner's request, Deník task): an arbitrary small list of {id, label, options}
+  // dropdowns instead of the two hardcoded stav/cap params — Ohrada/Výsledek pass their existing Stav+Capability
+  // pair (same output, byte for byte, as before), Deník below passes Druh+Capability instead. Each dropdown's
+  // `id` becomes both its element id (`${idPrefix}-${id}`) and the data-sort-* attribute wireListTable() filters
+  // on, so the two stay in lockstep by construction.
+  const listToolbar = (idPrefix: string, filters: { id: string; label: string; options: { value: string; label: string }[] }[]): string =>
     `<div class="toolbar list-toolbar">
       <input type="search" id="${idPrefix}-q" placeholder="Hledat…" aria-label="Hledat">
-      <select id="${idPrefix}-stav" aria-label="Stav">${stavOptions.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join("")}</select>
-      <select id="${idPrefix}-cap" aria-label="Capability"><option value="">Capability: vše</option>${capabilityOptions.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("")}</select>
+      ${filters.map((f) => `<select id="${idPrefix}-${f.id}" aria-label="${esc(f.label)}">${f.options.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join("")}</select>`).join("")}
       <span class="fill"></span>
       <span class="dim" id="${idPrefix}-count"></span>
     </div>`;
-  const ohradaToolbar = listToolbar(
-    "ohrada",
-    [
-      { value: "", label: "Stav: vše" },
-      { value: "WAITING", label: "WAITING" },
-      { value: "FAILED", label: "FAILED" },
-      { value: "UNKNOWN_OUTCOME", label: "UNKNOWN_OUTCOME" },
-    ],
-    ohradaCapabilityOptions,
-  );
-  const vysledekToolbar = listToolbar("vysledek", [{ value: "", label: "Stav: vše" }, ...vysledekStavOptions.map((v) => ({ value: v, label: v }))], vysledekCapabilityOptions);
+  const ohradaToolbar = listToolbar("ohrada", [
+    {
+      id: "stav",
+      label: "Stav",
+      options: [
+        { value: "", label: "Stav: vše" },
+        { value: "WAITING", label: "WAITING" },
+        { value: "FAILED", label: "FAILED" },
+        { value: "UNKNOWN_OUTCOME", label: "UNKNOWN_OUTCOME" },
+      ],
+    },
+    { id: "cap", label: "Capability", options: [{ value: "", label: "Capability: vše" }, ...ohradaCapabilityOptions.map((c) => ({ value: c, label: c }))] },
+  ]);
+  const vysledekToolbar = listToolbar("vysledek", [
+    { id: "stav", label: "Stav", options: [{ value: "", label: "Stav: vše" }, ...vysledekStavOptions.map((v) => ({ value: v, label: v }))] },
+    { id: "cap", label: "Capability", options: [{ value: "", label: "Capability: vše" }, ...vysledekCapabilityOptions.map((c) => ({ value: c, label: c }))] },
+  ]);
 
+  // Deník table gets the same generic list mechanism as Ohrada/Výsledek (owner's request 2026-09-17) — one flat
+  // row per audit entry, no group-head/step-row grouping (wireListTable() below treats every <tr> here as its
+  // own single-row group). data-sort-date/-kind/-capability mirror the leading "Datum a čas" column and the two
+  // dropdown filters below, same "data-sort-" + column-key convention Ohrada/Výsledek already use.
   const denikRows = m.auditLog
     .map((r) => {
       const link = r.workflowId ? `<a href="/workflow/${esc(r.workflowId)}">${esc(r.workflowId)}</a>` : "—";
-      return `<tr><td class="dim mono">${shortAt(r.at)}</td><td>${esc(r.kind)}</td><td>${link}</td><td>${esc(r.capability ?? "")}</td><td class="wrap">${auditSummary(r.kind, r.capability, r.details)}</td></tr>`;
+      return `<tr data-sort-date="${esc(r.at)}" data-sort-kind="${esc(r.kind)}" data-sort-capability="${esc(r.capability ?? "")}"><td class="dim mono">${shortAt(r.at)}</td><td>${esc(r.kind)}</td><td>${link}</td><td>${esc(r.capability ?? "")}</td><td class="wrap">${auditSummary(r.kind, r.capability, r.details)}</td></tr>`;
     })
     .join("");
+  // Distinct-values-present dropdown options, same convention as ohradaCapabilityOptions/vysledekCapabilityOptions
+  // above (distinctSorted, computed from THIS table's own rows so an option never filters to zero results).
+  const denikKindOptions = distinctSorted(m.auditLog.map((r) => r.kind));
+  const denikCapabilityOptions = distinctSorted(m.auditLog.map((r) => r.capability).filter((c): c is string => c !== null));
+  const denikToolbar = listToolbar("denik", [
+    { id: "druh", label: "Druh", options: [{ value: "", label: "Druh: vše" }, ...denikKindOptions.map((k) => ({ value: k, label: k }))] },
+    { id: "cap", label: "Capability", options: [{ value: "", label: "Capability: vše" }, ...denikCapabilityOptions.map((c) => ({ value: c, label: c }))] },
+  ]);
   const terminalLine = (r: AuditLogRow): string => {
     const time = shortAt(r.at);
     const link = r.workflowId ? ` <a href="/workflow/${esc(r.workflowId)}">${esc(r.workflowId)}</a>` : "";
@@ -1060,6 +1092,20 @@ export function renderFarm(m: FarmModel): string {
     return `<div class="t-line" data-at="${esc(r.at)}"><span class="t-dim">${time}</span> ${esc(r.kind)}${cap}${link} <span class="t-dim">${auditSummary(r.kind, r.capability, r.details)}</span></div>`;
   };
   const terminalSeed = [...m.auditLog].reverse().map(terminalLine).join("");
+
+  // Deník date-range picker + CSV export (owner's request: "vyvolat historii za období, exportovat CSV") — GET
+  // /farm's own denikFrom/denikTo (page-load bound, index.ts DENIK_RANGE_LIMIT) vs. GET /audit.csv's from/to (a
+  // separate, much higher-capped route meant for a genuine full-period export) are deliberately two different
+  // query-param names on two different routes; this just builds the one link between them using whatever range is
+  // currently active on this render. `<input type=date>` needs exactly YYYY-MM-DD, so an ISO `at`-shaped value is
+  // trimmed to its date part.
+  const denikRangeActive = Boolean(m.denikFrom || m.denikTo);
+  const denikFromInputValue = m.denikFrom ? m.denikFrom.slice(0, 10) : "";
+  const denikToInputValue = m.denikTo ? m.denikTo.slice(0, 10) : "";
+  const csvExportParams = new URLSearchParams();
+  if (m.denikFrom) csvExportParams.set("from", m.denikFrom);
+  if (m.denikTo) csvExportParams.set("to", m.denikTo);
+  const csvExportHref = `/audit.csv${csvExportParams.size ? `?${csvExportParams.toString()}` : ""}`;
 
   // Přehled: needs-attention feed (open incidents + ohrada backlog + failed inbox) — the dashboard-first landing
   // the operator sees before drilling into anything (vlastníkovo rozhodnutí 13. 9. 2026: "je farma zdravá, co
@@ -1224,10 +1270,28 @@ export function renderFarm(m: FarmModel): string {
       icon: iconBadge(ICONS.denik, MASCOT_BG.denik),
       label: "Deník",
       body: `<div class="pagehead"><h1>${iconBadge(ICONS.denik, MASCOT_BG.denik, "lg")} Audit — Deník</h1></div><p class="lede">Živý terminál: syrový auditní záznam napříč celou farmou, jeden řádek = jedna událost, nejnovější dole (jako <code>tail -f</code>).</p>
-      <div class="toolbar" style="margin-top:0"><span class="fill"></span><button type="button" class="btn btn-sm" id="denik-live-toggle" aria-pressed="true">⏸ Pozastavit</button></div>
+      <div class="toolbar" style="margin-top:0">
+        <form method="get" action="/farm#denik" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <label class="dim" style="font-size:12px" for="denik-from">Od</label>
+          <input id="denik-from" type="date" name="denikFrom" value="${esc(denikFromInputValue)}" style="width:auto">
+          <label class="dim" style="font-size:12px" for="denik-to">Do</label>
+          <input id="denik-to" type="date" name="denikTo" value="${esc(denikToInputValue)}" style="width:auto">
+          <button class="btn btn-sm" type="submit">Zobrazit období</button>
+          ${denikRangeActive ? `<a class="btn btn-sm" href="/farm#denik">Zrušit filtr</a>` : ""}
+        </form>
+        <span class="fill"></span>
+        <a class="btn btn-sm" id="denik-csv-link" href="${esc(csvExportHref)}" download="denik.csv" title="Export CSV za zvolené období (bez výběru: export celé historie, max 20000 řádků) — s aktuálně vybraným filtrem Druh/Capability, pokud je nastavený">⬇ Export CSV</a>
+        <button type="button" class="btn btn-sm" id="denik-live-toggle" aria-pressed="true">⏸ Pozastavit</button>
+      </div>
+      <p class="dim" style="font-size:12px;margin:4px 0 0">${
+        denikRangeActive
+          ? `Zobrazeno ${m.auditLog.length} záznamů v období${m.denikFrom ? ` od ${shortAt(m.denikFrom)}` : ""}${m.denikTo ? ` do ${shortAt(m.denikTo)}` : ""} (max 500 na jedno zobrazení stránky — na export celého období slouží CSV).`
+          : `Posledních ${m.auditLog.length} záznamů, bez filtru na období.`
+      }</p>
       <div class="term" id="denik-term" aria-live="polite">${terminalSeed}</div>
       <h3 style="margin-top:16px">Stejná data jako tabulka</h3>
-      <div class="gridwrap"><table><thead><tr><th>Čas</th><th>Druh</th><th>Instance</th><th>Capability</th><th>Detail</th></tr></thead><tbody>${denikRows}</tbody></table></div>`,
+      ${denikToolbar}
+      <div class="gridwrap"><table id="denik-table"><thead><tr><th data-sort-key="date">Datum a čas</th><th data-sort-key="kind">Druh</th><th>Instance</th><th data-sort-key="capability">Capability</th><th>Detail</th></tr></thead><tbody>${m.auditLog.length ? denikRows : `<tr><td colspan="5" class="dim">žádné záznamy${denikRangeActive ? " ve zvoleném období" : ""}</td></tr>`}</tbody></table></div>`,
     },
     {
       id: "nastaveni",
@@ -1336,41 +1400,62 @@ export function renderFarm(m: FarmModel): string {
   // so a group-head never gets separated from its own step-detail rows. Filtering uses its own ".f-hidden" CSS
   // class, never the "hidden" attribute the gh-toggle expand/collapse above already owns — a filtered-out row
   // stays exactly as expanded/collapsed as the user left it once the filter clears again.
+  // Generalized 2026-09-17 (owner's request, Deník task) to also work on a FLAT table with no group-head/step-row
+  // grouping at all (Deník: one flat row per audit entry, no expand/collapse). Detection: no tr.group-head found
+  // in tbody at all -> every tr counts as its own single-row group with zero detail rows, and the exact same
+  // sort/filter/counter logic below applies uniformly. Strict superset of the original grouped-only behavior:
+  // whenever at least one tr.group-head exists (Ohrada/Výsledek, always), grouping is byte-for-byte unchanged.
+  // opts.filters generalizes the old hardcoded stav/cap dropdowns to an arbitrary small list of
+  // {attr, el} pairs, AND-combined with the free-text search — Ohrada/Výsledek pass their existing
+  // stav+capability pair (identical resulting behavior), Deník passes kind+capability instead.
   function wireListTable(table, opts) {
     if (!table) return;
     var tbody = table.tBodies[0];
     if (!tbody) return;
-    var groups = [];
     var rows = Array.prototype.slice.call(tbody.rows);
-    for (var i = 0; i < rows.length; i++) {
-      var r = rows[i];
-      if (!r.classList.contains("group-head")) continue;
-      var wf = r.getAttribute("data-wf");
-      var detail = [];
-      var j = i + 1;
-      while (j < rows.length && rows[j].classList.contains("step-row") && rows[j].getAttribute("data-wf") === wf) {
-        detail.push(rows[j]);
-        j++;
-      }
-      groups.push({ head: r, detail: detail });
-      i = j - 1;
+    var hasGroups = false;
+    for (var gi = 0; gi < rows.length; gi++) {
+      if (rows[gi].classList.contains("group-head")) { hasGroups = true; break; }
     }
-    var searchEl = opts.search, stavEl = opts.stav, capEl = opts.cap, countEl = opts.count;
+    var groups = [];
+    if (hasGroups) {
+      for (var i = 0; i < rows.length; i++) {
+        var r = rows[i];
+        if (!r.classList.contains("group-head")) continue;
+        var wf = r.getAttribute("data-wf");
+        var detail = [];
+        var j = i + 1;
+        while (j < rows.length && rows[j].classList.contains("step-row") && rows[j].getAttribute("data-wf") === wf) {
+          detail.push(rows[j]);
+          j++;
+        }
+        groups.push({ head: r, detail: detail });
+        i = j - 1;
+      }
+    } else {
+      // A row with no data-sort-date is content, not data (e.g. an empty-state "žádné záznamy"/"prázdno"
+      // placeholder row) — every real row of every table wired here carries data-sort-date (it's the leading
+      // "Datum a čas" column). Keeps a genuinely empty table's placeholder row out of the counter, same as
+      // before this generalization (the old code only ever picked up tr.group-head, never a plain placeholder).
+      for (var k = 0; k < rows.length; k++) {
+        if (rows[k].hasAttribute("data-sort-date")) groups.push({ head: rows[k], detail: [] });
+      }
+    }
+    var searchEl = opts.search, countEl = opts.count, filters = opts.filters || [], csvLink = opts.csvLink;
     var headerCells = table.tHead ? Array.prototype.slice.call(table.tHead.querySelectorAll("th[data-sort-key]")) : [];
     var sortKey = null;
     var sortDir = 1;
 
     function apply() {
       var q = searchEl ? searchEl.value.trim().toLowerCase() : "";
-      var stav = stavEl ? stavEl.value : "";
-      var cap = capEl ? capEl.value : "";
       var visible = 0;
       groups.forEach(function (g) {
         var text = g.head.textContent.toLowerCase();
-        var show =
-          (!q || text.indexOf(q) !== -1) &&
-          (!stav || g.head.getAttribute("data-sort-stav") === stav) &&
-          (!cap || g.head.getAttribute("data-sort-capability") === cap);
+        var show = !q || text.indexOf(q) !== -1;
+        filters.forEach(function (f) {
+          var v = f.el ? f.el.value : "";
+          if (v && g.head.getAttribute("data-sort-" + f.attr) !== v) show = false;
+        });
         g.head.classList.toggle("f-hidden", !show);
         g.detail.forEach(function (dr) { dr.classList.toggle("f-hidden", !show); });
         if (show) visible++;
@@ -1390,11 +1475,26 @@ export function renderFarm(m: FarmModel): string {
           g.detail.forEach(function (dr) { tbody.appendChild(dr); });
         });
       }
+      // Deník's own CSV export link (owner's request: export should carry the same filter as what's on screen) —
+      // kept in sync with the Druh/Capability dropdowns above, whenever both this link and a filter for that
+      // exact attr exist (opts.csvLink is undefined for Ohrada/Výsledek, so this is a no-op there). from/to stay
+      // whatever GET /farm?denikFrom=&denikTo= already put in the link's href — only kind/capability are managed
+      // here, matching GET /audit.csv's own query param names 1:1 with each filter's attr name.
+      if (csvLink) {
+        try {
+          var url = new URL(csvLink.getAttribute("href"), location.href);
+          filters.forEach(function (f) {
+            var v = f.el ? f.el.value : "";
+            if (v) url.searchParams.set(f.attr, v);
+            else url.searchParams.delete(f.attr);
+          });
+          csvLink.setAttribute("href", url.pathname + url.search);
+        } catch (e) {}
+      }
     }
 
     if (searchEl) searchEl.addEventListener("input", apply);
-    if (stavEl) stavEl.addEventListener("change", apply);
-    if (capEl) capEl.addEventListener("change", apply);
+    filters.forEach(function (f) { if (f.el) f.el.addEventListener("change", apply); });
     headerCells.forEach(function (th) {
       th.addEventListener("click", function () {
         var key = th.getAttribute("data-sort-key");
@@ -1410,15 +1510,28 @@ export function renderFarm(m: FarmModel): string {
 
   wireListTable(document.getElementById("ohrada-table"), {
     search: document.getElementById("ohrada-q"),
-    stav: document.getElementById("ohrada-stav"),
-    cap: document.getElementById("ohrada-cap"),
     count: document.getElementById("ohrada-count"),
+    filters: [
+      { attr: "stav", el: document.getElementById("ohrada-stav") },
+      { attr: "capability", el: document.getElementById("ohrada-cap") },
+    ],
   });
   wireListTable(document.getElementById("vysledek-table"), {
     search: document.getElementById("vysledek-q"),
-    stav: document.getElementById("vysledek-stav"),
-    cap: document.getElementById("vysledek-cap"),
     count: document.getElementById("vysledek-count"),
+    filters: [
+      { attr: "stav", el: document.getElementById("vysledek-stav") },
+      { attr: "capability", el: document.getElementById("vysledek-cap") },
+    ],
+  });
+  wireListTable(document.getElementById("denik-table"), {
+    search: document.getElementById("denik-q"),
+    count: document.getElementById("denik-count"),
+    filters: [
+      { attr: "kind", el: document.getElementById("denik-druh") },
+      { attr: "capability", el: document.getElementById("denik-cap") },
+    ],
+    csvLink: document.getElementById("denik-csv-link"),
   });
 
   // Deník live terminal (owner's request 2026-09-09: "vidět co se šustne"): poll /audit.json?after=<last>, append
