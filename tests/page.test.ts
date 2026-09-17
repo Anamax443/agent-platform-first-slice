@@ -302,7 +302,8 @@ describe("PAGE-FARM-001 renderFarm() actually runs, not just typechecks", () => 
     // "self-test 14/18" is apf-document-host's own DEPLOYABLE card (stajCards, unaffected by the Teletník split —
     // that split only applies to capability cards, document.stamp+document.archive combined for this Worker).
     expect(stajSection).toContain("self-test <b>14/18</b>");
-    expect(stajSection).toContain("naposledy proběhlo 2026-09-09 13:20:00");
+    // selfTestAt "2026-09-09T13:20:00Z" -> shortAt() now renders Europe/Prague local time (CEST, UTC+2), not raw UTC.
+    expect(stajSection).toContain("naposledy proběhlo 2026-09-09 15:20:00");
     // apf-mail-ingest and apf-fakes never had a self-test recorded — must say so plainly, not silently omit it.
     expect(stajSection).toContain("self-test: nikdy");
     // document.classify/document.stamp's own CAPABILITY cards (derivedStatus NEW in this fixture) live in Teletník.
@@ -478,11 +479,11 @@ describe("Ohrada + Výsledek: generický filtr/řazení seznamu (owner's request
     expect(ohradaSection).toContain('<th data-sort-key="date">Datum a čas</th><th data-sort-key="krok">Krok</th>');
     expect(vysledekSection).toContain('<th data-sort-key="date">Datum a čas</th><th data-sort-key="krok">Krok</th>');
 
-    // wf-waiting2's updatedAt "2026-09-16T13:29:43.726Z" -> shortAt() "2026-09-16 13:29:43", leading cell.
-    expect(ohradaSection).toContain('<td class="dim mono">2026-09-16 13:29:43</td>');
+    // wf-waiting2's updatedAt "2026-09-16T13:29:43.726Z" -> shortAt() renders Europe/Prague local (CEST, UTC+2).
+    expect(ohradaSection).toContain('<td class="dim mono">2026-09-16 15:29:43</td>');
     // wf-ok2 only appears in Výsledek (SUCCEEDED is outside Ohrada's WAITING/FAILED/UNKNOWN_OUTCOME filter).
     expect(ohradaSection).not.toContain("wf-ok2");
-    expect(vysledekSection).toContain('<td class="dim mono">2026-09-17 05:01:00</td>');
+    expect(vysledekSection).toContain('<td class="dim mono">2026-09-17 07:01:00</td>');
     expect(vysledekSection).toContain("wf-ok2");
   });
 

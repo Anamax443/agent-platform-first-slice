@@ -503,8 +503,14 @@ const riskBadge = (raw: string | undefined): string => {
   return `<span class="badge ${cls}">${esc(RISK_LABEL[raw] ?? raw)}</span>`;
 };
 
-/** ISO timestamp, trimmed to "YYYY-MM-DD HH:MM:SS" — same trim used by the Deník terminal. */
-const shortAt = (at: string): string => esc(at).replace("T", " ").replace(/\.\d+Z$|Z$/, "");
+/** ISO timestamp → owner's local time (Europe/Prague, CEST/CET per Intl — not the viewer's browser, since this is
+ * a single-owner Czech tool and every other server-rendered timestamp on this page must match it), "YYYY-MM-DD
+ * HH:MM:SS". Owner feedback 17.9.2026, live on farm-bass443: a raw UTC time ("07:50:06") next to the real wall
+ * clock ("9:50") just looked wrong, not "UTC" — nothing on this page hinted the two-hour gap was a timezone. */
+const shortAt = (at: string): string => {
+  const d = new Date(at);
+  return Number.isNaN(d.getTime()) ? esc(at) : esc(d.toLocaleString("sv-SE", { timeZone: "Europe/Prague" }));
+};
 
 /** "OK"/"ACTIVE" alone proves only that the process answered, not that anything was actually verified (owner
  * 2026-09-09: "nevím, jestli jsou zdravé, jen je zelené OK" / "kde jsou slibované testy kraviček?"). Shows the
@@ -967,13 +973,13 @@ export function renderFarm(m: FarmModel): string {
     rows
       .map((i) => {
         if (i.purged)
-          return `<tr class="group-head" data-sort-date="${esc(i.at)}" data-sort-krok="${esc(i.workflowId)}" data-sort-capability="" data-sort-stav="PURGED" data-sort-pokus="0"><td class="dim mono">${shortAt(i.at)}</td><td><a href="/workflow/${esc(i.workflowId)}"><code>${esc(i.workflowId)}</code></a></td><td colspan="4" class="dim">smazáno (PURGED), poslední audit ${esc(i.at)}</td></tr>`;
+          return `<tr class="group-head" data-sort-date="${esc(i.at)}" data-sort-krok="${esc(i.workflowId)}" data-sort-capability="" data-sort-stav="PURGED" data-sort-pokus="0"><td class="dim mono">${shortAt(i.at)}</td><td><a href="/workflow/${esc(i.workflowId)}"><code>${esc(i.workflowId)}</code></a></td><td colspan="4" class="dim">smazáno (PURGED), poslední audit ${shortAt(i.at)}</td></tr>`;
         const size = i.originalByteLength !== undefined ? ` · ${kb(i.originalByteLength)}` : "";
         const linkText = i.originalName ? esc(i.originalName) : `<code>${esc(i.workflowId)}</code>`;
         const step = lastStepOf(i);
         const capKey = capabilityKeyOf(i, step);
         const krokKey = i.originalName ?? i.workflowId;
-        const head = `<tr class="group-head gh-toggle" data-wf="${esc(i.workflowId)}" aria-expanded="false" data-sort-date="${esc(i.updatedAt)}" data-sort-krok="${esc(krokKey)}" data-sort-capability="${esc(capKey)}" data-sort-stav="${esc(i.status)}" data-sort-pokus="${step ? step.attempt : 0}"><td class="dim mono">${shortAt(i.updatedAt)}</td><td><span class="gh-chevron" aria-hidden="true">▸</span> <a href="/workflow/${esc(i.workflowId)}">${linkText}</a>${i.originalName ? ` <small class="dim"><code>${esc(i.workflowId)}</code></small>` : ""}</td><td colspan="4" class="dim">${esc(i.workflow)}/v${esc(i.workflowVersion)}${size} · tenant ${esc(i.tenantId)} · aktér ${esc(i.actorId)} · ${stateBadge(i.status)} · založeno ${esc(i.createdAt)}, změněno ${esc(i.updatedAt)}</td></tr>`;
+        const head = `<tr class="group-head gh-toggle" data-wf="${esc(i.workflowId)}" aria-expanded="false" data-sort-date="${esc(i.updatedAt)}" data-sort-krok="${esc(krokKey)}" data-sort-capability="${esc(capKey)}" data-sort-stav="${esc(i.status)}" data-sort-pokus="${step ? step.attempt : 0}"><td class="dim mono">${shortAt(i.updatedAt)}</td><td><span class="gh-chevron" aria-hidden="true">▸</span> <a href="/workflow/${esc(i.workflowId)}">${linkText}</a>${i.originalName ? ` <small class="dim"><code>${esc(i.workflowId)}</code></small>` : ""}</td><td colspan="4" class="dim">${esc(i.workflow)}/v${esc(i.workflowVersion)}${size} · tenant ${esc(i.tenantId)} · aktér ${esc(i.actorId)} · ${stateBadge(i.status)} · založeno ${shortAt(i.createdAt)}, změněno ${shortAt(i.updatedAt)}</td></tr>`;
         return head + stepDetailRows(i);
       })
       .join("");
@@ -990,7 +996,7 @@ export function renderFarm(m: FarmModel): string {
     rows
       .map((i) => {
         if (i.purged)
-          return `<tr class="group-head" data-sort-date="${esc(i.at)}" data-sort-krok="${esc(i.workflowId)}" data-sort-capability="" data-sort-stav="PURGED" data-sort-pokus="0"><td class="dim mono">${shortAt(i.at)}</td><td><a href="/workflow/${esc(i.workflowId)}"><code>${esc(i.workflowId)}</code></a></td><td colspan="4" class="dim">smazáno (PURGED), poslední audit ${esc(i.at)}</td></tr>`;
+          return `<tr class="group-head" data-sort-date="${esc(i.at)}" data-sort-krok="${esc(i.workflowId)}" data-sort-capability="" data-sort-stav="PURGED" data-sort-pokus="0"><td class="dim mono">${shortAt(i.at)}</td><td><a href="/workflow/${esc(i.workflowId)}"><code>${esc(i.workflowId)}</code></a></td><td colspan="4" class="dim">smazáno (PURGED), poslední audit ${shortAt(i.at)}</td></tr>`;
         const step = ohradaStepFor(i);
         const linkText = i.originalName ? esc(i.originalName) : `<code>${esc(i.workflowId)}</code>`;
         const meta = `tenant ${esc(i.tenantId)} · aktér ${esc(i.actorId)} · čeká už ${humanDuration(i.updatedAt, m.now)}`;
@@ -1036,11 +1042,11 @@ export function renderFarm(m: FarmModel): string {
   const denikRows = m.auditLog
     .map((r) => {
       const link = r.workflowId ? `<a href="/workflow/${esc(r.workflowId)}">${esc(r.workflowId)}</a>` : "—";
-      return `<tr><td class="dim mono">${esc(r.at)}</td><td>${esc(r.kind)}</td><td>${link}</td><td>${esc(r.capability ?? "")}</td><td class="wrap">${auditSummary(r.kind, r.capability, r.details)}</td></tr>`;
+      return `<tr><td class="dim mono">${shortAt(r.at)}</td><td>${esc(r.kind)}</td><td>${link}</td><td>${esc(r.capability ?? "")}</td><td class="wrap">${auditSummary(r.kind, r.capability, r.details)}</td></tr>`;
     })
     .join("");
   const terminalLine = (r: AuditLogRow): string => {
-    const time = esc(r.at).replace("T", " ").replace(/\.\d+Z$|Z$/, "");
+    const time = shortAt(r.at);
     const link = r.workflowId ? ` <a href="/workflow/${esc(r.workflowId)}">${esc(r.workflowId)}</a>` : "";
     const cap = r.capability ? ` <code>${esc(r.capability)}</code>` : "";
     return `<div class="t-line" data-at="${esc(r.at)}"><span class="t-dim">${time}</span> ${esc(r.kind)}${cap}${link} <span class="t-dim">${auditSummary(r.kind, r.capability, r.details)}</span></div>`;
@@ -1415,7 +1421,7 @@ export function renderFarm(m: FarmModel): string {
     var liveToggle = document.getElementById("denik-live-toggle");
     var live = true;
     var lastAt = term.lastElementChild ? term.lastElementChild.getAttribute("data-at") : null;
-    function fmtTime(at) { return String(at || "").replace("T", " ").replace(/\\.\\d+Z$|Z$/, ""); }
+    function fmtTime(at) { var d = new Date(at || ""); return isNaN(d.getTime()) ? String(at || "") : d.toLocaleString("sv-SE", { timeZone: "Europe/Prague" }); }
     function lineEl(rec) {
       var div = document.createElement("div");
       div.className = "t-line t-new";
@@ -1571,7 +1577,7 @@ const fmtResult = (s: Instance["steps"][number]): string => {
 
 const artifactCard = (a: Artifact): string => {
   const kind = a.derivedFrom ? `derivace z <code>${esc(a.derivedFrom)}</code>, výrobce <code>${esc(a.producer)}</code>` : "originál";
-  const meta = `sha256 <code>${esc(a.sha256)}</code> · ${esc(a.contentType ?? "text/plain")} · ${kb(a.byteLength ?? a.bytes.length)} · přijato ${esc(a.receivedAt)} od <code>${esc(a.receivedFrom)}</code> · tenant <code>${esc(a.tenantId)}</code>`;
+  const meta = `sha256 <code>${esc(a.sha256)}</code> · ${esc(a.contentType ?? "text/plain")} · ${kb(a.byteLength ?? a.bytes.length)} · přijato ${shortAt(a.receivedAt)} od <code>${esc(a.receivedFrom)}</code> · tenant <code>${esc(a.tenantId)}</code>`;
   const body = a.location
     ? `<p class="dim">Binární originál je uložen neměnně v R2 pod <code>${esc(a.location)}</code>; text z něj je v derivaci níže.</p>`
     : `<pre>${esc(a.bytes.slice(0, 2500))}${a.bytes.length > 2500 ? "\n…" : ""}</pre>`;
@@ -1821,12 +1827,12 @@ export function renderWorkshopSession(session: WorkshopSession): string {
 export function renderInstance(v: InstanceView): string {
   const i = v.instance;
   const audit = v.audit
-    .map((r) => `<tr><td><small>${esc(r.at)}</small></td><td><code>${esc(r.kind)}</code></td><td><small>${esc(r.capability ?? "")}</small></td><td><small>${auditSummary(r.kind, r.capability ?? null, r.details)}</small></td></tr>`)
+    .map((r) => `<tr><td><small>${shortAt(r.at)}</small></td><td><code>${esc(r.kind)}</code></td><td><small>${esc(r.capability ?? "")}</small></td><td><small>${auditSummary(r.kind, r.capability ?? null, r.details)}</small></td></tr>`)
     .join("");
   return shell(
     `${i.workflow} ${v.workflowId}`,
     `<div class="doc"><header><h1>Instance toku <code>${esc(i.workflow)}/v${esc(i.workflowVersion)}</code></h1>${stateBadge(i.status)}</header>
-<div class="card" style="margin-bottom:14px"><small class="dim">id <code>${esc(v.workflowId)}</code> · korelace <code>${esc(i.correlationId)}</code> · tenant <code>${esc(i.tenantId)}</code> · aktér <code>${esc(i.actorId)}</code> · založeno ${esc(i.createdAt)} · změněno ${esc(i.updatedAt)}${i.waiting ? ` · čeká na <code>${esc(i.waiting.reason)}</code> do ${esc(i.waiting.deadline)}` : ""}</small></div>
+<div class="card" style="margin-bottom:14px"><small class="dim">id <code>${esc(v.workflowId)}</code> · korelace <code>${esc(i.correlationId)}</code> · tenant <code>${esc(i.tenantId)}</code> · aktér <code>${esc(i.actorId)}</code> · založeno ${shortAt(i.createdAt)} · změněno ${shortAt(i.updatedAt)}${i.waiting ? ` · čeká na <code>${esc(i.waiting.reason)}</code> do ${shortAt(i.waiting.deadline)}` : ""}</small></div>
 ${renderOutput(v)}
 <h2>Kroky</h2><div class="card">${stepsTable(i.steps, i.status, v.audit)}
 <small class="dim">Krok, který skončil <code>DEPENDENCY_UNAVAILABLE</code>, narazil na část farmy, která ještě není zapojená; orchestrátor ho zkusil tolikrát, kolik dovoluje definice toku, a pak instanci explicitně ukončil.</small></div>
