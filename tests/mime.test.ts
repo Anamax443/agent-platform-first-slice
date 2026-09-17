@@ -3,7 +3,7 @@
 // whole raw MIME message, base64 attachments and all, into the LLM prompt). Narrow on purpose: only acts on
 // genuine `Content-Type: multipart/...; boundary=...` content; everything else passes through unchanged.
 import { describe, expect, it } from "vitest";
-import { stripMimeAttachments } from "../src/platform/mime.js";
+import { parseMimeMessage, sanitizeMimeFilename, stripMimeAttachments } from "../src/platform/mime.js";
 
 const CRLF = "\r\n";
 
@@ -136,5 +136,123 @@ describe("MIME-007 the real live failure case shrinks well under a small token b
     // The real failure was ~58,684 estimated tokens against a 32,000 window; a rough 4-chars-per-token estimate
     // on the stripped output must land comfortably under that, not just "smaller than before".
     expect(out.length / 4).toBeLessThan(4000);
+  });
+});
+
+// parseMimeMessage: a REAL structured parse (GET /workflow/:id/attachment/:n, deploy/cloudflare/apf-gateway/src/index.ts)
+// — unlike stripMimeAttachments() above, this keeps every attachment's actual decoded bytes so a human can open
+// what a sender attached. NOTE on route-level coverage: index.ts imports `cloudflare:workers` at module scope, so
+// it cannot be imported into this (plain node) vitest run at all — that's also why no existing route in this file
+// (/original, /artifact/:id, ...) has ANY test in this suite today (confirmed by grep before writing these). These
+// tests exercise the real security- and correctness-critical unit (parseMimeMessage + sanitizeMimeFilename) directly,
+// including reconstructing the exact header-value string the route builds, rather than the unreachable fetch() route.
+
+describe("PMM-001 parseMimeMessage decodes each attachment to its real original bytes", () => {
+  it("a base64-encoded attachment and a quoted-printable-encoded attachment both decode correctly, with correct filenames/contentTypes/indices", () => {
+    const pdfBytes = new TextEncoder().encode("%PDF-1.4 stand-in binary \x00\x01\x02 content");
+    const base64Body = Buffer.from(pdfBytes).toString("base64");
+    const qpBody = "Line1=\r\nLine2=3D100%"; // soft line break ("=\r\n") + a real "=XX" hex escape
+    const raw = multipart(
+      "PMIME1",
+      [
+        `Content-Type: text/plain${CRLF}${CRLF}See the two attached files.`,
+        `Content-Type: application/pdf; name="invoice.pdf"${CRLF}Content-Disposition: attachment; filename="invoice.pdf"${CRLF}Content-Transfer-Encoding: base64${CRLF}${CRLF}${base64Body}`,
+        `Content-Type: text/csv; name="note.csv"${CRLF}Content-Disposition: attachment; filename="note.csv"${CRLF}Content-Transfer-Encoding: quoted-printable${CRLF}${CRLF}${qpBody}`,
+      ],
+      [`Subject: two files`, `From: sender@example.com`, `Date: Wed, 16 Sep 2026 13:29:38 +0000`],
+    );
+
+    const parsed = parseMimeMessage(raw);
+    expect(parsed.subject).toBe("two files");
+    expect(parsed.from).toBe("sender@example.com");
+    expect(parsed.date).toBe("Wed, 16 Sep 2026 13:29:38 +0000");
+    expect(parsed.textBody).toContain("See the two attached files.");
+    expect(parsed.attachments).toHaveLength(2);
+
+    const [pdf, csv] = parsed.attachments;
+    expect(pdf!.index).toBe(0);
+    expect(pdf!.filename).toBe("invoice.pdf");
+    expect(pdf!.contentType).toBe("application/pdf");
+    expect(Buffer.from(pdf!.bytes)).toEqual(Buffer.from(pdfBytes));
+    expect(pdf!.byteLength).toBe(pdfBytes.byteLength);
+
+    expect(csv!.index).toBe(1);
+    expect(csv!.filename).toBe("note.csv");
+    expect(csv!.contentType).toBe("text/csv");
+    expect(new TextDecoder().decode(csv!.bytes)).toBe("Line1Line2=100%");
+  });
+});
+
+describe("PMM-002 a plain non-multipart email has no attachments and its full body as textBody", () => {
+  it("subject/from/date parsed from top-level headers, textBody is exactly the body", () => {
+    const raw = [
+      `Subject: Plain hello`,
+      `From: Milan <milan@example.com>`,
+      `Date: Tue, 15 Sep 2026 09:00:00 +0000`,
+      `Content-Type: text/plain; charset=utf-8`,
+      ``,
+      `Ahoj, toto je obycejny text bez priloh.`,
+    ].join(CRLF);
+    const parsed = parseMimeMessage(raw);
+    expect(parsed.subject).toBe("Plain hello");
+    expect(parsed.from).toBe("Milan <milan@example.com>");
+    expect(parsed.date).toBe("Tue, 15 Sep 2026 09:00:00 +0000");
+    expect(parsed.textBody).toBe("Ahoj, toto je obycejny text bez priloh.");
+    expect(parsed.attachments).toEqual([]);
+  });
+});
+
+describe("PMM-003 malformed or truncated multipart input never throws", () => {
+  it("a multipart Content-Type with no header/body blank-line separator at all", () => {
+    const text = 'Content-Type: multipart/mixed; boundary="x"\nno blank line here at all';
+    expect(() => parseMimeMessage(text)).not.toThrow();
+    expect(parseMimeMessage(text).attachments).toEqual([]);
+  });
+
+  it("a multipart body truncated mid-attachment, missing its closing boundary entirely", () => {
+    const raw = multipart("TRUNC", [
+      `Content-Type: text/plain${CRLF}${CRLF}kept`,
+      `Content-Type: application/pdf; name="cut.pdf"${CRLF}Content-Disposition: attachment; filename="cut.pdf"${CRLF}Content-Transfer-Encoding: base64${CRLF}${CRLF}${"QUJD".repeat(50)}`,
+    ]);
+    const truncated = raw.slice(0, raw.length - 40); // cut off before the closing "--TRUNC--"
+    expect(() => parseMimeMessage(truncated)).not.toThrow();
+  });
+});
+
+describe("PMM-004 an adversarially deep multipart nesting is bounded, never a hang or a throw", () => {
+  it("depth beyond MAX_DEPTH stops descending instead of recursing forever", () => {
+    let body = `Content-Type: text/plain${CRLF}${CRLF}bottom`;
+    for (let i = 0; i < 12; i++) {
+      const boundary = `D${i}`;
+      body = `Content-Type: multipart/mixed; boundary="${boundary}"${CRLF}${CRLF}--${boundary}${CRLF}${body}${CRLF}--${boundary}--${CRLF}`;
+    }
+    const start = Date.now();
+    expect(() => parseMimeMessage(body)).not.toThrow();
+    expect(Date.now() - start).toBeLessThan(1000);
+  });
+});
+
+describe("PMM-005 sanitizeMimeFilename strips the characters that make a Content-Disposition header unsafe", () => {
+  it("CR and LF (response-splitting) and a double quote (breaking out of the quoted value) are all removed", () => {
+    const malicious = 'evil"; x-injected: yes\r\nSet-Cookie: pwned=1\r\ninvoice.pdf';
+    const sanitized = sanitizeMimeFilename(malicious);
+    expect(sanitized).not.toContain("\r");
+    expect(sanitized).not.toContain("\n");
+    expect(sanitized).not.toContain('"');
+  });
+
+  it("built into the exact header value the /attachment/:n route constructs, no CR/LF/quote from the attacker survives", () => {
+    // Same construction as GET /workflow/:id/attachment/:n in deploy/cloudflare/apf-gateway/src/index.ts:
+    // `attachment; filename="${sanitizeMimeFilename(attachment.filename ?? "") || fallback}"`.
+    const malicious = 'x"\r\nContent-Disposition: form-data\r\nfilename="y';
+    const filename = sanitizeMimeFilename(malicious) || "attachment-0";
+    const headerValue = `attachment; filename="${filename}"`;
+    expect(headerValue).not.toMatch(/[\r\n]/);
+    // exactly the two quotes we ourselves wrapped the value in — none of the attacker-controlled name reached the header
+    expect((headerValue.match(/"/g) ?? []).length).toBe(2);
+  });
+
+  it("an ordinary filename with no dangerous characters passes through unchanged", () => {
+    expect(sanitizeMimeFilename("invoice (final) v2.pdf")).toBe("invoice (final) v2.pdf");
   });
 });

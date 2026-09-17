@@ -19,6 +19,7 @@ import { sha256Bytes, type Artifact } from "../../../../src/platform/artifacts.j
 import { iso, SystemClock, type Clock } from "../../../../src/platform/clock.js";
 import { platformError } from "../../../../src/platform/errors.js";
 import { newId } from "../../../../src/platform/ids.js";
+import { parseMimeMessage, sanitizeMimeFilename } from "../../../../src/platform/mime.js";
 import type { CapabilityRecord } from "../../../../src/platform/registry.js";
 import { Orchestrator, type WorkflowDef } from "../../../../src/platform/orchestrator.js";
 import { CertificationRegistry, deriveLifecycleStatus, type CertificationRecord, type LifecycleStatus } from "../../../../src/platform/certification.js";
@@ -1842,6 +1843,39 @@ export default {
       const obj = await env.ARTIFACTS.get(original.location);
       if (!obj) return Response.json({ error: "NOT_FOUND", message: "not in R2 (already purged)", key: original.location }, { status: 404 });
       return new Response(obj.body, { headers: { "content-type": obj.httpMetadata?.contentType ?? "application/octet-stream", "cache-control": "no-store" } });
+    }
+
+    // One individual attachment out of a mail-intake instance's raw RFC 822 original. Until now this was
+    // impossible, not just inconvenient: mail.ingest (src/components/mail-ingest/handler.ts) stores the whole
+    // raw mail via artifacts.put() with NO contentType, so the store defaults it to "text/plain" (never
+    // "message/rfc822") and — because put(), unlike putExternal(), never sets `location` — /original above
+    // ALWAYS 404s for a mail-intake instance, and page.ts never even shows that link for one. The full raw mail
+    // IS already in memory though: view.artifacts (this.artifacts.list() inside the object) carries every
+    // artifact's complete text inline (DO SQLite, synchronous, no R2 round-trip) — including the mail original —
+    // so a real MIME parse of that text can serve the individual attachments directly. Same convention as the
+    // sibling GET routes above: no in-code auth/tenant check beyond "a Durable Object instance exists for this
+    // workflowId" — Cloudflare Access at the edge is the actual gate.
+    const attachmentRoute = /^\/workflow\/(wf-[A-Za-z0-9]+)\/attachment\/(\d+)$/.exec(url.pathname);
+    if (attachmentRoute && request.method === "GET") {
+      const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(attachmentRoute[1] as string));
+      const view = (await stub.view()) as InstanceView | null;
+      if (!view) return Response.json({ error: "NOT_FOUND", workflowId: attachmentRoute[1] }, { status: 404 });
+      const original = view.artifacts.find((a) => !a.derivedFrom);
+      if (!original) return Response.json({ error: "NOT_FOUND", message: "instance has no original artifact" }, { status: 404 });
+      const index = Number(attachmentRoute[2]);
+      const attachment = parseMimeMessage(original.bytes).attachments[index];
+      if (!attachment) return Response.json({ error: "NOT_FOUND", message: `no attachment at index ${index} on this original` }, { status: 404 });
+      // The filename came from the untrusted sender's MIME headers — sanitized before it goes anywhere near a
+      // response header (CR/LF response-splitting, embedded `"` breaking out of the quoted value); see
+      // sanitizeMimeFilename() in src/platform/mime.ts. Falls back to a synthetic name if sanitizing empties it.
+      const filename = sanitizeMimeFilename(attachment.filename ?? "") || `attachment-${index}`;
+      // A plain ArrayBuffer (not the Uint8Array view itself) sidesteps a @types/node vs @cloudflare/workers-types
+      // BodyInit typing clash in this project's deploy/cloudflare/tsconfig.json (skipLibCheck merges node's generic
+      // Uint8Array<TArrayBuffer> over lib.dom's non-generic one) — same bytes, just a type the two type packages agree on.
+      const body = attachment.bytes.buffer.slice(attachment.bytes.byteOffset, attachment.bytes.byteOffset + attachment.bytes.byteLength) as ArrayBuffer;
+      return new Response(body, {
+        headers: { "content-type": attachment.contentType || "application/octet-stream", "cache-control": "no-store", "content-disposition": `attachment; filename="${filename}"` },
+      });
     }
 
     // The visual stamp (owner's decision 2026-09-07: "vedle sebe" alongside the text-based DMS write) — written
