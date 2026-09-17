@@ -1838,7 +1838,7 @@ ${renderOutput(v)}
 <small class="dim">Krok, který skončil <code>DEPENDENCY_UNAVAILABLE</code>, narazil na část farmy, která ještě není zapojená; orchestrátor ho zkusil tolikrát, kolik dovoluje definice toku, a pak instanci explicitně ukončil.</small></div>
 <h2>Artefakty</h2>${v.artifacts.map(artifactCard).join("") || '<div class="card dim">žádné</div>'}
 <h2>Audit této instance</h2><div class="card"><table><tr><th>Čas</th><th>Druh</th><th>Capability</th><th>Detail</th></tr>${audit}</table></div>
-<nav><a href="/farm">Nový dokument</a><a href="/workflow/${esc(v.workflowId)}.json">JSON</a><a href="/audit.json">Společný audit (D1)</a></nav>
+<nav><a href="/farm">Nový dokument</a><a href="/workflow/${esc(v.workflowId)}.json">JSON</a><a href="/workflow/${esc(v.workflowId)}.json" download="${esc(v.workflowId)}.json">stáhnout JSON</a><a href="/audit.json">Společný audit (D1)</a></nav>
 <form method="post" action="/workflow/${esc(v.workflowId)}/purge" onsubmit="return confirm('Smazat instanci včetně originálu a derivací? Ve společném auditu zůstane záznam PURGED.')"><input type="hidden" name="reason" value="owner request from instance page"><button class="btn btn-danger" type="submit" style="margin-top:1.5rem">Smazat instanci (originál, derivace, objekt)</button></form></div>`,
   );
 }

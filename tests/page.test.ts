@@ -1105,4 +1105,11 @@ describe("Token usage surfaced on the instance detail page (TASK 3)", () => {
     const html = renderInstance(instanceViewFixture(instance, [], []));
     expect(html).not.toContain("vstupních");
   });
+
+  it("the JSON link has a sibling download link (owner's request 17.9.2026: 'chtělo by to mít možnost i downloadu'), original inline-view link untouched", () => {
+    const instance = instanceFixture({ status: "SUCCEEDED", steps: [stepFixture("step-1", "SUCCEEDED")] });
+    const html = renderInstance(instanceViewFixture(instance, [], []));
+    expect(html).toContain(`<a href="/workflow/${instance.workflowId}.json">JSON</a>`);
+    expect(html).toContain(`<a href="/workflow/${instance.workflowId}.json" download="${instance.workflowId}.json">stáhnout JSON</a>`);
+  });
 });
