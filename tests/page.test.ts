@@ -133,6 +133,20 @@ describe("PAGE-FARM-001 renderFarm() actually runs, not just typechecks", () => 
     expect(teletnikSection).toContain("email.send");
   });
 
+  it("Kapabilita, co volá model, má modrý odznak stavu místo zeleného (owner 17.9.2026: 'rozlišit které krávy žerou tokeny') — jen v healthy/ACTIVE případě, QUARANTINED zůstává červená bez ohledu na usesLlm", () => {
+    const html = renderFarm(model);
+    const teletnikSection = html.slice(html.indexOf('id="view-teletnik"'), html.indexOf('id="view-argos"'));
+    // document.classify: usesLlm true, lifecycleStatus ACTIVE in the fixture below -> blue badge class.
+    // (<code>...</code> targets the capability card's own head, not the deployable-card prose that also names it.)
+    const classifyCard = teletnikSection.slice(teletnikSection.indexOf("<code>document.classify</code>"));
+    expect(classifyCard.slice(0, 300)).toContain('class="badge b-llm"');
+    const stajSection = html.slice(html.indexOf('id="view-staj"'), html.indexOf('id="view-teletnik"'));
+    // document.archive: QUARANTINED, no usesLlm at all -> stays the ordinary red badge, not blue.
+    const archiveCard = stajSection.slice(stajSection.indexOf("<code>document.archive</code>"));
+    expect(archiveCard.slice(0, 300)).not.toContain("b-llm");
+    expect(archiveCard.slice(0, 300)).toContain("QUARANTINED");
+  });
+
   it("Přehled ukazuje workflows a modely na Farmářově (apf-gateway) kartě, a apf-gateway je JEHO karta, ne kráva", () => {
     const html = renderFarm(model);
     const prehledSection = html.slice(html.indexOf('id="view-prehled"'), html.indexOf('id="view-podatelna"'));

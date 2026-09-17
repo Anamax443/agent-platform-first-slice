@@ -5,7 +5,7 @@
   "deploymentModel": "CLOUD_SINGLE_TENANT",
   "tenantMode": "SINGLE",
   "owner": "first-slice",
-  "verificationProfiles": ["WRITE_EXECUTOR", "PROVIDER", "EVIDENCE"],
+  "verificationProfiles": ["WRITE_EXECUTOR", "PROVIDER", "EVIDENCE", "AI_CAPABILITY"],
   "capabilities": [
     {
       "name": "mail.ingest",
@@ -21,7 +21,7 @@
       "riskClass": "LOW",
       "isolationClass": "LOGICAL",
       "requiredScopes": ["mail.ingest"],
-      "usesLlm": false,
+      "usesLlm": true,
       "idempotency": "required",
       "idempotencyRetention": "P30D",
       "deadlinePolicy": "PT30M",

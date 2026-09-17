@@ -210,6 +210,7 @@ const APP_CSS = String.raw`
   --text:#edf7f1; --dim:#8fa79d; --faint:#5b7267;
   --accent:#45d483; --accent-fg:#06120d; --accent-soft:#132a1f;
   --ok:#45d483; --ok-soft:#123321; --warn:#f0bd4f; --warn-soft:#332809; --crit:#ff6b6b; --crit-soft:#2b1515;
+  --llm:#5ab4f0; --llm-soft:#0f2740;
   --shadow:0 18px 50px rgba(0,0,0,.30);
   --radius:11px; --radius-lg:18px;
   --font:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
@@ -222,6 +223,7 @@ const APP_CSS = String.raw`
   --text:#26210f; --dim:#75694a; --faint:#a89a72;
   --accent:#a8551f; --accent-fg:#fff8ea; --accent-soft:#f3e0c9;
   --ok:#2f7a3d; --ok-soft:#e3f1e0; --warn:#a06a00; --warn-soft:#f7ecd2; --crit:#b23a2e; --crit-soft:#fbe4df;
+  --llm:#1c6fb0; --llm-soft:#e1eefa;
   --shadow:0 1px 2px rgba(38,33,15,.06), 0 1px 8px rgba(38,33,15,.05);
   color-scheme:light;
 }
@@ -239,6 +241,7 @@ button,input,select,textarea{font:inherit;color:inherit}
 .b-ok{background:var(--ok-soft);color:var(--ok)}
 .b-warn{background:var(--warn-soft);color:var(--warn)}
 .b-crit{background:var(--crit-soft);color:var(--crit)}
+.b-llm{background:var(--llm-soft);color:var(--llm)}
 .b-neutral{background:var(--border-soft);color:var(--dim)}
 .btn{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--border);border-radius:var(--radius);padding:9px 12px;background:var(--panel);color:var(--text);font-weight:600;cursor:pointer}
 .btn:hover{background:var(--chrome)}
@@ -455,6 +458,11 @@ const STATE_CLASS: Record<string, string> = {
   SKIPPED: "b-neutral",
 };
 const stateBadge = (label: string): string => `<span class="badge ${STATE_CLASS[label] ?? "b-neutral"}"><span class="dot"></span>${esc(label)}</span>`;
+/** Same badge, blue instead of green when this row calls a metered model — owner's request 17.9.2026: which
+ * capabilities are free vs. which spend money should be visible at a glance, not just the small 🤖 icon next to
+ * the name. Only overrides the healthy/green case (b-ok) — QUARANTINED etc. stay red regardless of usesLlm. */
+const stateBadgeLlm = (label: string, usesLlm: boolean | undefined): string =>
+  usesLlm && STATE_CLASS[label] === "b-ok" ? `<span class="badge b-llm"><span class="dot"></span>${esc(label)}</span>` : stateBadge(label);
 const stateTd = (label: string): string => `<td>${stateBadge(label)}</td>`;
 
 /** What each "kravička" actually does, in plain Czech — the raw health table alone doesn't say. */
@@ -570,7 +578,7 @@ const capabilityRow = (c: CapabilityRow, watchdog: WatchdogSnapshot, incidents: 
   const iso = isolationLabel(c.isolationClass ?? "");
   const argos = capabilityWatchdogLevel(c.capability, watchdog, incidents);
   const argosBadge = argos ? `<span title="Argosův živý nález, ne formální stav Admission Gate">Argos: ${stateBadge(argos)}</span>` : "";
-  return `<div class="p-card${c.lifecycleStatus === "QUARANTINED" ? " crit" : ""}"><div class="p-card-head"><code>${esc(c.capability)}</code>/v${esc(c.version)}${c.usesLlm ? ' <small title="volá jazykový model">🤖</small>' : ""}${stateBadge(c.lifecycleStatus)}</div><div class="p-card-meta"><span>riziko ${riskBadge(c.riskClass)}</span><span${iso.title ? ` title="${esc(iso.title)}"` : ""}>izolace <b>${esc(iso.label || "—")}</b></span><span>${esc(c.sideEffects ?? "—")}</span></div><div class="p-card-meta">${selfTestBadge(c.selfTest)}${argosBadge}</div><div class="p-card-meta">${certificationLine(c, gitSha)}</div>${certifyForm(c.capability)}${selfTestDrilldown(c.selfTestFixtures, c.capability)}</div>`;
+  return `<div class="p-card${c.lifecycleStatus === "QUARANTINED" ? " crit" : ""}"><div class="p-card-head"><code>${esc(c.capability)}</code>/v${esc(c.version)}${c.usesLlm ? ' <small title="volá jazykový model">🤖</small>' : ""}${stateBadgeLlm(c.lifecycleStatus, c.usesLlm)}</div><div class="p-card-meta"><span>riziko ${riskBadge(c.riskClass)}</span><span${iso.title ? ` title="${esc(iso.title)}"` : ""}>izolace <b>${esc(iso.label || "—")}</b></span><span>${esc(c.sideEffects ?? "—")}</span></div><div class="p-card-meta">${selfTestBadge(c.selfTest)}${argosBadge}</div><div class="p-card-meta">${certificationLine(c, gitSha)}</div>${certifyForm(c.capability)}${selfTestDrilldown(c.selfTestFixtures, c.capability)}</div>`;
 };
 
 /** How long something lasted between two ISO timestamps, for a human reading a finding — minutes/hours/days,
