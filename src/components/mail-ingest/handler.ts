@@ -58,12 +58,8 @@ export function createIngestHandler(deps: IngestDeps): HostHandlerSpec {
       const parsed = parseMimeMessage(p.rawMail);
 
       let stored;
-      let body;
       try {
         stored = deps.artifacts.put({ tenantId: context.tenantId, bytes: p.rawMail, receivedFrom: p.receivedFrom });
-        // The original is the whole raw MIME message, immutable, kept for evidence/audit and for opening the
-        // e-mail/its attachments later (GET /workflow/:id/attachment/:n) — never what a capability classifies.
-        body = deps.artifacts.derive(stored.artifactId, parsed.textBody, "mail-ingest:parseMimeMessage");
       } catch (e) {
         if (e instanceof StorageFull) {
           // RES-STOR-001: no false success; retryable so the caller applies backpressure instead of dropping the mail
@@ -71,29 +67,53 @@ export function createIngestHandler(deps: IngestDeps): HostHandlerSpec {
         }
         throw e;
       }
+      // The original is the whole raw MIME message, immutable, kept for evidence/audit and for opening the
+      // e-mail/its attachments later (GET /workflow/:id/attachment/:n) — never what a capability classifies.
 
       // Best-effort per attachment: one unreadable/oversized attachment must not fail the whole message — the raw
       // bytes stay reachable on the immutable original regardless (GET /workflow/:id/attachment/:n re-parses it).
+      // Owner's principle 17.9.2026: "co nejvíce převést do MDfile a dle toho hledat" — the invoice content usually
+      // lives in the attachment, not the one-line cover note in the body, so classification (and later extraction)
+      // needs the fullest available text, not just the body. Each attachment's extracted text is kept as its own
+      // artifact too (attachmentArtifactIds) — informational, e.g. for a future "N attachments, converted" display.
       const attachmentArtifactIds: string[] = [];
+      const attachmentTexts: { name: string; text: string }[] = [];
       for (const a of parsed.attachments) {
         try {
+          const name = a.filename ?? `attachment-${a.index}`;
           if (isTextish(a.contentType)) {
-            attachmentArtifactIds.push(deps.artifacts.derive(stored.artifactId, new TextDecoder().decode(a.bytes), "mail-ingest:parseMimeMessage").artifactId);
+            const text = new TextDecoder().decode(a.bytes);
+            attachmentArtifactIds.push(deps.artifacts.derive(stored.artifactId, text, "mail-ingest:parseMimeMessage").artifactId);
+            attachmentTexts.push({ name, text });
             continue;
           }
-          const extracted = await deps.extractor.extract({ name: a.filename ?? `attachment-${a.index}`, bytes: a.bytes, contentType: a.contentType });
-          if (extracted.ok) attachmentArtifactIds.push(deps.artifacts.derive(stored.artifactId, extracted.text, "mail-ingest:workers-ai-toMarkdown").artifactId);
+          const extracted = await deps.extractor.extract({ name, bytes: a.bytes, contentType: a.contentType });
+          if (extracted.ok) {
+            attachmentArtifactIds.push(deps.artifacts.derive(stored.artifactId, extracted.text, "mail-ingest:workers-ai-toMarkdown").artifactId);
+            attachmentTexts.push({ name, text: extracted.text });
+          }
         } catch {
           // StorageFull or an extractor throw on ONE attachment: skip it, the message itself must still get through.
         }
       }
 
+      // The channel-agnostic contract downstream (document.classify, eventually invoice.extract) always just reads
+      // "$steps.ingest.payload.artifactId" — same as every other channel — so it must already BE the fullest text,
+      // not a second field a capability would need mail-specific knowledge to know about. Body first (it carries
+      // the human's own instructions/context), then each attachment, clearly labelled so a reader (human or model)
+      // can tell them apart.
+      const combinedText = [
+        `=== TĚLO E-MAILU ===\n${parsed.textBody}`,
+        ...attachmentTexts.map((a) => `=== PŘÍLOHA: ${a.name} ===\n${a.text}`),
+      ].join("\n\n");
+      const combined = deps.artifacts.derive(stored.artifactId, combinedText, "mail-ingest:combined-body-and-attachments");
+
       const sender: FieldValue<string> = { value: address.toLowerCase(), source: "rules", trustLevel: "untrusted-derived" };
       return {
         status: "SUCCEEDED",
         payload: {
-          artifactId: body.artifactId,
-          sha256: body.sha256,
+          artifactId: combined.artifactId,
+          sha256: combined.sha256,
           originalArtifactId: stored.artifactId,
           attachmentArtifactIds,
           receivedFrom: p.receivedFrom,

@@ -1322,6 +1322,35 @@ async function startMailIntake(env: Env, req: MailIntakeRequest): Promise<MailIn
   return { ok: true, workflowId };
 }
 
+type ReplayOutcome = { ok: true; workflowId: string } | { ok: false; title: string; message: string; detail?: Record<string, unknown>; status: number };
+
+/**
+ * Re-submits an existing instance's own stored original e-mail through startMailIntake() as a brand-new instance —
+ * same raw bytes, same notifyRef the original run used (Instance.input, set once at intake and never touched
+ * again). mail-intake only: a document-intake instance's original isn't necessarily an e-mail. Split out from the
+ * /workflow/:id/replay route (index.ts's fetch handler is one very large function; TypeScript's control-flow
+ * narrowing on `stub.view()`'s result gave up and inferred `never` when this was inlined there — a separate,
+ * ordinary async function has no such issue, same reasoning startMailIntake()/startIntake() are their own
+ * functions rather than inlined into their routes).
+ */
+async function replayMailIntake(env: Env, workflowId: string): Promise<ReplayOutcome> {
+  const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(workflowId));
+  // stub.view()'s RPC-inferred return type collapses the InstanceView|null union to just null (workers-types quirk,
+  // same cast every other caller in this file already needs).
+  const view = (await stub.view()) as InstanceView | null;
+  if (!view) return { ok: false, title: "Nelze přehrát", message: "Instance neexistuje.", detail: { workflowId }, status: 404 };
+  if (view.instance.workflow !== "mail-intake") {
+    return { ok: false, title: "Nelze přehrát", message: "Přehrání je dnes jen pro mail-intake instance (má uložený originální e-mail).", status: 400 };
+  }
+  const original = view.artifacts.find((a) => !a.derivedFrom);
+  if (!original) return { ok: false, title: "Nelze přehrát", message: "Instance nemá uložený originální e-mail.", status: 400 };
+  const notifyRef = typeof view.instance.input.notifyRef === "string" ? view.instance.input.notifyRef : undefined;
+  if (!notifyRef) return { ok: false, title: "Nelze přehrát", message: "Původní instance nemá uložený příjemce notifikace.", status: 400 };
+  const result = await startMailIntake(env, { rawMail: original.bytes, receivedFrom: "farm-replay", notifyRef });
+  if (!result.ok) return { ok: false, title: INTAKE_ERROR_TITLE[result.code] ?? result.code, message: result.message, detail: result.detail, status: INTAKE_ERROR_STATUS[result.code] ?? 500 };
+  return { ok: true, workflowId: result.workflowId };
+}
+
 const INTAKE_ERROR_STATUS: Record<string, number> = {
   KILL_SWITCH: 503,
   UNKNOWN_WORKFLOW: 400,
@@ -1859,6 +1888,15 @@ export default {
       if (!body?.rawMail || !body.receivedFrom || !body.notifyRef) return Response.json({ ok: false, code: "BAD_REQUEST", message: "expected { rawMail, receivedFrom, notifyRef }" }, { status: 400 });
       const result = await startMailIntake(env, { rawMail: body.rawMail, receivedFrom: body.receivedFrom, notifyRef: body.notifyRef });
       return Response.json(result, { status: result.ok ? 200 : (INTAKE_ERROR_STATUS[result.code] ?? 500) });
+    }
+
+    // Owner's request 17.9.2026: re-test the same e-mail repeatedly without re-sending it for real (Ohrada/Výsledek's
+    // own "🔁 Přehrát" button, page.ts replayForm()) — replayMailIntake() below.
+    const replayRoute = /^\/workflow\/(wf-[A-Za-z0-9]+)\/replay$/.exec(url.pathname);
+    if (replayRoute && request.method === "POST") {
+      const result = await replayMailIntake(env, replayRoute[1] as string);
+      if (!result.ok) return html(renderError(result.title, result.message, result.detail ?? {}), result.status);
+      return Response.redirect(new URL(`/workflow/${result.workflowId}`, url).toString(), 303);
     }
 
     const purge = /^\/workflow\/(wf-[A-Za-z0-9]+)\/purge$/.exec(url.pathname);

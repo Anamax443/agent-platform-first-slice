@@ -248,7 +248,7 @@ describe("EVD flow 2", () => {
     // artifactId/sha256 name the derived body text (what document.classify actually reads) — the immutable raw
     // original is tracked separately, same distinction the direct-upload path already makes (original vs subject).
     const body = slice.artifacts.get(p.artifactId);
-    expect(body).toMatchObject({ derivedFrom: p.originalArtifactId, producer: "mail-ingest:parseMimeMessage", sha256: p.sha256 });
+    expect(body).toMatchObject({ derivedFrom: p.originalArtifactId, producer: "mail-ingest:combined-body-and-attachments", sha256: p.sha256 });
     expect(body?.bytes).not.toContain("From:"); // headers stay on the original only, never on what classify reads
     expect(p.attachmentArtifactIds).toEqual([]); // INVOICE_MAIL has no attachments
     expect(p.sender).toMatchObject({ source: "rules", trustLevel: "untrusted-derived" });
@@ -293,7 +293,13 @@ describe("mail.ingest attachment splitting (owner, 17.9.2026: 'je jedno jestli j
     const instance = await runMailIntake(slice, { rawMail: bigMail, stampText: "VALIDATED INVOICE" });
     const ingest = instance.steps.find((s) => s.stepId === "ingest")?.result?.payload as { artifactId: string; originalArtifactId: string; attachmentArtifactIds: string[] };
     const body = slice.artifacts.get(ingest.artifactId);
-    expect(body?.bytes).toBe("FAKTURA č. 2026-0142");
+    // Owner's principle 17.9.2026 ("co nejvíce převést do MDfile a dle toho hledat"): the body artifact is now the
+    // body PLUS every attachment's extracted text (the invoice content usually lives in the attachment, not a
+    // one-line cover note) — still never the raw, undecoded attachment payload, which is the actual bug this test
+    // guards against.
+    expect(body?.bytes).toContain("FAKTURA č. 2026-0142");
+    expect(body?.bytes).toContain("extracted PDF text");
+    expect(body?.bytes).toContain("castka,mena");
     expect(body?.bytes).not.toContain(pdfBase64);
     expect(instance.status).toBe("SUCCEEDED"); // classify actually ran on a small, real prompt
   });

@@ -1006,6 +1006,14 @@ export function renderFarm(m: FarmModel): string {
   // and the data-sort-capability attribute the filter reads. lastStepOf() picks the most recently run step
   // (Vysledek has no per-row "current problem" the way Ohrada does); ohradaStepFor() below stays Ohrada's own,
   // more specific choice (the step that actually produced the row's current status).
+  // Owner's request 17.9.2026: "poslat email do procesu opakovaně" (repeatedly re-test the same e-mail without
+  // re-sending it for real) — POST /workflow/:id/replay (index.ts) re-submits the instance's own stored original
+  // through the same startMailIntake() a real inbound e-mail uses, as a brand-new instance. Only mail-intake has
+  // that original e-mail to replay; a document-intake instance gets no button. Shown in both Ohrada and Výsledek.
+  const replayForm = (i: Extract<FarmInstanceRow, { purged?: false }>): string =>
+    i.workflow === "mail-intake"
+      ? `<form method="post" action="/workflow/${esc(i.workflowId)}/replay" style="display:inline" onsubmit="return confirm('Poslat stejný e-mail znovu jako novou instanci?')"><button class="btn btn-sm" type="submit" title="Pošle uložený originální e-mail znovu jako novou instanci, stejný příjemce notifikace">🔁 Přehrát</button></form>`
+      : "";
   const lastStepOf = (i: Extract<FarmInstanceRow, { purged?: false }>) => (i.steps.length ? i.steps[i.steps.length - 1] : undefined);
   const capabilityKeyOf = (i: Extract<FarmInstanceRow, { purged?: false }>, step: Instance["steps"][number] | undefined): string =>
     step ? `${step.capability}/v${step.capabilityVersion}` : `${i.workflow}/v${i.workflowVersion}`;
@@ -1019,7 +1027,7 @@ export function renderFarm(m: FarmModel): string {
         const step = lastStepOf(i);
         const capKey = capabilityKeyOf(i, step);
         const krokKey = i.originalName ?? i.workflowId;
-        const head = `<tr class="group-head gh-toggle" data-wf="${esc(i.workflowId)}" aria-expanded="false" data-sort-date="${esc(i.updatedAt)}" data-sort-krok="${esc(krokKey)}" data-sort-capability="${esc(capKey)}" data-sort-stav="${esc(i.status)}" data-sort-pokus="${step ? step.attempt : 0}"><td class="dim mono">${shortAt(i.updatedAt)}</td><td><span class="gh-chevron" aria-hidden="true">▸</span> <a href="/workflow/${esc(i.workflowId)}">${linkText}</a>${i.originalName ? ` <small class="dim"><code>${esc(i.workflowId)}</code></small>` : ""}</td><td colspan="4" class="dim">${esc(i.workflow)}/v${esc(i.workflowVersion)}${size} · tenant ${esc(i.tenantId)} · aktér ${esc(i.actorId)} · ${stateBadge(i.status)} · založeno ${shortAt(i.createdAt)}, změněno ${shortAt(i.updatedAt)}</td></tr>`;
+        const head = `<tr class="group-head gh-toggle" data-wf="${esc(i.workflowId)}" aria-expanded="false" data-sort-date="${esc(i.updatedAt)}" data-sort-krok="${esc(krokKey)}" data-sort-capability="${esc(capKey)}" data-sort-stav="${esc(i.status)}" data-sort-pokus="${step ? step.attempt : 0}"><td class="dim mono">${shortAt(i.updatedAt)}</td><td><span class="gh-chevron" aria-hidden="true">▸</span> <a href="/workflow/${esc(i.workflowId)}">${linkText}</a>${i.originalName ? ` <small class="dim"><code>${esc(i.workflowId)}</code></small>` : ""} ${replayForm(i)}</td><td colspan="4" class="dim">${esc(i.workflow)}/v${esc(i.workflowVersion)}${size} · tenant ${esc(i.tenantId)} · aktér ${esc(i.actorId)} · ${stateBadge(i.status)} · založeno ${shortAt(i.createdAt)}, změněno ${shortAt(i.updatedAt)}</td></tr>`;
         return head + stepDetailRows(i);
       })
       .join("");
@@ -1044,7 +1052,7 @@ export function renderFarm(m: FarmModel): string {
         const attemptCell = step ? `${step.attempt} / ${step.logicalAttempt} <small class="dim">${esc(step.strategy)}</small>` : '<span class="dim">—</span>';
         const resultCell = step ? humanStepResult(step, usageForStep(i.workflowId, step)) || '<span class="dim">beze zprávy</span>' : '<span class="dim">bez záznamu kroku</span>';
         const krokKey = i.originalName ?? i.workflowId;
-        const head = `<tr class="group-head gh-toggle" data-wf="${esc(i.workflowId)}" aria-expanded="false" data-sort-date="${esc(i.updatedAt)}" data-sort-krok="${esc(krokKey)}" data-sort-capability="${capabilityCell}" data-sort-stav="${esc(i.status)}" data-sort-pokus="${step ? step.attempt : 0}"><td class="dim mono">${shortAt(i.updatedAt)}</td><td><span class="gh-chevron" aria-hidden="true">▸</span> <a href="/workflow/${esc(i.workflowId)}">${linkText}</a>${i.originalName ? ` <small class="dim"><code>${esc(i.workflowId)}</code></small>` : ""}<div class="dim" style="font-size:.85em">${meta}</div></td><td>${capabilityCell}</td>${stateTd(i.status)}<td>${attemptCell}</td><td class="wrap">${resultCell}</td></tr>`;
+        const head = `<tr class="group-head gh-toggle" data-wf="${esc(i.workflowId)}" aria-expanded="false" data-sort-date="${esc(i.updatedAt)}" data-sort-krok="${esc(krokKey)}" data-sort-capability="${capabilityCell}" data-sort-stav="${esc(i.status)}" data-sort-pokus="${step ? step.attempt : 0}"><td class="dim mono">${shortAt(i.updatedAt)}</td><td><span class="gh-chevron" aria-hidden="true">▸</span> <a href="/workflow/${esc(i.workflowId)}">${linkText}</a>${i.originalName ? ` <small class="dim"><code>${esc(i.workflowId)}</code></small>` : ""} ${replayForm(i)}<div class="dim" style="font-size:.85em">${meta}</div></td><td>${capabilityCell}</td>${stateTd(i.status)}<td>${attemptCell}</td><td class="wrap">${resultCell}</td></tr>`;
         return head + stepDetailRows(i);
       })
       .join("");

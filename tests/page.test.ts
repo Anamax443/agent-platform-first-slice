@@ -341,6 +341,27 @@ describe("PAGE-FARM-001 renderFarm() actually runs, not just typechecks", () => 
     expect(ohradaSection).not.toContain("999");
   });
 
+  it("mail-intake row gets a '🔁 Přehrát' replay button in both Ohrada and Výsledek (owner's request 17.9.2026: 'poslat email do procesu opakovaně') — a document-intake row gets none, it has no stored original e-mail to replay", () => {
+    const withMail: FarmModel = {
+      ...model,
+      instances: [
+        { workflowId: "wf-mail1", workflow: "mail-intake", workflowVersion: "3", tenantId: "tenant-42", actorId: "svc-orchestrator", status: "FAILED", createdAt: "2026-09-17T08:00:00Z", updatedAt: "2026-09-17T08:00:01Z", steps: [] },
+        { workflowId: "wf-doc1", workflow: "document-intake", workflowVersion: "2", tenantId: "tenant-42", actorId: "svc-orchestrator", status: "SUCCEEDED", createdAt: "2026-09-17T08:00:00Z", updatedAt: "2026-09-17T08:00:01Z", steps: [] },
+      ],
+    };
+    const html = renderFarm(withMail);
+    const ohradaSection = html.slice(html.indexOf('id="view-ohrada"'), html.indexOf('id="view-staj"'));
+    const vysledekSection = html.slice(html.indexOf('id="view-vysledek"'), html.indexOf('id="view-denik"'));
+    for (const section of [ohradaSection, vysledekSection]) {
+      expect(section).toContain('action="/workflow/wf-mail1/replay"');
+      expect(section).toContain("🔁 Přehrát");
+    }
+    // document-intake's own row exists (Výsledek shows every status, Ohrada only WAITING/FAILED/UNKNOWN_OUTCOME —
+    // wf-doc1 is SUCCEEDED so only Výsledek has a row for it at all) but never gets a replay form of its own.
+    expect(vysledekSection).toContain("wf-doc1");
+    expect(vysledekSection.split('action="/workflow/wf-doc1/replay"')).toHaveLength(1);
+  });
+
   it("Výsledek sekce ukazuje statistiky i poslední instance (SUCCEEDED tam být má, na rozdíl od Ohrady)", () => {
     const html = renderFarm(model);
     const vysledekSection = html.slice(html.indexOf('id="view-vysledek"'), html.indexOf('id="view-denik"'));
