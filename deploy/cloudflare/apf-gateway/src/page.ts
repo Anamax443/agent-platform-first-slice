@@ -5,6 +5,7 @@ import type { Artifact } from "../../../../src/platform/artifacts.js";
 import type { AuditRecord } from "../../../../src/platform/audit.js";
 import type { CertificationRecord, LifecycleStatus } from "../../../../src/platform/certification.js";
 import type { Instance } from "../../../../src/platform/journal.js";
+import { parseMimeMessage } from "../../../../src/platform/mime.js";
 import type { WorkshopSession } from "./workshop.js";
 
 export interface FarmStats {
@@ -248,6 +249,9 @@ button,input,select,textarea{font:inherit;color:inherit}
 .card{background:linear-gradient(180deg,var(--panel),#091511);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px;box-shadow:var(--shadow)}
 .card.crit{border-color:var(--crit)}
 table{width:100%;border-collapse:collapse;font-size:.93em}
+/* Which step-group is holding up a non-SUCCEEDED instance (stuckStepOf(), stepsTable() below) — same inset-bar
+   convention as .navlink[aria-current="true"], same --crit palette as .card.crit/.b-crit elsewhere in this file. */
+tr.step-stuck td{background:var(--crit-soft);box-shadow:inset 3px 0 0 var(--crit)}
 th,td{text-align:left;vertical-align:top;padding:10px .6em;border-bottom:1px solid var(--border-soft)}
 th{color:#718b7e;font-weight:650;font-size:11px;text-transform:uppercase;letter-spacing:.08em;white-space:nowrap}
 label{display:block;font-weight:650;margin:.9em 0 .3em}
@@ -331,6 +335,13 @@ const SHELL_CSS = String.raw`
 .gh-chevron{display:inline-block;width:.9em;transition:transform .15s}
 .gh-toggle[aria-expanded="true"] .gh-chevron{transform:rotate(90deg)}
 tr.group-head td{background:var(--panel-2);white-space:normal;font-weight:650}
+.list-toolbar input[type=search]{width:auto;min-width:180px;flex:0 1 240px}
+.list-toolbar select{width:auto}
+th[data-sort-key]{cursor:pointer;user-select:none}
+th[data-sort-key]:hover{color:var(--text)}
+th[data-sort-key].sort-asc::after{content:" ▲"}
+th[data-sort-key].sort-desc::after{content:" ▼"}
+.f-hidden{display:none!important}
 .wrap{white-space:normal!important;overflow:visible!important;text-overflow:clip!important;word-break:break-word;line-height:1.4}
 .term{margin:0;height:22rem;overflow-y:auto;background:var(--chrome);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;font-family:var(--font-mono);font-size:.87em;line-height:1.6}
 .term .t-line{white-space:pre-wrap;word-break:break-word}
@@ -936,22 +947,91 @@ export function renderFarm(m: FarmModel): string {
 
   // Owner's request 2026-09-08: what carries the link belongs in column 1, rows collapsed to a one-line summary
   // by default, click to see the steps — a document block is evidence to check, not to always read in full.
+  const stepDetailRows = (i: Extract<FarmInstanceRow, { purged?: false }>): string =>
+    i.steps
+      .map(
+        (s) =>
+          `<tr class="step-row" data-wf="${esc(i.workflowId)}" hidden><td class="dim mono">${shortAt(s.startedAt)}</td><td>${esc(s.stepId)}</td><td>${esc(s.capability)}/v${esc(s.capabilityVersion)}</td>${stateTd(s.status)}<td>${s.attempt} / ${s.logicalAttempt} <span class="dim">${esc(s.strategy)}</span></td><td class="wrap">${humanStepResult(s)}</td></tr>`,
+      )
+      .join("");
+  // Owner's request 2026-09-17: one generic client-side filter/sort mechanism (wireListTable() in the script
+  // IIFE below) reused across every such list — these two helpers only supply what the client can't derive
+  // from rendered HTML: a stable "capability" identity per instance row for both the visible Capability cell
+  // and the data-sort-capability attribute the filter reads. lastStepOf() picks the most recently run step
+  // (Vysledek has no per-row "current problem" the way Ohrada does); ohradaStepFor() below stays Ohrada's own,
+  // more specific choice (the step that actually produced the row's current status).
+  const lastStepOf = (i: Extract<FarmInstanceRow, { purged?: false }>) => (i.steps.length ? i.steps[i.steps.length - 1] : undefined);
+  const capabilityKeyOf = (i: Extract<FarmInstanceRow, { purged?: false }>, step: Instance["steps"][number] | undefined): string =>
+    step ? `${step.capability}/v${step.capabilityVersion}` : `${i.workflow}/v${i.workflowVersion}`;
   const instanceRowsOf = (rows: FarmInstanceRow[]): string =>
     rows
       .map((i) => {
-        if (i.purged) return `<tr class="group-head"><td><a href="/workflow/${esc(i.workflowId)}"><code>${esc(i.workflowId)}</code></a></td><td colspan="4" class="dim">smazáno (PURGED), poslední audit ${esc(i.at)}</td></tr>`;
+        if (i.purged)
+          return `<tr class="group-head" data-sort-date="${esc(i.at)}" data-sort-krok="${esc(i.workflowId)}" data-sort-capability="" data-sort-stav="PURGED" data-sort-pokus="0"><td class="dim mono">${shortAt(i.at)}</td><td><a href="/workflow/${esc(i.workflowId)}"><code>${esc(i.workflowId)}</code></a></td><td colspan="4" class="dim">smazáno (PURGED), poslední audit ${esc(i.at)}</td></tr>`;
         const size = i.originalByteLength !== undefined ? ` · ${kb(i.originalByteLength)}` : "";
         const linkText = i.originalName ? esc(i.originalName) : `<code>${esc(i.workflowId)}</code>`;
-        const head = `<tr class="group-head gh-toggle" data-wf="${esc(i.workflowId)}" aria-expanded="false"><td><span class="gh-chevron" aria-hidden="true">▸</span> <a href="/workflow/${esc(i.workflowId)}">${linkText}</a>${i.originalName ? ` <small class="dim"><code>${esc(i.workflowId)}</code></small>` : ""}</td><td colspan="4" class="dim">${esc(i.workflow)}/v${esc(i.workflowVersion)}${size} · tenant ${esc(i.tenantId)} · aktér ${esc(i.actorId)} · ${stateBadge(i.status)} · založeno ${esc(i.createdAt)}, změněno ${esc(i.updatedAt)}</td></tr>`;
-        const steps = i.steps
-          .map((s) => `<tr class="step-row" data-wf="${esc(i.workflowId)}" hidden><td>${esc(s.stepId)}</td><td>${esc(s.capability)}/v${esc(s.capabilityVersion)}</td>${stateTd(s.status)}<td>${s.attempt} / ${s.logicalAttempt} <span class="dim">${esc(s.strategy)}</span></td><td class="wrap">${humanStepResult(s)}</td></tr>`)
-          .join("");
-        return head + steps;
+        const step = lastStepOf(i);
+        const capKey = capabilityKeyOf(i, step);
+        const krokKey = i.originalName ?? i.workflowId;
+        const head = `<tr class="group-head gh-toggle" data-wf="${esc(i.workflowId)}" aria-expanded="false" data-sort-date="${esc(i.updatedAt)}" data-sort-krok="${esc(krokKey)}" data-sort-capability="${esc(capKey)}" data-sort-stav="${esc(i.status)}" data-sort-pokus="${step ? step.attempt : 0}"><td class="dim mono">${shortAt(i.updatedAt)}</td><td><span class="gh-chevron" aria-hidden="true">▸</span> <a href="/workflow/${esc(i.workflowId)}">${linkText}</a>${i.originalName ? ` <small class="dim"><code>${esc(i.workflowId)}</code></small>` : ""}</td><td colspan="4" class="dim">${esc(i.workflow)}/v${esc(i.workflowVersion)}${size} · tenant ${esc(i.tenantId)} · aktér ${esc(i.actorId)} · ${stateBadge(i.status)} · založeno ${esc(i.createdAt)}, změněno ${esc(i.updatedAt)}</td></tr>`;
+        return head + stepDetailRows(i);
       })
       .join("");
   const instanceRows = instanceRowsOf(m.instances);
   const ohradaInstances = m.instances.filter((i) => !i.purged && (i.status === "WAITING" || i.status === "FAILED" || i.status === "UNKNOWN_OUTCOME"));
-  const ohradaRows = instanceRowsOf(ohradaInstances);
+  // Ohrada gets its own row renderer instead of reusing instanceRowsOf's collapsed one-line-of-dim-text summary
+  // (owner's screenshot 17.9.2026: "velmi nepřehledné, pořádně z toho nepoznám o co se jedná" — the shared
+  // group-head crams capability/tenant/actor/status/timestamps into one merged colspan cell, and the promised
+  // "Výsledek" column had nothing in it at all until a row was expanded). Every Ohrada row already needs a
+  // human to act on it, so the reason belongs in the collapsed line itself; the same chevron/step-row toggle
+  // is kept underneath for the full step history.
+  const ohradaStepFor = (i: Extract<FarmInstanceRow, { purged?: false }>) => stuckStepOf(i.steps);
+  const ohradaRowsOf = (rows: FarmInstanceRow[]): string =>
+    rows
+      .map((i) => {
+        if (i.purged)
+          return `<tr class="group-head" data-sort-date="${esc(i.at)}" data-sort-krok="${esc(i.workflowId)}" data-sort-capability="" data-sort-stav="PURGED" data-sort-pokus="0"><td class="dim mono">${shortAt(i.at)}</td><td><a href="/workflow/${esc(i.workflowId)}"><code>${esc(i.workflowId)}</code></a></td><td colspan="4" class="dim">smazáno (PURGED), poslední audit ${esc(i.at)}</td></tr>`;
+        const step = ohradaStepFor(i);
+        const linkText = i.originalName ? esc(i.originalName) : `<code>${esc(i.workflowId)}</code>`;
+        const meta = `tenant ${esc(i.tenantId)} · aktér ${esc(i.actorId)} · čeká už ${humanDuration(i.updatedAt, m.now)}`;
+        const capabilityCell = esc(capabilityKeyOf(i, step));
+        const attemptCell = step ? `${step.attempt} / ${step.logicalAttempt} <small class="dim">${esc(step.strategy)}</small>` : '<span class="dim">—</span>';
+        const resultCell = step ? humanStepResult(step) || '<span class="dim">beze zprávy</span>' : '<span class="dim">bez záznamu kroku</span>';
+        const krokKey = i.originalName ?? i.workflowId;
+        const head = `<tr class="group-head gh-toggle" data-wf="${esc(i.workflowId)}" aria-expanded="false" data-sort-date="${esc(i.updatedAt)}" data-sort-krok="${esc(krokKey)}" data-sort-capability="${capabilityCell}" data-sort-stav="${esc(i.status)}" data-sort-pokus="${step ? step.attempt : 0}"><td class="dim mono">${shortAt(i.updatedAt)}</td><td><span class="gh-chevron" aria-hidden="true">▸</span> <a href="/workflow/${esc(i.workflowId)}">${linkText}</a>${i.originalName ? ` <small class="dim"><code>${esc(i.workflowId)}</code></small>` : ""}<div class="dim" style="font-size:.85em">${meta}</div></td><td>${capabilityCell}</td>${stateTd(i.status)}<td>${attemptCell}</td><td class="wrap">${resultCell}</td></tr>`;
+        return head + stepDetailRows(i);
+      })
+      .join("");
+  const ohradaRows = ohradaRowsOf(ohradaInstances);
+
+  // Generic list filter/sort toolbar (owner's request 2026-09-17: "filtrování je obecné, přes každý takový
+  // seznam") — server side only computes what the client can't: distinct dropdown values actually present in
+  // THIS table's own rows, so a Capability option never filters to zero results. Stav for Ohrada is the fixed
+  // 3-state domain that section is already narrowed to; Výsledek's is whatever statuses actually occur.
+  const distinctSorted = (values: string[]): string[] => [...new Set(values)].sort((a, b) => a.localeCompare(b));
+  const nonPurged = (rows: FarmInstanceRow[]) => rows.filter((i): i is Extract<FarmInstanceRow, { purged?: false }> => !i.purged);
+  const ohradaCapabilityOptions = distinctSorted(nonPurged(ohradaInstances).map((i) => capabilityKeyOf(i, ohradaStepFor(i))));
+  const vysledekCapabilityOptions = distinctSorted(nonPurged(m.instances).map((i) => capabilityKeyOf(i, lastStepOf(i))));
+  const vysledekStavOptions = distinctSorted(nonPurged(m.instances).map((i) => i.status));
+  const listToolbar = (idPrefix: string, stavOptions: { value: string; label: string }[], capabilityOptions: string[]): string =>
+    `<div class="toolbar list-toolbar">
+      <input type="search" id="${idPrefix}-q" placeholder="Hledat…" aria-label="Hledat">
+      <select id="${idPrefix}-stav" aria-label="Stav">${stavOptions.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join("")}</select>
+      <select id="${idPrefix}-cap" aria-label="Capability"><option value="">Capability: vše</option>${capabilityOptions.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("")}</select>
+      <span class="fill"></span>
+      <span class="dim" id="${idPrefix}-count"></span>
+    </div>`;
+  const ohradaToolbar = listToolbar(
+    "ohrada",
+    [
+      { value: "", label: "Stav: vše" },
+      { value: "WAITING", label: "WAITING" },
+      { value: "FAILED", label: "FAILED" },
+      { value: "UNKNOWN_OUTCOME", label: "UNKNOWN_OUTCOME" },
+    ],
+    ohradaCapabilityOptions,
+  );
+  const vysledekToolbar = listToolbar("vysledek", [{ value: "", label: "Stav: vše" }, ...vysledekStavOptions.map((v) => ({ value: v, label: v }))], vysledekCapabilityOptions);
 
   const denikRows = m.auditLog
     .map((r) => {
@@ -1059,7 +1139,8 @@ export function renderFarm(m: FarmModel): string {
       label: "Ohrada",
       count: ohradaInstances.length || undefined,
       body: `<div class="pagehead"><h1>${iconBadge(ICONS.ohrada, MASCOT_BG.ohrada, "lg")} Ohrada</h1></div><p class="lede">Instance, co čekají na rozhodnutí, nebo skončily s chybou, co si žádá pohled člověka — zde se nic samo neprovede.</p>
-      <div class="gridwrap"><table><thead><tr><th>Krok</th><th>Capability</th><th>Stav</th><th>Pokus</th><th>Výsledek</th></tr></thead><tbody>${ohradaInstances.length ? ohradaRows : '<tr><td colspan="5" class="dim">prázdno — nic dnes nečeká na člověka</td></tr>'}</tbody></table></div>`,
+      ${ohradaToolbar}
+      <div class="gridwrap"><table id="ohrada-table"><thead><tr><th data-sort-key="date">Datum a čas</th><th data-sort-key="krok">Krok</th><th data-sort-key="capability">Capability</th><th data-sort-key="stav">Stav</th><th data-sort-key="pokus" data-sort-type="number">Pokus</th><th>Výsledek</th></tr></thead><tbody>${ohradaInstances.length ? ohradaRows : '<tr><td colspan="6" class="dim">prázdno — nic dnes nečeká na člověka</td></tr>'}</tbody></table></div>`,
     },
     {
       id: "staj",
@@ -1121,7 +1202,8 @@ export function renderFarm(m: FarmModel): string {
           <noscript><button class="btn btn-sm" type="submit">Použít</button></noscript>
         </form>
       </div>
-      <div class="gridwrap"><table><thead><tr><th>Krok</th><th>Capability</th><th>Stav</th><th>Pokus</th><th>Výsledek</th></tr></thead><tbody>${m.instances.length ? instanceRows : '<tr><td colspan="5" class="dim">zatím žádné</td></tr>'}</tbody></table></div>`,
+      ${vysledekToolbar}
+      <div class="gridwrap"><table id="vysledek-table"><thead><tr><th data-sort-key="date">Datum a čas</th><th data-sort-key="krok">Krok</th><th data-sort-key="capability">Capability</th><th data-sort-key="stav">Stav</th><th data-sort-key="pokus" data-sort-type="number">Pokus</th><th>Výsledek</th></tr></thead><tbody>${m.instances.length ? instanceRows : '<tr><td colspan="6" class="dim">zatím žádné</td></tr>'}</tbody></table></div>`,
     },
     {
       id: "denik",
@@ -1231,6 +1313,98 @@ export function renderFarm(m: FarmModel): string {
       row.setAttribute("aria-expanded", open ? "false" : "true");
       document.querySelectorAll('tr.step-row[data-wf="' + wf + '"]').forEach(function (r) { r.hidden = open; });
     });
+  });
+
+  // Generic list filter/sort (owner's request 2026-09-17: "filtrování je obecné, přes každý takový seznam") —
+  // one mechanism reused for Ohrada and Výsledek's "Poslední instance" tables (and any future table shaped the
+  // same way: tbody rows are tr.group-head, each optionally followed by its own tr.step-row[data-wf=...] detail
+  // rows). Rows are grouped by that leading/trailing relationship once, then filtered and sorted as whole groups
+  // so a group-head never gets separated from its own step-detail rows. Filtering uses its own ".f-hidden" CSS
+  // class, never the "hidden" attribute the gh-toggle expand/collapse above already owns — a filtered-out row
+  // stays exactly as expanded/collapsed as the user left it once the filter clears again.
+  function wireListTable(table, opts) {
+    if (!table) return;
+    var tbody = table.tBodies[0];
+    if (!tbody) return;
+    var groups = [];
+    var rows = Array.prototype.slice.call(tbody.rows);
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      if (!r.classList.contains("group-head")) continue;
+      var wf = r.getAttribute("data-wf");
+      var detail = [];
+      var j = i + 1;
+      while (j < rows.length && rows[j].classList.contains("step-row") && rows[j].getAttribute("data-wf") === wf) {
+        detail.push(rows[j]);
+        j++;
+      }
+      groups.push({ head: r, detail: detail });
+      i = j - 1;
+    }
+    var searchEl = opts.search, stavEl = opts.stav, capEl = opts.cap, countEl = opts.count;
+    var headerCells = table.tHead ? Array.prototype.slice.call(table.tHead.querySelectorAll("th[data-sort-key]")) : [];
+    var sortKey = null;
+    var sortDir = 1;
+
+    function apply() {
+      var q = searchEl ? searchEl.value.trim().toLowerCase() : "";
+      var stav = stavEl ? stavEl.value : "";
+      var cap = capEl ? capEl.value : "";
+      var visible = 0;
+      groups.forEach(function (g) {
+        var text = g.head.textContent.toLowerCase();
+        var show =
+          (!q || text.indexOf(q) !== -1) &&
+          (!stav || g.head.getAttribute("data-sort-stav") === stav) &&
+          (!cap || g.head.getAttribute("data-sort-capability") === cap);
+        g.head.classList.toggle("f-hidden", !show);
+        g.detail.forEach(function (dr) { dr.classList.toggle("f-hidden", !show); });
+        if (show) visible++;
+      });
+      if (countEl) countEl.textContent = "Zobrazeno " + visible + " z " + groups.length;
+      if (sortKey) {
+        var type = null;
+        headerCells.forEach(function (th) { if (th.getAttribute("data-sort-key") === sortKey) type = th.getAttribute("data-sort-type"); });
+        var sorted = groups.slice().sort(function (a, b) {
+          var av = a.head.getAttribute("data-sort-" + sortKey) || "";
+          var bv = b.head.getAttribute("data-sort-" + sortKey) || "";
+          var cmp = type === "number" ? (parseFloat(av) || 0) - (parseFloat(bv) || 0) : av < bv ? -1 : av > bv ? 1 : 0;
+          return cmp * sortDir;
+        });
+        sorted.forEach(function (g) {
+          tbody.appendChild(g.head);
+          g.detail.forEach(function (dr) { tbody.appendChild(dr); });
+        });
+      }
+    }
+
+    if (searchEl) searchEl.addEventListener("input", apply);
+    if (stavEl) stavEl.addEventListener("change", apply);
+    if (capEl) capEl.addEventListener("change", apply);
+    headerCells.forEach(function (th) {
+      th.addEventListener("click", function () {
+        var key = th.getAttribute("data-sort-key");
+        sortDir = sortKey === key ? -sortDir : 1;
+        sortKey = key;
+        headerCells.forEach(function (h) { h.classList.remove("sort-asc", "sort-desc"); });
+        th.classList.add(sortDir === 1 ? "sort-asc" : "sort-desc");
+        apply();
+      });
+    });
+    apply();
+  }
+
+  wireListTable(document.getElementById("ohrada-table"), {
+    search: document.getElementById("ohrada-q"),
+    stav: document.getElementById("ohrada-stav"),
+    cap: document.getElementById("ohrada-cap"),
+    count: document.getElementById("ohrada-count"),
+  });
+  wireListTable(document.getElementById("vysledek-table"), {
+    search: document.getElementById("vysledek-q"),
+    stav: document.getElementById("vysledek-stav"),
+    cap: document.getElementById("vysledek-cap"),
+    count: document.getElementById("vysledek-count"),
   });
 
   // Deník live terminal (owner's request 2026-09-09: "vidět co se šustne"): poll /audit.json?after=<last>, append
@@ -1412,12 +1586,22 @@ const rawJson = (value: unknown, cap = 600): string => {
   return `<details><summary>podrobnosti (JSON)</summary><pre class="wrap">${esc(s.length > cap ? `${s.slice(0, cap)}…` : s)}</pre></details>`;
 };
 
+/** Czech phrasing for WaitReason enum values (types.ts) — raw enum text (e.g. "REVIEW") is not a sentence a human reads at a glance. */
+const WAIT_REASON_LABEL: Record<string, string> = {
+  EXTERNAL: "vnější systém",
+  REVIEW: "lidské schválení",
+  SCHEDULE: "naplánovaný čas",
+  DEPENDENCY: "jinou instanci",
+};
+
 /** Step result in plain Czech, per capability — for /farm, where there's no renderOutput() above it to carry the human summary. Falls back to collapsed raw JSON for an unknown capability. */
 const humanStepResult = (s: Instance["steps"][number]): string => {
   const r = s.result;
   if (!r) return "";
-  if (r.error) return `<span class="dim">${esc(r.error.code)}</span>${r.error.retryable ? " <small>(lze zopakovat)</small>" : ""}`;
-  if (r.status === "WAITING") return `čeká na ${esc(r.waitReason ?? "schválení")}`;
+  // Owner's Ohrada screenshot (17.9.2026): "z toho nepoznám o co se jedná" — error.code alone (e.g.
+  // MODEL_UNAVAILABLE) is jargon; error.message is the human sentence ErrorObject carries for exactly this.
+  if (r.error) return `${esc(r.error.message)} <code class="dim">${esc(r.error.code)}</code>${r.error.retryable ? " <small>(lze zopakovat)</small>" : ""}`;
+  if (r.status === "WAITING") return `čeká na ${esc(r.waitReason ? (WAIT_REASON_LABEL[r.waitReason] ?? r.waitReason) : "schválení")}`;
   const p = r.payload as Record<string, unknown> | undefined;
   if (!p) return esc(r.status);
   switch (s.capability) {
@@ -1452,9 +1636,54 @@ const auditSummary = (kind: string, capability: string | null, details: unknown)
       return d.status ? `stav: <b>${esc(d.status)}</b>` : rawJson(d);
     case "review-created":
       return `čeká na schválení <small class="dim">${esc(d.reasonCode ?? "")}</small>`;
+    case "model-usage":
+      return `model spotřeboval <b>${esc(d.inputTokens)}</b> vstupních / <b>${esc(d.outputTokens)}</b> výstupních tokenů`;
     default:
       return rawJson(d);
   }
+};
+
+/** Instance.steps is NOT "1 array entry = 1 logical step": technical, reconciliation and human-correction
+ * retries mutate the existing StepRecord in place (same array slot) — only a quality-strategy switch (e.g.
+ * "keyword" after "llm" failed) pushes a genuinely new one (verified against orchestrator.ts/journal.ts). The
+ * step actually holding up an instance is therefore the LAST array entry (in array order) whose own status
+ * isn't SUCCEEDED — never a string-match against instance.status: an unresolved UNKNOWN_OUTCOME reconciliation
+ * drives instance.status to "WAITING" while the StepRecord itself stays "UNKNOWN_OUTCOME" (orchestrator.ts
+ * reconcile()), and those two strings never become equal, which is exactly where the older, narrower heuristic
+ * this replaces (`[...steps].reverse().find(s => s.status === instance.status)`) silently fell through to the
+ * last array element by coincidence. Shared by Ohrada's own "which step is stuck" (ohradaStepFor(), renderFarm())
+ * and the instance detail page's step grouping/highlight (stepsTable() below) — one place, not two copies. */
+export function stuckStepOf(steps: Instance["steps"]): Instance["steps"][number] | undefined {
+  return [...steps].reverse().find((s) => s.status !== "SUCCEEDED") ?? steps[steps.length - 1];
+}
+
+/** Friendly view of a mail-intake instance's raw RFC 822 original — additive to the "Vstup"/"Text dokumentu"
+ * rows in renderOutput() below, never a replacement: mail.ingest (src/components/mail-ingest/handler.ts) stores
+ * the whole raw mail inline via artifacts.put() with NO contentType (defaults to "text/plain", never
+ * "message/rfc822") and never sets `location`, so the existing "zobrazit originál" link (gated on
+ * original.location) NEVER appears for a mail-intake instance today — detection therefore goes by
+ * `i.workflow === "mail-intake"`, not by the artifact's (misleading) contentType. Renders Subject/From/Date, the
+ * decoded body text, and one link per attachment (GET /workflow/:id/attachment/:n, deploy/cloudflare/apf-gateway
+ * /src/index.ts), same target="_blank" rel="noopener" convention as the stamped-original link elsewhere in this
+ * file. SECURITY: subject/from/date/body/every attachment filename come straight from an untrusted external
+ * sender — an attacker fully controls this content (F2: a document's content is DATA, never a command to the
+ * platform) — every one of them goes through esc(), including inside the title="" attribute, no exceptions. */
+const renderMailIntakeView = (workflowId: string, original: Artifact): string => {
+  const parsed = parseMimeMessage(original.bytes);
+  const meta = [
+    parsed.subject !== undefined ? `<div><b>Předmět:</b> ${esc(parsed.subject)}</div>` : "",
+    parsed.from !== undefined ? `<div><b>Od:</b> ${esc(parsed.from)}</div>` : "",
+    parsed.date !== undefined ? `<div><b>Datum:</b> ${esc(parsed.date)}</div>` : "",
+  ].join("");
+  const attachments = parsed.attachments.length
+    ? `<div style="margin-top:8px">${parsed.attachments
+        .map(
+          (a) =>
+            `<a class="btn btn-sm" style="margin:2px 6px 2px 0" href="/workflow/${esc(workflowId)}/attachment/${esc(a.index)}" target="_blank" rel="noopener" title="${esc(a.filename ?? "")}">📎 ${esc(a.filename ?? `příloha ${a.index}`)} <small class="dim">(${esc(kb(a.byteLength))})</small></a>`,
+        )
+        .join("")}</div>`
+    : '<p class="dim">žádné přílohy</p>';
+  return `<div class="card" style="margin-top:12px"><h3 style="margin-bottom:6px">E-mail (přehledně)</h3>${meta || '<p class="dim">bez hlaviček (rozpoznat je nešlo)</p>'}<details open><summary>Text zprávy</summary><pre>${esc(parsed.textBody)}</pre></details>${attachments}</div>`;
 };
 
 /** What the flow produced so far, in the owner's words: input, text, type, validation, stamp, notification, state. */
@@ -1517,17 +1746,54 @@ const renderOutput = (v: InstanceView): string => {
       </form>
     </div>`
       : "";
-  return `<h2>Výstup</h2><div class="card">${rows.map(([k, val]) => `<div style="display:flex;gap:14px;padding:7px 0;border-bottom:1px solid var(--border-soft)"><div class="dim" style="width:12rem;flex:none;font-weight:650">${k}</div><div>${val}</div></div>`).join("")}</div>${reviewForm}`;
+  const mailView = i.workflow === "mail-intake" && original ? renderMailIntakeView(v.workflowId, original) : "";
+  return `<h2>Výstup</h2><div class="card">${rows.map(([k, val]) => `<div style="display:flex;gap:14px;padding:7px 0;border-bottom:1px solid var(--border-soft)"><div class="dim" style="width:12rem;flex:none;font-weight:650">${k}</div><div>${val}</div></div>`).join("")}</div>${mailView}${reviewForm}`;
 };
 
 /** Shared by the instance page and /farm's per-instance detail: one row per step, same columns both places. */
-const stepsTable = (steps: Instance["steps"]): string =>
-  `<table><tr><th>Krok</th><th>Stav</th><th>Pokus / logický</th><th>Výsledek</th></tr>${steps
-    .map(
-      (s) =>
-        `<tr><td><b>${esc(s.stepId)}</b><br><small>${esc(s.capability)}/v${esc(s.capabilityVersion)}</small></td><td>${stateBadge(s.status)}</td><td>${s.attempt} / ${s.logicalAttempt}<br><small>${esc(s.strategy)}</small></td><td>${fmtResult(s)}</td></tr>`,
-    )
-    .join("")}</table>`;
+/** Instance.steps grouped by stepId, contiguous runs only (first-appearance array order = WorkflowDef step
+ * order) — technical/reconciliation/human-correction retries mutate a StepRecord in place (same slot), only a
+ * quality-strategy switch pushes a new one, so entries for one stepId never interleave with another's. What
+ * lets stepsTable() number "Krok X z N" by distinct step instead of by raw array length. */
+const groupStepsById = (steps: Instance["steps"]): Instance["steps"][] => {
+  const groups: Instance["steps"][] = [];
+  for (const s of steps) {
+    const last = groups[groups.length - 1];
+    if (last && last[0]?.stepId === s.stepId) last.push(s);
+    else groups.push([s]);
+  }
+  return groups;
+};
+
+/** Shared by the instance page (/workflow/:id — the only caller today): one row per array entry, grouped and
+ * numbered by distinct stepId ("Krok X z N" via groupStepsById()), sub-labelled "pokus K (strategy)" only when
+ * a step actually has more than one entry (a quality-strategy switch after a failed attempt). The group holding
+ * up a non-SUCCEEDED instance (stuckStepOf()) gets a `.step-stuck` highlight — never computed at all for an
+ * already-SUCCEEDED instance, where no step is "stuck" by definition. `audit` is this instance's own audit
+ * trail (renderInstance() passes v.audit) — read only for "model-usage" records, matched by stepId AND
+ * executionId (not stepId alone) so a stale technical retry's token count is never shown against the attempt
+ * that superseded it. */
+const stepsTable = (steps: Instance["steps"], instanceStatus: string, audit: AuditRecord[]): string => {
+  const groups = groupStepsById(steps);
+  const stuck = instanceStatus !== "SUCCEEDED" ? stuckStepOf(steps) : undefined;
+  const usageFor = (s: Instance["steps"][number]) =>
+    audit.find((r) => r.kind === "model-usage" && (r.details as Record<string, unknown> | undefined)?.stepId === s.stepId && (r.details as Record<string, unknown> | undefined)?.executionId === s.executionId);
+  const rows = groups
+    .map((group, gi) => {
+      const highlighted = stuck !== undefined && group.includes(stuck);
+      return group
+        .map((s, ei) => {
+          const krok = ei === 0 ? `<b>Krok ${gi + 1} z ${groups.length}</b><br><small class="dim">${esc(s.stepId)}</small>` : `<small class="dim">Krok ${gi + 1} z ${groups.length}</small>`;
+          const attemptLabel = group.length > 1 ? `<br><small class="dim">pokus ${ei + 1} (${esc(s.strategy)})</small>` : "";
+          const usage = usageFor(s);
+          const usageLine = usage ? `<br><small class="dim">${auditSummary("model-usage", s.capability, usage.details)}</small>` : "";
+          return `<tr${highlighted ? ' class="step-stuck"' : ""}><td>${krok}<br><small>${esc(s.capability)}/v${esc(s.capabilityVersion)}</small>${attemptLabel}</td><td>${stateBadge(s.status)}</td><td>${s.attempt} / ${s.logicalAttempt}<br><small>${esc(s.strategy)}</small></td><td>${fmtResult(s)}${usageLine}</td></tr>`;
+        })
+        .join("");
+    })
+    .join("");
+  return `<table><tr><th>Krok</th><th>Stav</th><th>Pokus / logický</th><th>Výsledek</th></tr>${rows}</table>`;
+};
 
 /** Kravská dílna's own chat page (its own URL, /farm/workshop/<id>, same pattern as /workflow/<id> — a growing
  * transcript doesn't belong pre-rendered-and-hidden in every /farm load the way the tab-switched sections are).
@@ -1555,14 +1821,14 @@ export function renderWorkshopSession(session: WorkshopSession): string {
 export function renderInstance(v: InstanceView): string {
   const i = v.instance;
   const audit = v.audit
-    .map((r) => `<tr><td><small>${esc(r.at)}</small></td><td><code>${esc(r.kind)}</code></td><td><small>${esc(r.capability ?? "")}</small></td><td><small>${esc(JSON.stringify(r.details ?? {}))}</small></td></tr>`)
+    .map((r) => `<tr><td><small>${esc(r.at)}</small></td><td><code>${esc(r.kind)}</code></td><td><small>${esc(r.capability ?? "")}</small></td><td><small>${auditSummary(r.kind, r.capability ?? null, r.details)}</small></td></tr>`)
     .join("");
   return shell(
     `${i.workflow} ${v.workflowId}`,
     `<div class="doc"><header><h1>Instance toku <code>${esc(i.workflow)}/v${esc(i.workflowVersion)}</code></h1>${stateBadge(i.status)}</header>
 <div class="card" style="margin-bottom:14px"><small class="dim">id <code>${esc(v.workflowId)}</code> · korelace <code>${esc(i.correlationId)}</code> · tenant <code>${esc(i.tenantId)}</code> · aktér <code>${esc(i.actorId)}</code> · založeno ${esc(i.createdAt)} · změněno ${esc(i.updatedAt)}${i.waiting ? ` · čeká na <code>${esc(i.waiting.reason)}</code> do ${esc(i.waiting.deadline)}` : ""}</small></div>
 ${renderOutput(v)}
-<h2>Kroky</h2><div class="card">${stepsTable(i.steps)}
+<h2>Kroky</h2><div class="card">${stepsTable(i.steps, i.status, v.audit)}
 <small class="dim">Krok, který skončil <code>DEPENDENCY_UNAVAILABLE</code>, narazil na část farmy, která ještě není zapojená; orchestrátor ho zkusil tolikrát, kolik dovoluje definice toku, a pak instanci explicitně ukončil.</small></div>
 <h2>Artefakty</h2>${v.artifacts.map(artifactCard).join("") || '<div class="card dim">žádné</div>'}
 <h2>Audit této instance</h2><div class="card"><table><tr><th>Čas</th><th>Druh</th><th>Capability</th><th>Detail</th></tr>${audit}</table></div>

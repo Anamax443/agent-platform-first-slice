@@ -12,12 +12,18 @@ import {
   effectiveWatchdogLevel,
   reconcileIncidents,
   renderFarm,
+  renderInstance,
+  stuckStepOf,
   type CapabilityRow,
   type FarmModel,
   type IncidentRecord,
+  type InstanceView,
   type WatchdogFinding,
   type WatchdogSnapshot,
 } from "../deploy/cloudflare/apf-gateway/src/page.js";
+import type { Artifact } from "../src/platform/artifacts.js";
+import type { AuditRecord } from "../src/platform/audit.js";
+import type { Instance } from "../src/platform/journal.js";
 
 const model: FarmModel = {
   installation: "local-fakes",
@@ -154,6 +160,103 @@ describe("PAGE-FARM-001 renderFarm() actually runs, not just typechecks", () => 
     expect(ohradaSection).not.toContain("wf-purged1");
   });
 
+  it("Ohrada row shows the reason (capability, attempt, human-readable result) directly in the collapsed line, no expand needed (owner's screenshot 17.9.2026: 'velmi nepřehledné ... nepoznám o co se jedná')", () => {
+    const withReasons: FarmModel = {
+      ...model,
+      now: "2026-09-17T07:00:00Z",
+      openWorkflowProblems: [],
+      instances: [
+        {
+          workflowId: "wf-waiting2",
+          workflow: "mail-intake",
+          workflowVersion: "2",
+          tenantId: "tenant-42",
+          actorId: "svc-orchestrator",
+          status: "WAITING",
+          createdAt: "2026-09-16T13:29:41.423Z",
+          updatedAt: "2026-09-16T13:29:43.726Z",
+          steps: [
+            {
+              stepId: "step-1",
+              capability: "document.stamp",
+              capabilityVersion: "1",
+              sideEffects: "internal-write",
+              executionId: "exec-1",
+              attempt: 1,
+              logicalAttempt: 1,
+              strategyIndex: 0,
+              strategy: "primary",
+              idempotencyKey: "idem-1",
+              status: "WAITING",
+              startedAt: "2026-09-16T13:29:41.423Z",
+              result: {
+                messageId: "m1",
+                inReplyTo: "m0",
+                correlationId: "c1",
+                status: "WAITING",
+                capability: "document.stamp",
+                capabilityVersion: "1",
+                schemaVersion: "1",
+                completedAt: "2026-09-16T13:29:43.726Z",
+                waitReason: "REVIEW",
+                deadline: "2026-09-19T13:29:43.726Z",
+              },
+            },
+          ],
+        },
+        {
+          workflowId: "wf-failed1",
+          workflow: "mail-intake",
+          workflowVersion: "2",
+          tenantId: "tenant-42",
+          actorId: "svc-orchestrator",
+          status: "FAILED",
+          createdAt: "2026-09-17T06:06:06.957Z",
+          updatedAt: "2026-09-17T06:06:08.927Z",
+          steps: [
+            {
+              stepId: "step-1",
+              capability: "document.classify",
+              capabilityVersion: "1",
+              sideEffects: "none",
+              executionId: "exec-2",
+              attempt: 3,
+              logicalAttempt: 1,
+              strategyIndex: 0,
+              strategy: "primary",
+              idempotencyKey: "idem-2",
+              status: "FAILED",
+              startedAt: "2026-09-17T06:06:06.957Z",
+              result: {
+                messageId: "m2",
+                inReplyTo: "m1",
+                correlationId: "c2",
+                status: "FAILED",
+                capability: "document.classify",
+                capabilityVersion: "1",
+                schemaVersion: "1",
+                completedAt: "2026-09-17T06:06:08.927Z",
+                error: { code: "MODEL_UNAVAILABLE", class: "DEPENDENCY", retryable: true, message: "Model Claude Haiku momentálně nedostupný (nedostatek kreditu)." },
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const html = renderFarm(withReasons);
+    const ohradaSection = html.slice(html.indexOf('id="view-ohrada"'), html.indexOf('id="view-staj"'));
+    // WaitReason enum translated to a Czech sentence, not left as raw "REVIEW"
+    expect(ohradaSection).toContain("čeká na lidské schválení");
+    expect(ohradaSection).not.toContain("čeká na REVIEW");
+    // FAILED shows the human error.message, not just the bare error.code
+    expect(ohradaSection).toContain("Model Claude Haiku momentálně nedostupný (nedostatek kreditu).");
+    expect(ohradaSection).toContain("MODEL_UNAVAILABLE");
+    // capability and attempt count are now their own columns, not squashed into one dim blob with no Výsledek
+    expect(ohradaSection).toContain("document.classify/v1");
+    expect(ohradaSection).toContain("document.stamp/v1");
+    expect(ohradaSection).toContain("3 / 1");
+  });
+
   it("Výsledek sekce ukazuje statistiky i poslední instance (SUCCEEDED tam být má, na rozdíl od Ohrady)", () => {
     const html = renderFarm(model);
     const vysledekSection = html.slice(html.indexOf('id="view-vysledek"'), html.indexOf('id="view-denik"'));
@@ -266,6 +369,183 @@ describe("PAGE-FARM-001 renderFarm() actually runs, not just typechecks", () => 
     const empty: FarmModel = { ...model, capabilities: [], instances: [], openWorkflowProblems: [] };
     expect(() => renderFarm(empty)).not.toThrow();
     expect(renderFarm(empty)).toContain("zatím žádné");
+  });
+});
+
+describe("Ohrada + Výsledek: generický filtr/řazení seznamu (owner's request 2026-09-17, 'filtrování je obecné, přes každý takový seznam')", () => {
+  // Three instances covering three different statuses (WAITING/FAILED/SUCCEEDED) so both the Ohrada-narrowed and
+  // the Výsledek-broad Capability/Stav dropdowns have something real to derive their DISTINCT options from.
+  const filterFixture: FarmModel = {
+    ...model,
+    now: "2026-09-17T07:00:00Z",
+    openWorkflowProblems: [],
+    instances: [
+      {
+        workflowId: "wf-waiting2",
+        workflow: "mail-intake",
+        workflowVersion: "2",
+        tenantId: "tenant-42",
+        actorId: "svc-orchestrator",
+        status: "WAITING",
+        createdAt: "2026-09-16T13:29:41.423Z",
+        updatedAt: "2026-09-16T13:29:43.726Z",
+        steps: [
+          {
+            stepId: "step-1",
+            capability: "document.stamp",
+            capabilityVersion: "1",
+            sideEffects: "internal-write",
+            executionId: "exec-1",
+            attempt: 1,
+            logicalAttempt: 1,
+            strategyIndex: 0,
+            strategy: "primary",
+            idempotencyKey: "idem-1",
+            status: "WAITING",
+            startedAt: "2026-09-16T13:29:41.423Z",
+            result: {
+              messageId: "m1",
+              inReplyTo: "m0",
+              correlationId: "c1",
+              status: "WAITING",
+              capability: "document.stamp",
+              capabilityVersion: "1",
+              schemaVersion: "1",
+              completedAt: "2026-09-16T13:29:43.726Z",
+              waitReason: "REVIEW",
+              deadline: "2026-09-19T13:29:43.726Z",
+            },
+          },
+        ],
+      },
+      {
+        workflowId: "wf-failed1",
+        workflow: "mail-intake",
+        workflowVersion: "2",
+        tenantId: "tenant-42",
+        actorId: "svc-orchestrator",
+        status: "FAILED",
+        createdAt: "2026-09-17T06:06:06.957Z",
+        updatedAt: "2026-09-17T06:06:08.927Z",
+        steps: [
+          {
+            stepId: "step-1",
+            capability: "document.classify",
+            capabilityVersion: "1",
+            sideEffects: "none",
+            executionId: "exec-2",
+            attempt: 3,
+            logicalAttempt: 1,
+            strategyIndex: 0,
+            strategy: "primary",
+            idempotencyKey: "idem-2",
+            status: "FAILED",
+            startedAt: "2026-09-17T06:06:06.957Z",
+            result: {
+              messageId: "m2",
+              inReplyTo: "m1",
+              correlationId: "c2",
+              status: "FAILED",
+              capability: "document.classify",
+              capabilityVersion: "1",
+              schemaVersion: "1",
+              completedAt: "2026-09-17T06:06:08.927Z",
+              error: { code: "MODEL_UNAVAILABLE", class: "DEPENDENCY", retryable: true, message: "Model Claude Haiku momentálně nedostupný (nedostatek kreditu)." },
+            },
+          },
+        ],
+      },
+      {
+        workflowId: "wf-ok2",
+        workflow: "document-intake",
+        workflowVersion: "2",
+        tenantId: "tenant-42",
+        actorId: "svc-orchestrator",
+        status: "SUCCEEDED",
+        createdAt: "2026-09-17T05:00:00.000Z",
+        updatedAt: "2026-09-17T05:01:00.000Z",
+        steps: [],
+      },
+    ],
+  };
+
+  it("'Datum a čas' je první sloupec v obou tabulkách, s hodnotou z updatedAt přes shortAt()", () => {
+    const html = renderFarm(filterFixture);
+    const ohradaSection = html.slice(html.indexOf('id="view-ohrada"'), html.indexOf('id="view-staj"'));
+    const vysledekSection = html.slice(html.indexOf('id="view-vysledek"'), html.indexOf('id="view-denik"'));
+
+    // Header order: "Datum a čas" is the very first <th>, "Krok" right after it (still needed to open the instance).
+    expect(ohradaSection).toContain('<th data-sort-key="date">Datum a čas</th><th data-sort-key="krok">Krok</th>');
+    expect(vysledekSection).toContain('<th data-sort-key="date">Datum a čas</th><th data-sort-key="krok">Krok</th>');
+
+    // wf-waiting2's updatedAt "2026-09-16T13:29:43.726Z" -> shortAt() "2026-09-16 13:29:43", leading cell.
+    expect(ohradaSection).toContain('<td class="dim mono">2026-09-16 13:29:43</td>');
+    // wf-ok2 only appears in Výsledek (SUCCEEDED is outside Ohrada's WAITING/FAILED/UNKNOWN_OUTCOME filter).
+    expect(ohradaSection).not.toContain("wf-ok2");
+    expect(vysledekSection).toContain('<td class="dim mono">2026-09-17 05:01:00</td>');
+    expect(vysledekSection).toContain("wf-ok2");
+  });
+
+  it("filtrovací lišta (hledání, Stav select, Capability select naplněný jen reálně přítomnými hodnotami, čítač) se vykreslí v obou sekcích", () => {
+    const html = renderFarm(filterFixture);
+    const ohradaSection = html.slice(html.indexOf('id="view-ohrada"'), html.indexOf('id="view-staj"'));
+    const vysledekSection = html.slice(html.indexOf('id="view-vysledek"'), html.indexOf('id="view-denik"'));
+
+    // Global text search input, above the table.
+    expect(ohradaSection).toContain('<input type="search" id="ohrada-q"');
+    expect(vysledekSection).toContain('<input type="search" id="vysledek-q"');
+
+    // Ohrada's Stav select is the fixed vše/WAITING/FAILED/UNKNOWN_OUTCOME domain it's already narrowed to.
+    expect(ohradaSection).toContain('<select id="ohrada-stav" aria-label="Stav">');
+    expect(ohradaSection).toContain('<option value="">Stav: vše</option><option value="WAITING">WAITING</option><option value="FAILED">FAILED</option><option value="UNKNOWN_OUTCOME">UNKNOWN_OUTCOME</option>');
+
+    // Výsledek's Stav select is derived from the statuses actually present in this fixture's instances.
+    expect(vysledekSection).toContain('<select id="vysledek-stav" aria-label="Stav">');
+    expect(vysledekSection).toContain('<option value="FAILED">FAILED</option>');
+    expect(vysledekSection).toContain('<option value="SUCCEEDED">SUCCEEDED</option>');
+    expect(vysledekSection).toContain('<option value="WAITING">WAITING</option>');
+
+    // Capability select: only capabilities actually present in that table's own rows (never an option that
+    // would filter to zero rows) — Ohrada only ever sees document.stamp/document.classify (from its two rows'
+    // steps), never document-intake/v2 (that fallback only ever appears in Výsledek, from wf-ok2's empty steps).
+    expect(ohradaSection).toContain('<option value="document.stamp/v1">document.stamp/v1</option>');
+    expect(ohradaSection).toContain('<option value="document.classify/v1">document.classify/v1</option>');
+    expect(ohradaSection).not.toContain("document-intake/v2");
+    expect(vysledekSection).toContain('<option value="document.stamp/v1">document.stamp/v1</option>');
+    expect(vysledekSection).toContain('<option value="document.classify/v1">document.classify/v1</option>');
+    expect(vysledekSection).toContain('<option value="document-intake/v2">document-intake/v2</option>');
+
+    // Live "Zobrazeno X z Y" counter target, empty until the client JS fills it in.
+    expect(ohradaSection).toContain('<span class="dim" id="ohrada-count"></span>');
+    expect(vysledekSection).toContain('<span class="dim" id="vysledek-count"></span>');
+  });
+
+  it("data-sort-* atributy nesou syrové, porovnatelné hodnoty pro řazení na klientovi, ve stejném tvaru v obou tabulkách", () => {
+    const html = renderFarm(filterFixture);
+    const ohradaSection = html.slice(html.indexOf('id="view-ohrada"'), html.indexOf('id="view-staj"'));
+    const vysledekSection = html.slice(html.indexOf('id="view-vysledek"'), html.indexOf('id="view-denik"'));
+
+    const waitingAttrs =
+      'data-sort-date="2026-09-16T13:29:43.726Z" data-sort-krok="wf-waiting2" data-sort-capability="document.stamp/v1" data-sort-stav="WAITING" data-sort-pokus="1"';
+    const failedAttrs =
+      'data-sort-date="2026-09-17T06:06:08.927Z" data-sort-krok="wf-failed1" data-sort-capability="document.classify/v1" data-sort-stav="FAILED" data-sort-pokus="3"';
+    expect(ohradaSection).toContain(waitingAttrs);
+    expect(ohradaSection).toContain(failedAttrs);
+    expect(vysledekSection).toContain(waitingAttrs);
+    expect(vysledekSection).toContain(failedAttrs);
+
+    // wf-ok2 has no steps at all — capability falls back to workflow/version, attempt count falls back to 0.
+    expect(vysledekSection).toContain(
+      'data-sort-date="2026-09-17T05:01:00.000Z" data-sort-krok="wf-ok2" data-sort-capability="document-intake/v2" data-sort-stav="SUCCEEDED" data-sort-pokus="0"',
+    );
+  });
+
+  it("wireListTable() je vykreslen jako JEDEN sdílený mechanismus, zapojený na obě tabulky, ne dvě samostatné implementace", () => {
+    const html = renderFarm(filterFixture);
+    const occurrences = html.split("function wireListTable(").length - 1;
+    expect(occurrences).toBe(1);
+    expect(html).toContain('wireListTable(document.getElementById("ohrada-table")');
+    expect(html).toContain('wireListTable(document.getElementById("vysledek-table")');
   });
 });
 
@@ -593,5 +873,235 @@ describe("PAGE-ZLAB Přehled shows the Žlab as counts and domains only", () => 
     expect(renderFarm({ ...model, zlab: { total: 0, byDomain: [] } })).toContain("Žlab zatím prázdný");
     const { zlab: _omitted, ...withoutZlab } = { ...model, zlab: undefined };
     expect(renderFarm(withoutZlab)).toContain("Žlab nedostupný");
+  });
+});
+
+// -----------------------------------------------------------------------------------------------------------
+// renderInstance() — /workflow/:id detail page (2026-09-17 three-task slice): step grouping/numbering + the
+// stuck-step highlight (TASK 1), the mail-intake friendly email view (TASK 2), token usage surfaced on the
+// page (TASK 3). Instance.steps is NOT "1 array entry = 1 logical step" (verified against orchestrator.ts/
+// journal.ts): technical/reconciliation/human-correction retries mutate the existing StepRecord in place (same
+// array slot); only a quality-strategy switch pushes a genuinely new one.
+// -----------------------------------------------------------------------------------------------------------
+
+const CRLF = "\r\n";
+
+/** Same tiny raw-multipart builder as tests/mime.test.ts's own local `multipart()` — not exported from mime.ts,
+ * so duplicated here rather than reaching into another test file's private helper. */
+function multipart(boundary: string, parts: string[], topHeaders: string[] = []): string {
+  const headers = [`Content-Type: multipart/mixed; boundary="${boundary}"`, ...topHeaders].join(CRLF);
+  const body = parts.map((p) => `--${boundary}${CRLF}${p}`).join(CRLF) + `${CRLF}--${boundary}--${CRLF}`;
+  return `${headers}${CRLF}${CRLF}${body}`;
+}
+
+const instanceFixture = (overrides: Partial<Instance>): Instance => ({
+  workflowId: "wf-detail1",
+  workflow: "document-intake",
+  workflowVersion: "2",
+  correlationId: "cor-1",
+  tenantId: "tenant-42",
+  actorId: "svc-orchestrator",
+  status: "RUNNING",
+  currentStep: 0,
+  input: {},
+  steps: [],
+  published: { status: "RUNNING" },
+  createdAt: "2026-09-17T08:00:00Z",
+  updatedAt: "2026-09-17T08:00:00Z",
+  ...overrides,
+});
+
+const stepFixture = (stepId: string, status: Instance["steps"][number]["status"], overrides: Partial<Instance["steps"][number]> = {}): Instance["steps"][number] => ({
+  stepId,
+  capability: "document.classify",
+  capabilityVersion: "1",
+  sideEffects: "none",
+  executionId: `exec-${stepId}`,
+  attempt: 1,
+  logicalAttempt: 1,
+  strategyIndex: 0,
+  strategy: "primary",
+  idempotencyKey: `idem-${stepId}`,
+  status,
+  startedAt: "2026-09-17T08:00:00Z",
+  ...overrides,
+});
+
+const artifactFixture = (overrides: Partial<Artifact>): Artifact => ({
+  artifactId: "art-orig",
+  tenantId: "tenant-42",
+  sha256: "deadbeef",
+  bytes: "",
+  receivedAt: "2026-09-17T08:00:00Z",
+  receivedFrom: "upload",
+  ...overrides,
+});
+
+const instanceViewFixture = (instance: Instance, artifacts: Artifact[] = [], audit: AuditRecord[] = []): InstanceView => ({
+  workflowId: instance.workflowId,
+  installation: "local-fakes",
+  instance,
+  artifacts,
+  audit,
+});
+
+describe("stepsTable() step grouping/numbering — Instance.steps grouped by stepId, not by raw array length (TASK 1)", () => {
+  it("a multi-strategy step (2 array entries sharing one stepId, a quality-strategy switch) is numbered as ONE step group with sub-attempts, not two separate steps", () => {
+    const instance = instanceFixture({
+      status: "SUCCEEDED",
+      steps: [
+        stepFixture("classify", "SUCCEEDED"),
+        stepFixture("validate", "FAILED", { strategy: "llm", capability: "document.validate" }),
+        stepFixture("validate", "SUCCEEDED", { strategy: "keyword", capability: "document.validate", logicalAttempt: 2, executionId: "exec-validate-2" }),
+      ],
+    });
+    const html = renderInstance(instanceViewFixture(instance));
+    // Two distinct step-groups ("classify", "validate") — never three: the second "validate" array entry is a
+    // sub-attempt of the SAME group, not its own "Krok 3 z 3".
+    expect(html).toContain("Krok 1 z 2");
+    expect(html).toContain("Krok 2 z 2");
+    expect(html).not.toContain("Krok 3");
+    // Sub-attempt labels name each strategy tried within that one group.
+    expect(html).toContain("pokus 1 (llm)");
+    expect(html).toContain("pokus 2 (keyword)");
+  });
+
+  it("a step with only one array entry gets no 'pokus N' sub-label at all — that label only ever disambiguates a real multi-strategy group", () => {
+    const instance = instanceFixture({ status: "SUCCEEDED", steps: [stepFixture("classify", "SUCCEEDED")] });
+    const html = renderInstance(instanceViewFixture(instance));
+    expect(html).toContain("Krok 1 z 1");
+    expect(html).not.toContain("pokus 1");
+  });
+});
+
+describe("stuckStepOf() — the LAST StepRecord whose own status isn't SUCCEEDED, never a string-match against instance.status (TASK 1 bug fix)", () => {
+  it("an unresolved UNKNOWN_OUTCOME reconciliation: instance.status is 'WAITING' but the actually-stuck step's own status is 'UNKNOWN_OUTCOME' — an EARLIER step whose stale status literally also reads 'WAITING' must not win", () => {
+    const steps: Instance["steps"] = [stepFixture("step-a", "WAITING"), stepFixture("step-b", "UNKNOWN_OUTCOME", { reconciliationRef: "ref-1" })];
+    // Old heuristic ([...steps].reverse().find(s => s.status === instanceStatus) ?? last) would match step-a
+    // ("WAITING" === instance.status "WAITING") before ever reaching step-b — the exact divergence this
+    // replaces: the instance is actually stuck on step-b's unresolved reconciliation, not step-a.
+    expect(stuckStepOf(steps)?.stepId).toBe("step-b");
+  });
+
+  it("renderInstance() highlights the step-group holding the truly-stuck step (step-b), not the earlier one whose stale status happens to equal instance.status", () => {
+    const instance = instanceFixture({
+      status: "WAITING",
+      waiting: { reason: "REVIEW", stepId: "step-b", reviewTaskId: "task-1", deadline: "2026-09-20T00:00:00Z" },
+      steps: [stepFixture("step-a", "WAITING"), stepFixture("step-b", "UNKNOWN_OUTCOME", { reconciliationRef: "ref-1" })],
+    });
+    const html = renderInstance(instanceViewFixture(instance));
+    expect(html).toContain('class="step-stuck"');
+    const stuckRow = html.slice(html.indexOf('class="step-stuck"'), html.indexOf('class="step-stuck"') + 400);
+    expect(stuckRow).toContain("step-b");
+    // step-a's own row (Krok 1 z 2) must NOT be the one marked stuck.
+    const stepAPos = html.indexOf(">step-a<");
+    expect(stepAPos).toBeGreaterThan(-1);
+    expect(html.slice(Math.max(0, stepAPos - 200), stepAPos)).not.toContain('class="step-stuck"');
+  });
+
+  it("the highlight never applies to a SUCCEEDED instance, even though stuckStepOf() alone would still return its last step (fallback semantics, unrelated to whether anything is actually stuck)", () => {
+    const steps = [stepFixture("step-a", "SUCCEEDED"), stepFixture("step-b", "SUCCEEDED")];
+    expect(stuckStepOf(steps)?.stepId).toBe("step-b"); // the pure helper alone doesn't know instance.status
+    const instance = instanceFixture({ status: "SUCCEEDED", steps });
+    const html = renderInstance(instanceViewFixture(instance));
+    expect(html).not.toContain('class="step-stuck"');
+  });
+});
+
+describe("renderMailIntakeView() — friendly email view on the mail-intake detail page (TASK 2)", () => {
+  const rawEmail = (subject: string, from: string, bodyText: string, attachmentFilename: string) =>
+    multipart(
+      "MVIEW1",
+      [
+        `Content-Type: text/plain${CRLF}${CRLF}${bodyText}`,
+        `Content-Type: application/pdf; name="doc.pdf"${CRLF}Content-Disposition: attachment; filename="${attachmentFilename}"${CRLF}Content-Transfer-Encoding: base64${CRLF}${CRLF}${Buffer.from("stand-in pdf bytes").toString("base64")}`,
+      ],
+      [`Subject: ${subject}`, `From: ${from}`, `Date: Thu, 17 Sep 2026 08:00:00 +0000`],
+    );
+
+  it("renders Subject/From/Date/body/attachment links ONLY for workflow 'mail-intake' — a direct-upload instance never shows it, even given the exact same raw bytes", () => {
+    const raw = rawEmail("Faktura 123", "dodavatel@example.com", "Dobrý den, posílám fakturu.", "faktura.pdf");
+    const mailInstance = instanceFixture({ workflow: "mail-intake", status: "SUCCEEDED" });
+    const mailHtml = renderInstance(instanceViewFixture(mailInstance, [artifactFixture({ bytes: raw, contentType: "text/plain" })]));
+    expect(mailHtml).toContain("E-mail (přehledně)");
+    expect(mailHtml).toContain("Faktura 123");
+    expect(mailHtml).toContain("dodavatel@example.com");
+    expect(mailHtml).toContain("Dobrý den, posílám fakturu.");
+    expect(mailHtml).toContain(`/workflow/${mailInstance.workflowId}/attachment/0`);
+    expect(mailHtml).toContain("faktura.pdf");
+
+    const directInstance = instanceFixture({ workflow: "document-intake", status: "SUCCEEDED" });
+    const directHtml = renderInstance(instanceViewFixture(directInstance, [artifactFixture({ bytes: raw, contentType: "text/plain" })]));
+    expect(directHtml).not.toContain("E-mail (přehledně)");
+    expect(directHtml).not.toContain("Předmět:");
+    expect(directHtml).not.toContain(`/workflow/${directInstance.workflowId}/attachment/0`);
+  });
+
+  it("a mail-intake instance with no original artifact at all renders no email view (never throws)", () => {
+    const instance = instanceFixture({ workflow: "mail-intake", status: "SUCCEEDED" });
+    expect(() => renderInstance(instanceViewFixture(instance, []))).not.toThrow();
+    expect(renderInstance(instanceViewFixture(instance, []))).not.toContain("E-mail (přehledně)");
+  });
+
+  it("a malicious Subject/From/body/attachment filename containing an HTML tag renders ESCAPED, never raw — the single most important test in this task (F2: a document's content is always DATA, never a command to the platform)", () => {
+    const payload = "<script>alert(1)</script>";
+    const raw = rawEmail(payload, `${payload} <attacker@evil.example>`, `Zpráva obsahuje ${payload} v textu.`, `${payload}.pdf`);
+    const mailInstance = instanceFixture({ workflow: "mail-intake", status: "SUCCEEDED" });
+    const html = renderInstance(instanceViewFixture(mailInstance, [artifactFixture({ bytes: raw, contentType: "text/plain" })]));
+
+    expect(html).not.toContain(payload); // never appears raw, anywhere on the page
+    expect(html).not.toContain("<script>");
+    const escaped = "&lt;script&gt;alert(1)&lt;/script&gt;";
+    expect(html).toContain(`<b>Předmět:</b> ${escaped}`);
+    expect(html).toContain(`<b>Od:</b> ${escaped}`);
+    expect(html).toContain(`Zpráva obsahuje ${escaped} v textu.`); // body text, inside <pre>
+    expect(html).toContain(`title="${escaped}.pdf"`); // escaped even inside an attribute value
+    expect(html).toContain(`>📎 ${escaped}.pdf`); // and again in the link's own text
+  });
+});
+
+describe("Token usage surfaced on the instance detail page (TASK 3)", () => {
+  it("auditSummary()'s model-usage Czech phrasing renders in 'Audit této instance', and the SAME token counts render inline next to the matching step in Kroky (matched by stepId+executionId)", () => {
+    const step = stepFixture("step-1", "SUCCEEDED", { executionId: "exec-usage-1" });
+    const instance = instanceFixture({ status: "SUCCEEDED", steps: [step] });
+    const usageRecord: AuditRecord = {
+      auditId: "a1",
+      at: "2026-09-17T08:10:00Z",
+      kind: "model-usage",
+      correlationId: instance.correlationId,
+      workflowId: instance.workflowId,
+      tenantId: instance.tenantId,
+      actorId: instance.actorId,
+      capability: "document.classify",
+      details: { stepId: "step-1", executionId: "exec-usage-1", inputTokens: 512, outputTokens: 128 },
+    };
+    const html = renderInstance(instanceViewFixture(instance, [], [usageRecord]));
+    const phrase = "model spotřeboval <b>512</b> vstupních / <b>128</b> výstupních tokenů";
+    // Appears exactly twice: once inline in Kroky next to step-1's row, once in "Audit této instance".
+    expect(html.split(phrase).length - 1).toBe(2);
+  });
+
+  it("a model-usage record for a DIFFERENT executionId (a superseded technical retry) is never attributed inline to the current attempt's row, even though it still shows in the raw audit trail", () => {
+    const step = stepFixture("step-1", "SUCCEEDED", { executionId: "exec-current" });
+    const instance = instanceFixture({ status: "SUCCEEDED", steps: [step] });
+    const staleRecord: AuditRecord = {
+      auditId: "a1",
+      at: "2026-09-17T08:00:00Z",
+      kind: "model-usage",
+      workflowId: instance.workflowId,
+      capability: "document.classify",
+      details: { stepId: "step-1", executionId: "exec-stale", inputTokens: 999, outputTokens: 999 },
+    };
+    const html = renderInstance(instanceViewFixture(instance, [], [staleRecord]));
+    const kroky = html.slice(html.indexOf("<h2>Kroky</h2>"), html.indexOf("<h2>Artefakty</h2>"));
+    expect(kroky).not.toContain("999");
+    // still visible, phrased in Czech, in the instance's own raw audit trail below.
+    expect(html).toContain("model spotřeboval <b>999</b> vstupních / <b>999</b> výstupních tokenů");
+  });
+
+  it("a step with no matching model-usage audit record at all shows no token line (most steps never call a model)", () => {
+    const instance = instanceFixture({ status: "SUCCEEDED", steps: [stepFixture("step-1", "SUCCEEDED")] });
+    const html = renderInstance(instanceViewFixture(instance, [], []));
+    expect(html).not.toContain("vstupních");
   });
 });
