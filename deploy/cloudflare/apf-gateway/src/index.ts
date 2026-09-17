@@ -16,6 +16,7 @@ import type { WorkersAiBinding } from "../../../../src/adapters/workers-ai.js";
 import { WorkersAiExtractor } from "../../../../src/adapters/extract.js";
 import type { SecretsSource } from "../../../../src/installation.js";
 import type { AuditRecord } from "../../../../src/platform/audit.js";
+import { auditRowsToCsv, type AuditCsvRow } from "../../../../src/platform/audit-csv.js";
 import { sha256Bytes, type Artifact } from "../../../../src/platform/artifacts.js";
 import { iso, SystemClock, type Clock } from "../../../../src/platform/clock.js";
 import { platformError } from "../../../../src/platform/errors.js";
@@ -1061,10 +1062,44 @@ async function recentAuditTenantMismatchCount(env: Env, sinceIso: string): Promi
   return row?.n ?? 0;
 }
 
-/** The "deník": the shared audit trail as-is, same source as /audit.json, newest first. */
-const auditLog = async (env: Env, limit = 50): Promise<AuditLogRow[]> => {
+/** Deník tab's own date-range picker (GET /farm ?denikFrom=&denikTo=) — separate from /audit.json's own ?limit=
+ * cap for the live-tail terminal: a very wide date range picked on /farm itself must not be able to make that
+ * page's own render pathologically slow. 500 matches /audit.json's existing ceiling in this same file — plenty
+ * for a human reviewing a real day's or week's traffic, small enough to keep GET /farm's render fast. A genuine
+ * full-period export belongs to GET /audit.csv below (its own, much higher, still-bounded ceiling), not this page.
+ */
+const DENIK_RANGE_LIMIT = 500;
+
+/** A caller may pass either a full ISO 8601 timestamp (e.g. copied from an existing `at` value, the same idiom
+ * /audit.json's own ?after= cursor already relies on) or a bare `YYYY-MM-DD` date — exactly what `<input
+ * type=date>` produces, i.e. the Deník tab's own "Do" field and GET /audit.csv's own ?to=. Plain string `<=`
+ * comparison against the `at` column needs the bare-date case widened to the END of that day first: comparing
+ * `at <= '2026-09-05'` against a real timestamp like "2026-09-05T10:00:00.000Z" would lexicographically exclude
+ * it (a longer string that starts with a shorter one sorts AFTER it), silently dropping the entire selected end
+ * day from the results. A value that already carries a time component (any length other than exactly 10) is
+ * trusted and passed through unchanged — this only ever widens a bare date, never touches anything else. */
+const inclusiveDayEnd = (to: string): string => (to.length === 10 ? `${to}T23:59:59.999Z` : to);
+
+/** The "deník": the shared audit trail as-is, same source as /audit.json, newest first. Optional `range.from`/
+ * `range.to` narrow it to an ISO 8601 date-ish window (plain string >= / <= against the `at` column — same idiom
+ * /audit.json's own ?after= already relies on) — GET /farm's denikFrom/denikTo. Existing callers that pass only
+ * `limit` (or nothing) keep their exact prior behavior; `range` is additive. */
+const auditLog = async (env: Env, limit = 50, range?: { from?: string; to?: string }): Promise<AuditLogRow[]> => {
   await ensureD1Audit(env.AUDIT);
-  const rows = await env.AUDIT.prepare("SELECT json FROM audit ORDER BY at DESC LIMIT ?").bind(limit).all<{ json: string }>();
+  const conditions: string[] = [];
+  const binds: unknown[] = [];
+  if (range?.from) {
+    conditions.push("at >= ?");
+    binds.push(range.from);
+  }
+  if (range?.to) {
+    conditions.push("at <= ?");
+    binds.push(inclusiveDayEnd(range.to));
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")} ` : "";
+  const rows = await env.AUDIT.prepare(`SELECT json FROM audit ${where}ORDER BY at DESC LIMIT ?`)
+    .bind(...binds, limit)
+    .all<{ json: string }>();
   return rows.results.map((r) => {
     const full = JSON.parse(r.json) as AuditRecord;
     return { at: full.at, kind: full.kind, workflowId: full.workflowId ?? null, tenantId: full.tenantId ?? null, capability: full.capability ?? null, details: full.details };
@@ -1364,15 +1399,20 @@ async function inboxDetail(env: Env): Promise<{ pending: InboxItem[]; failed: In
  * instanceLimit/instanceWindow from. Never writes anything; the caller decides what to do with the result
  * (render it, reconcile incidents against it, or both).
  */
-async function buildFarmModel(env: Env, instanceLimit: number, instanceWindow: string): Promise<FarmModel> {
+async function buildFarmModel(env: Env, instanceLimit: number, instanceWindow: string, denikRange?: { from?: string; to?: string }): Promise<FarmModel> {
   const now = iso(new SystemClock().now());
+  const denikFrom = denikRange?.from;
+  const denikTo = denikRange?.to;
+  // Only widen past the live terminal's usual last-50 once a range is actually picked — an unfiltered Deník tab
+  // keeps behaving exactly like before this feature existed.
+  const denikRangeActive = Boolean(denikFrom || denikTo);
   const [documentHost, emailExecutor, mailIngest, fakes, instances, log, inbox, stats, documentHostCaps, emailExecutorCaps, selfTestSummary, alertHealth, openWorkflowProblems, recentAuditTenantMismatches, certifications, cowWorkshopModelKey, workshopSessions] = await Promise.all([
     deployableInfo(env.DOCUMENT_HOST, "https://apf-document-host.internal"),
     deployableInfo(env.EMAIL_EXECUTOR, "https://apf-email-executor.internal"),
     deployableInfo(env.MAIL_INGEST, "https://apf-mail-ingest.internal"),
     deployableInfo(env.FAKES, FAKES_ORIGIN),
     recentInstances(env, instanceLimit, windowSince(instanceWindow, new SystemClock())),
-    auditLog(env, 50),
+    auditLog(env, denikRangeActive ? DENIK_RANGE_LIMIT : 50, denikRangeActive ? { from: denikFrom, to: denikTo } : undefined),
     inboxDetail(env),
     farmStats(env),
     capabilitiesOf(env.DOCUMENT_HOST, "https://apf-document-host.internal"),
@@ -1442,6 +1482,8 @@ async function buildFarmModel(env: Env, instanceLimit: number, instanceWindow: s
     instanceLimit,
     instanceWindow,
     auditLog: log,
+    denikFrom,
+    denikTo,
     inbox,
     workflows: [...WORKFLOW_NAMES],
     models: modelsOf(env),
@@ -1510,7 +1552,12 @@ export default {
       const rawLimit = Number(url.searchParams.get("limit"));
       const instanceLimit = [15, 30, 50, 100, 200].includes(rawLimit) ? rawLimit : 15;
       const instanceWindow = url.searchParams.get("window") ?? "";
-      const model = await buildFarmModel(env, instanceLimit, instanceWindow);
+      // Deník tab's own date-range picker (owner's request: "vyvolat historii za období, exportovat CSV") — an
+      // ISO 8601 date-ish string compared straight against the `at` column, same as /audit.json's ?after= already
+      // does. Absent/blank means "no bound on that side", identical to today's behavior.
+      const denikFrom = url.searchParams.get("denikFrom") || undefined;
+      const denikTo = url.searchParams.get("denikTo") || undefined;
+      const model = await buildFarmModel(env, instanceLimit, instanceWindow, { from: denikFrom, to: denikTo });
       // Incident Store (HANDOFF 84 continued): reconcile this render's watchdog findings against persisted
       // incident state before rendering, so the Argos banner can show "poprvé viděno / kolikrát" instead of
       // findings looking freshly discovered on every page load.
@@ -1914,6 +1961,71 @@ export default {
         ? await env.AUDIT.prepare("SELECT json FROM audit WHERE at > ? ORDER BY at ASC LIMIT ?").bind(after, limit).all<{ json: string }>()
         : await env.AUDIT.prepare("SELECT json FROM audit ORDER BY at DESC LIMIT ?").bind(limit).all<{ json: string }>();
       return Response.json(rows.results.map((r) => JSON.parse(r.json) as unknown));
+    }
+
+    // Genuine full-period Deník export (owner's request: "mít možnost vyvolat historii za období, exportovat CSV
+    // a podobně") — a different consumer from /audit.json above (that one is the live-tail terminal, its own
+    // contract, unchanged) and from GET /farm's own denikFrom/denikTo (that one only ever loads up to
+    // DENIK_RANGE_LIMIT rows for a page render). This route may legitimately return far more rows than either of
+    // those — capped at AUDIT_CSV_ROW_CAP, never unbounded. No in-code auth beyond what every other GET route in
+    // this family already relies on (Cloudflare Access in front of the Worker) — matches /audit.json exactly, not
+    // stricter, not looser.
+    if (url.pathname === "/audit.csv" && request.method === "GET") {
+      await ensureD1Audit(env.AUDIT);
+      const from = url.searchParams.get("from") || undefined;
+      const to = url.searchParams.get("to") || undefined;
+      const kind = url.searchParams.get("kind") || undefined;
+      const capability = url.searchParams.get("capability") || undefined;
+      const conditions: string[] = [];
+      const binds: unknown[] = [];
+      if (from) {
+        conditions.push("at >= ?");
+        binds.push(from);
+      }
+      if (to) {
+        conditions.push("at <= ?");
+        binds.push(inclusiveDayEnd(to));
+      }
+      if (kind) {
+        conditions.push("kind = ?");
+        binds.push(kind);
+      }
+      if (capability) {
+        conditions.push("capability = ?");
+        binds.push(capability);
+      }
+      const where = conditions.length ? `WHERE ${conditions.join(" AND ")} ` : "";
+      // AUDIT_CSV_ROW_CAP (20000): this endpoint exists FOR a genuine full-period export, so it is allowed to
+      // return far more than GET /farm's own DENIK_RANGE_LIMIT (500) — but "for export" still isn't "unbounded":
+      // an unfiltered from/to across a long-lived farm could otherwise try to pull the entire audit table into one
+      // response. 20000 rows of this shape is comfortably multiple MB of CSV, already a lot for a human to open in
+      // a spreadsheet, and a ceiling any caller who genuinely needs more can page past with from/to.
+      // LIMIT (cap + 1): one extra row lets us tell "truncated by the cap" apart from "exactly cap rows existed",
+      // without a separate COUNT(*) query — the extra row itself is dropped before building the CSV.
+      const AUDIT_CSV_ROW_CAP = 20000;
+      const rows = await env.AUDIT.prepare(`SELECT json FROM audit ${where}ORDER BY at DESC LIMIT ?`)
+        .bind(...binds, AUDIT_CSV_ROW_CAP + 1)
+        .all<{ json: string }>();
+      const truncated = rows.results.length > AUDIT_CSV_ROW_CAP;
+      const csvRows: AuditCsvRow[] = (truncated ? rows.results.slice(0, AUDIT_CSV_ROW_CAP) : rows.results).map((r) => {
+        const full = JSON.parse(r.json) as AuditRecord;
+        return { at: full.at, kind: full.kind, workflowId: full.workflowId ?? null, tenantId: full.tenantId ?? null, capability: full.capability ?? null, details: full.details };
+      });
+      const csv = auditRowsToCsv(csvRows);
+      // from/to/kind/capability are attacker-reachable query params about to go straight into a response header —
+      // sanitizeMimeFilename() (src/platform/mime.ts) strips CR/LF/quote for exactly this reason (same discipline
+      // as GET /workflow/:id/attachment/:n's Content-Disposition above); ":" is additionally swapped for "-" only
+      // for a tidier filename on Windows, which treats ":" as a drive-letter separator, not for security.
+      const filenamePart = (v: string): string => sanitizeMimeFilename(v).replace(/:/g, "-");
+      const filename = from || to ? `denik-${from ? filenamePart(from) : "zacatek"}-${to ? filenamePart(to) : "ted"}.csv` : "denik-export.csv";
+      return new Response(csv, {
+        headers: {
+          "content-type": "text/csv; charset=utf-8",
+          "content-disposition": `attachment; filename="${filename}"`,
+          "cache-control": "no-store",
+          ...(truncated ? { "x-audit-csv-truncated": "true" } : {}),
+        },
+      });
     }
 
     // Shared append-only trail for remote hosts (celek D2, docs/NAVRHOVY-LIST-farma.md "žádný Worker nesahá do cizí DB"):
