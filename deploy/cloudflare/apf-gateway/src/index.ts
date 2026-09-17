@@ -60,6 +60,7 @@ import { COW_WORKSHOP, describeModels, gatewayCatalog, modelAdapterFor, wirePlat
 import { runSelfTest, requiredTestsFor, selfTestCapabilityForTick, SELF_TEST_CAPABILITIES, SELF_TEST_WORKFLOW_ID } from "./self-test.js";
 import { newSession, sendMessage, type WorkshopSession } from "./workshop.js";
 import { D1_AUDIT_DDL, D1_EVIDENCE_DDL, d1Sql, DDL, evidenceMirrorOf, evidenceStoreOf, SqliteArtifacts, SqliteAudit, SqliteJournal, SqliteReviewTaskStore } from "./store.js";
+import { registerDerived, type DerivedArtifactRegistration, type RegisterDerivedResult } from "./artifact-registration.js";
 import { createPrivateKey, createPublicKey } from "node:crypto";
 import { verifyEvidence, type Evidence } from "../../../../src/platform/evidence.js";
 import { mirrorEvidence } from "../../../../src/platform/evidence-mirror.js";
@@ -817,6 +818,21 @@ export class WorkflowInstance extends DurableObject<Env> {
   artifact(artifactId: string): { artifactId: string; tenantId: string; sha256: string; bytes: string; contentType?: string } | null {
     const a = this.artifacts.get(artifactId);
     return a ? { artifactId: a.artifactId, tenantId: a.tenantId, sha256: a.sha256, bytes: a.bytes, ...(a.contentType ? { contentType: a.contentType } : {}) } : null;
+  }
+
+  /**
+   * Write counterpart of artifact() above, for a remote executor host that derived an artifact out-of-process and
+   * already copied its bytes to R2 itself (apf-document-host/src/artifact-relay.ts): registers it into THIS
+   * instance's own artifact store under the id the host already minted, so a later GET .../artifact/:id (from
+   * apf-email-executor, say) can resolve its tenant. Fixes RESOURCE_TENANT_UNRESOLVED on the notify step (found live
+   * on farm-bass443, every mail-intake instance, all day 2026-09-17): document.stamp's derived artifact was never
+   * registered back here at all. Same trust model as artifact() (reached only over the GATEWAY-internal Fetcher
+   * binding), plus the checks in registerDerived() itself (GW-ARTIFACT-REG-001): a remote host cannot plant an
+   * artifact into an instance that doesn't exist, claim a tenantId that contradicts this instance's real tenant, or
+   * claim a derivedFrom this instance never held under that tenant.
+   */
+  registerDerivedArtifact(input: DerivedArtifactRegistration): RegisterDerivedResult {
+    return registerDerived(this.artifacts, this.journal.list()[0]?.tenantId, input);
   }
 
   /**
@@ -1881,6 +1897,22 @@ export default {
       const artifact = await stub.artifact(artifactRoute[2] as string);
       if (!artifact) return Response.json({ error: "NOT_FOUND", artifactId: artifactRoute[2] }, { status: 404 });
       return Response.json(artifact);
+    }
+
+    // Write counterpart of the read-only route above: a remote executor host (apf-document-host) registers an
+    // artifact it derived out-of-process and already copied to R2 itself, so this instance's own store — the only
+    // place the GET route above can answer from — knows about it too (the notify-step fix, GW-ARTIFACT-REG-001).
+    // Same trust model as the GET route (internal Fetcher binding only); ownership is still checked inside the DO.
+    const registerArtifactRoute = /^\/workflow\/(wf-[A-Za-z0-9]+)\/artifact$/.exec(url.pathname);
+    if (registerArtifactRoute && request.method === "POST") {
+      const body = (await request.json().catch(() => undefined)) as Partial<DerivedArtifactRegistration> | undefined;
+      if (!body?.artifactId || !body.tenantId || !body.sha256 || !body.contentType || typeof body.byteLength !== "number" || !body.location || !body.receivedFrom) {
+        return Response.json({ error: "BAD_REQUEST", message: "expected {artifactId, tenantId, sha256, contentType, byteLength, location, receivedFrom, derivedFrom?, name?}" }, { status: 400 });
+      }
+      const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(registerArtifactRoute[1] as string));
+      const result = await stub.registerDerivedArtifact(body as DerivedArtifactRegistration);
+      if (!result.ok) return Response.json({ error: result.reason }, { status: result.reason === "INSTANCE_NOT_FOUND" ? 404 : 403 });
+      return Response.json(result.artifact, { status: 201 });
     }
 
     // The stamped derivative's bytes never travel back in the dispatch result (only its id/hash do, payloadFor() in

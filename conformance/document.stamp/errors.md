@@ -8,6 +8,7 @@
 | claimed hash differs from the stored original | `ARTIFACT_HASH_MISMATCH` | SECURITY | false | false | handler |
 | documentType without `validation.status: passed` from `document-validator` | `VALIDATION_EVIDENCE_MISSING` | POLICY | false | false | handler |
 | DMS rejects the request (authentication, 4xx) | `DMS_REJECTED` | DEPENDENCY | true | false | handler |
+| derived artifact could not be relayed to the gateway (R2 write or registration failed) — found live on farm-bass443, every mail-intake instance, 2026-09-17 (RESOURCE_TENANT_UNRESOLVED on the later notify step); retryable so the idempotency reservation is released, not resolved, and the next attempt re-derives and re-relays | `ARTIFACT_RELAY_FAILED` | DEPENDENCY | true | false | handler |
 | `notValidAfter` passed by more than 30 s | `COMMAND_EXPIRED` | POLICY | false | true | host |
 | capability not served by this host, or actor without scope | `CAPABILITY_NOT_ALLOWED` | SECURITY | false | false | host, router |
 | handler resolves a credential reference that is not its own | `CREDENTIAL_DENIED` | SECURITY | false | false | host |

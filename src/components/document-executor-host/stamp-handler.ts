@@ -61,6 +61,29 @@ export function createStampHandler(deps: StampDeps): HostHandlerSpec {
         return failed(capabilityError("DMS_REJECTED", "DEPENDENCY", true, "DMS rejected the stamp request"));
       }
       const derived = deps.artifacts.derive(art.artifactId, out.bytes, descriptor.module);
+      // The derived artifact must be safe to look up by id BEFORE this returns SUCCEEDED: ExecutorHost commits a
+      // SUCCEEDED outcome to the idempotency ledger the instant this function returns (executor-host.ts step 9-10),
+      // strictly before any /dispatch-level check runs, and a later retry under the same idempotencyKey replays
+      // that cached outcome without ever calling this handler again. So awaiting the relay only at the response
+      // boundary (a first attempt at fixing this) leaves a retry-after-relay-failure permanently poisoned: the
+      // ledger would replay a SUCCEEDED with a stampedArtifactId nothing downstream can ever resolve. Awaiting it
+      // HERE, before deciding the outcome, means a relay failure becomes a genuine handler FAILED — ExecutorHost's
+      // existing release()-on-FAILED path (not resolve()) leaves the reservation retryable, so the next attempt
+      // re-runs this handler (and derive()) from scratch instead of replaying a poisoned success. Fixes
+      // RESOURCE_TENANT_UNRESOLVED on mail-intake's notify step, found live on farm-bass443, every instance, all
+      // day 2026-09-17.
+      if (deps.artifacts.flush) {
+        try {
+          await deps.artifacts.flush();
+        } catch (e) {
+          return failed(
+            capabilityError("ARTIFACT_RELAY_FAILED", "DEPENDENCY", true, "derived artifact could not be relayed to the gateway", {
+              artifactId: derived.artifactId,
+              detail: e instanceof Error ? e.message : String(e),
+            }),
+          );
+        }
+      }
       return {
         status: "SUCCEEDED",
         payload: payloadFor(art.artifactId, art.sha256, derived.artifactId, derived.sha256, stampText, out.ref),
@@ -78,6 +101,16 @@ export function createStampHandler(deps: StampDeps): HostHandlerSpec {
       const art = deps.artifacts.get(p.artifactId);
       if (!stored || !art) return { status: "UNKNOWN" };
       const derived = deps.artifacts.derive(art.artifactId, stored.bytes, descriptor.module);
+      // Same reasoning as run() above: the relay must settle before this reports SUCCEEDED, or
+      // reconcilerFor() (executor-host.ts) resolves the idempotency ledger with an artifact nobody can look up.
+      // FAILED (not UNKNOWN) releases the reservation so the write intent stays retryable under the same key.
+      if (deps.artifacts.flush) {
+        try {
+          await deps.artifacts.flush();
+        } catch {
+          return { status: "FAILED" };
+        }
+      }
       const stampText = stored.bytes.slice(stored.bytes.lastIndexOf("--- ") + 4, stored.bytes.lastIndexOf(" ---"));
       return { status: "SUCCEEDED", payload: payloadFor(art.artifactId, art.sha256, derived.artifactId, derived.sha256, stampText, stored.ref) };
     },

@@ -6,10 +6,18 @@
 // any code: (1) the handlers read the document's bytes synchronously from ArtifactWriter/ArtifactReader, but this Worker
 // has no local store — it pre-fetches the one artifact it needs from the gateway (GET /workflow/:id/artifact/:id) BEFORE
 // building the Router, then hands the router a synchronous single-artifact reader; a derived artifact (the stamp) is
-// likewise computed synchronously and copied to R2 afterwards via waitUntil, never awaited inline. (2) the gateway's
-// public signing key must be known ahead of time: SIGNING_PUBLIC_KEYS (a var, populated from farm.json's
-// $signingPublicKeys by scripts/farm-config.mjs) is the only source, so an installation without a real, persisted
-// GATEWAY_SIGNING_KEY (local-fakes) cannot be verified against here — by design, not an oversight.
+// likewise computed synchronously in memory (SingleArtifactStore.derive()), but — since document.stamp's derived
+// artifact was found live on farm-bass443 to never reach the gateway at all when its R2 copy ran on ctx.waitUntil alone
+// (RESOURCE_TENANT_UNRESOLVED on the notify step, every mail-intake instance, all day 2026-09-17) — every derive() also
+// starts relaying that artifact (R2 + gateway registration, artifact-relay.ts) immediately, and stamp-handler.ts awaits
+// SingleArtifactStore.flush() INSIDE the handler, before it returns SUCCEEDED (see artifacts.ts's ArtifactWriter.flush()
+// and stamp-handler.ts for why that has to happen there and not only here: ExecutorHost commits a SUCCEEDED outcome to
+// its idempotency ledger the instant the handler returns, before this file ever gets to look at the result). This file
+// still awaits flush() again right before responding (settleRelayOrFail) as a second, independent guarantee the HTTP
+// response is never sent mid-relay — a no-op when the handler already did it. (2) the gateway's public signing key must
+// be known ahead of time: SIGNING_PUBLIC_KEYS (a var, populated from farm.json's $signingPublicKeys by
+// scripts/farm-config.mjs) is the only source, so an installation without a real, persisted GATEWAY_SIGNING_KEY
+// (local-fakes) cannot be verified against here — by design, not an oversight.
 import { createPublicKey } from "node:crypto";
 import { installation } from "apf:installation";
 import { HttpArchiveAdapter } from "../../../../src/adapters/archive.js";
@@ -32,6 +40,7 @@ import { KeyRegistry } from "../../../../src/platform/signing.js";
 import { transportFailure } from "../../../../src/platform/transport.js";
 import type { DispatchEnvelope } from "../../../../src/platform/types.js";
 import { GATEWAY_ORIGIN, RelayAudit } from "./relay-audit.js";
+import { relayDerivedArtifact, settleRelayOrFail } from "./artifact-relay.js";
 import { IdempotencyLedger } from "./idempotency-ledger.js";
 
 export { IdempotencyLedger };
@@ -111,15 +120,21 @@ async function fetchArtifact(gateway: Fetcher, workflowId: string, artifactId: s
 
 /**
  * Synchronous ArtifactReader/Writer over exactly one pre-fetched artifact (W21). `derive()` computes the new artifact
- * in memory (the handler needs its id and hash immediately) and copies the bytes to R2 in the background; nothing here
- * ever awaits network I/O inline, so the synchronous Router/ExecutorHost chain never has to.
+ * in memory (the handler needs its id and hash immediately) so the synchronous Router/ExecutorHost chain never has
+ * to await it, but it also immediately STARTS relaying that artifact (R2 write + gateway registration,
+ * artifact-relay.ts) in the background — `flush()` is how a caller (stamp-handler.ts, inline, before it decides
+ * SUCCEEDED vs FAILED — see artifacts.ts's ArtifactWriter.flush() doc comment for why it must happen there) awaits
+ * whatever relay(s) are outstanding. `flush()` never starts a new relay, only awaits the ones `derive()` already
+ * started, so calling it more than once (the handler, and then this file's own backstop before responding) is safe.
  */
 class SingleArtifactStore implements ArtifactWriter {
   private readonly derived = new Map<string, Artifact>();
+  private readonly relaying: Promise<void>[] = [];
   constructor(
     private readonly original: FetchedArtifact | undefined,
+    private readonly workflowId: string,
     private readonly bucket: R2Bucket,
-    private readonly ctx: ExecutionContext,
+    private readonly gateway: Fetcher,
   ) {}
 
   get(artifactId: string): Artifact | undefined {
@@ -142,18 +157,18 @@ class SingleArtifactStore implements ArtifactWriter {
     if (!orig) throw new Error(`original ${originalId} not found`);
     const a: Artifact = { artifactId: newId("art"), tenantId: orig.tenantId, sha256: sha256(bytes), bytes, receivedAt: new Date().toISOString(), receivedFrom: producer, derivedFrom: originalId, producer, contentType };
     this.derived.set(a.artifactId, a);
-    const key = `derived/${a.tenantId}/${a.sha256}`;
-    this.ctx.waitUntil(
-      this.bucket
-        .head(key)
-        .then((exists) => (exists ? undefined : this.bucket.put(key, a.bytes, { httpMetadata: { contentType }, customMetadata: { artifactId: a.artifactId, derivedFrom: originalId, producer } })))
-        .catch(() => undefined),
-    );
+    this.relaying.push(relayDerivedArtifact(a, this.workflowId, this.bucket, this.gateway));
     return a;
   }
 
   put(): Artifact {
     throw new Error("apf-document-host never ingests a new original; it only derives from one the gateway already holds");
+  }
+
+  /** Awaits every relay derive() has started so far (empty/resolved instantly when nothing was derived, e.g.
+   * document.archive). Throws (RelayFailedError, from artifact-relay.ts) if any relay failed. */
+  async flush(): Promise<void> {
+    await Promise.all(this.relaying);
   }
 }
 
@@ -222,7 +237,7 @@ export default {
       try {
         const artifactId = artifactIdOf(envelope);
         const fetched = artifactId && envelope.message.workflowId ? await fetchArtifact(env.GATEWAY, envelope.message.workflowId, artifactId) : undefined;
-        const artifacts = new SingleArtifactStore(fetched, env.ARTIFACTS, ctx);
+        const artifacts = new SingleArtifactStore(fetched, envelope.message.workflowId ?? "", env.ARTIFACTS, env.GATEWAY);
 
         const credentials = new CredentialResolver(
           credentialTable(installation, secretsOf(env), { [host.STAMP_HANDLER_ID]: [host.STAMP_CREDENTIAL], [archiveHandler.ARCHIVE_HANDLER_ID]: [archiveHandler.ARCHIVE_CREDENTIAL] }),
@@ -249,9 +264,15 @@ export default {
         });
 
         const result = await router.route(envelope);
-        console.log(`[apf-document-host] /dispatch done ${envelope.message.capability} status=${result.status} correlationId=${envelope.message.correlationId} (${Date.now() - t0}ms)`);
+        // stamp-handler.ts already awaited artifacts.flush() itself before returning SUCCEEDED (that's the fix for
+        // RESOURCE_TENANT_UNRESOLVED on the notify step — see artifacts.ts's ArtifactWriter.flush() doc comment for
+        // why it has to happen there, before ExecutorHost's idempotency commit, not only here). This call is a
+        // second, independent guarantee — never a re-relay (flush() only awaits promises already started) — that
+        // the HTTP response itself is never sent while anything is still genuinely in flight.
+        const finalResult = await settleRelayOrFail(result, () => artifacts.flush(), envelope.message);
+        console.log(`[apf-document-host] /dispatch done ${envelope.message.capability} status=${finalResult.status} correlationId=${envelope.message.correlationId} (${Date.now() - t0}ms)`);
         await audit.flush();
-        return Response.json(result);
+        return Response.json(finalResult);
       } catch (e) {
         console.error(`[apf-document-host] /dispatch wiring threw for ${envelope.message.capability} correlationId=${envelope.message.correlationId} (${Date.now() - t0}ms): ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
         await audit.flush();

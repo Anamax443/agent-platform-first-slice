@@ -135,7 +135,15 @@ const rowToArtifact = (r: Record<string, SqlStorageValue>): Artifact => ({
   ...(r.name ? { name: r.name as string } : {}),
 });
 
-/** A binary original that already sits in R2: the object keeps metadata only (`bytes` empty, `location` set). */
+/**
+ * A binary original that already sits in R2: the object keeps metadata only (`bytes` empty, `location` set). Also
+ * reused for an artifact a remote executor host derived out-of-process (apf-document-host's document.stamp) and
+ * copied to R2 itself — that caller already minted `artifactId` (it returned it to the workflow step, e.g.
+ * document.stamp's stampedArtifactId) and knows which original it derived it from (`derivedFrom`), so both are
+ * optional inputs here rather than always freshly assigned (RESOURCE_TENANT_UNRESOLVED notify-step bug, found live
+ * on farm-bass443 2026-09-17: a derived artifact nobody ever registered back here could never be found by
+ * GET /workflow/:id/artifact/:id, so email.send's resourceTenant() 404d every single time).
+ */
 export interface ExternalOriginal {
   tenantId: string;
   receivedFrom: string;
@@ -144,6 +152,9 @@ export interface ExternalOriginal {
   byteLength: number;
   location: string;
   name?: string;
+  /** Pre-assigned by the caller (a remote host that already returned this id to a workflow step); minted here when absent. */
+  artifactId?: string;
+  derivedFrom?: string;
 }
 
 /** Immutable originals and derivations (EVD-001): insert-only, a second write to an id is a programming error. */
@@ -170,7 +181,7 @@ export class SqliteArtifacts implements ArtifactWriter {
 
   putExternal(input: ExternalOriginal): Artifact {
     const a: Artifact = {
-      artifactId: newId("art"),
+      artifactId: input.artifactId ?? newId("art"),
       tenantId: input.tenantId,
       sha256: input.sha256,
       bytes: "",
@@ -179,6 +190,7 @@ export class SqliteArtifacts implements ArtifactWriter {
       contentType: input.contentType,
       byteLength: input.byteLength,
       location: input.location,
+      ...(input.derivedFrom ? { derivedFrom: input.derivedFrom } : {}),
       ...(input.name ? { name: input.name } : {}),
     };
     this.store(a);

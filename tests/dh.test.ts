@@ -7,7 +7,7 @@
 // same one a router-side reader would be handed once that transfer exists.
 import { describe, expect, it } from "vitest";
 import { UnknownOutcomeError } from "../src/platform/errors.js";
-import { ArtifactStore } from "../src/platform/artifacts.js";
+import { ArtifactStore, type Artifact, type ArtifactWriter } from "../src/platform/artifacts.js";
 import { Audit } from "../src/platform/audit.js";
 import { FakeClock, iso, plus, MINUTE } from "../src/platform/clock.js";
 import { CredentialResolver } from "../src/platform/credentials.js";
@@ -19,7 +19,7 @@ import type { Policy } from "../src/platform/policy.js";
 import { Router } from "../src/platform/router.js";
 import { generateKeyPair, KeyRegistry, Signer } from "../src/platform/signing.js";
 import { RemoteHostTransport } from "../src/platform/transport.js";
-import type { MessageEnvelope } from "../src/platform/types.js";
+import type { MessageEnvelope, ResultEnvelope, TrustedContext } from "../src/platform/types.js";
 import * as archiveHandler from "../src/components/document-executor-host/archive-handler.js";
 import * as host from "../src/components/document-executor-host/stamp-handler.js";
 import { world } from "./harness/fakes-world.js";
@@ -307,5 +307,293 @@ describe("DH-AUDIT-RELAY-001 RelayAudit.flush() never lets the caller move on wh
     settle.forEach((resolve) => resolve());
     await flushDone;
     expect(flushed).toBe(true);
+  });
+});
+
+describe("DH-ARTIFACT-RELAY-001 relayDerivedArtifact/finalizeAfterRelay genuinely await the R2 write and the gateway registration before the caller can proceed (fixes RESOURCE_TENANT_UNRESOLVED on mail-intake's notify step, found live on farm-bass443, every instance, all day 2026-09-17: document.stamp's derived artifact was copied to R2 via ctx.waitUntil alone and never registered with the gateway at all, so email.send's later GET /workflow/:id/artifact/:stampedArtifactId 404d every time)", () => {
+  const derivedArtifact = (overrides: Partial<Artifact> = {}): Artifact => ({
+    artifactId: "art-stamped-001",
+    tenantId: "tenant-a",
+    sha256: "sha-stamped",
+    bytes: "faktura\n--- STAMPED ---",
+    receivedAt: START,
+    receivedFrom: "document-executor-host",
+    derivedFrom: "art-original-001",
+    producer: "document-executor-host",
+    contentType: "text/plain; charset=utf-8",
+    ...overrides,
+  });
+
+  const resultEnvelope = (status: "SUCCEEDED" | "FAILED"): ResultEnvelope => ({
+    messageId: "res-1",
+    inReplyTo: "msg-1",
+    correlationId: "cor-1",
+    workflowId: "wf-1",
+    status,
+    capability: "document.stamp",
+    capabilityVersion: "1",
+    schemaVersion: "1.0",
+    completedAt: START,
+    ...(status === "SUCCEEDED" ? { payload: { stampedArtifactId: "art-stamped-001" } } : { error: { code: "X", class: "BUSINESS" as const, retryable: false, message: "x" } }),
+  });
+
+  const message: MessageEnvelope = {
+    messageId: "msg-1",
+    correlationId: "cor-1",
+    workflowId: "wf-1",
+    type: "command",
+    capability: "document.stamp",
+    capabilityVersion: "1",
+    schemaVersion: "1.0",
+    createdAt: START,
+    payload: {},
+  };
+
+  it("relayDerivedArtifact does not resolve until the gateway registration POST has settled (not just handed to something that forgets it)", async () => {
+    const settle: Array<() => void> = [];
+    const posted: unknown[] = [];
+    const fakeGateway: import("../deploy/cloudflare/apf-document-host/src/relay-audit.js").GatewayFetcher = {
+      fetch: (_url: string, init?: RequestInit) => {
+        posted.push(init?.body ? JSON.parse(String(init.body)) : undefined);
+        return new Promise<Response>((resolve) => settle.push(() => resolve(new Response(null, { status: 201 }))));
+      },
+    };
+    const puts: Array<{ key: string; value: string }> = [];
+    const fakeBucket = {
+      head: async () => undefined, // not yet in R2
+      put: async (key: string, value: string) => {
+        puts.push({ key, value });
+        return undefined;
+      },
+    };
+
+    const { relayDerivedArtifact } = await import("../deploy/cloudflare/apf-document-host/src/artifact-relay.js");
+    let settled = false;
+    const relayDone = relayDerivedArtifact(derivedArtifact(), "wf-1", fakeBucket, fakeGateway).then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(puts).toHaveLength(1); // the R2 write already happened...
+    expect(settled).toBe(false); // ...but the caller must NOT be able to proceed while the gateway POST is still pending
+
+    settle.forEach((resolve) => resolve());
+    await relayDone;
+    expect(settled).toBe(true);
+    expect(posted).toEqual([{ artifactId: "art-stamped-001", tenantId: "tenant-a", sha256: "sha-stamped", contentType: "text/plain; charset=utf-8", byteLength: expect.any(Number), location: "derived/tenant-a/sha-stamped", receivedFrom: "document-executor-host", derivedFrom: "art-original-001" }]);
+  });
+
+  it("dedups against R2: when bucket.head() already finds the key, put() is never called, but the gateway is still registered", async () => {
+    const { relayDerivedArtifact } = await import("../deploy/cloudflare/apf-document-host/src/artifact-relay.js");
+    let putCalled = false;
+    const fakeBucket = {
+      head: async () => ({ key: "already-there" }),
+      put: async () => {
+        putCalled = true;
+      },
+    };
+    let registered = false;
+    const fakeGateway = { fetch: async () => { registered = true; return new Response(null, { status: 201 }); } };
+
+    await relayDerivedArtifact(derivedArtifact(), "wf-1", fakeBucket, fakeGateway);
+    expect(putCalled).toBe(false);
+    expect(registered).toBe(true);
+  });
+
+  it("settleRelayOrFail: a failing flush() turns a SUCCEEDED router result into a retryable, DEPENDENCY-class FAILED one — the dispatch-level backstop for whatever a handler did not already catch", async () => {
+    const { settleRelayOrFail } = await import("../deploy/cloudflare/apf-document-host/src/artifact-relay.js");
+    const succeeded = resultEnvelope("SUCCEEDED");
+    const outcome = await settleRelayOrFail(succeeded, () => Promise.reject(new Error("relay unreachable")), message);
+
+    expect(outcome.status).toBe("FAILED");
+    expect(outcome.error?.code).toBe("DEPENDENCY_UNAVAILABLE");
+    expect(outcome.error?.class).toBe("DEPENDENCY");
+    expect(outcome.error?.retryable).toBe(true); // so the gateway orchestrator's technicalRetries actually retries document.stamp
+    expect(outcome.inReplyTo).toBe(message.messageId);
+    expect(outcome.correlationId).toBe(message.correlationId);
+    // The original SUCCEEDED result (with its now-unreachable stampedArtifactId) must not survive to be handed back as fact.
+    expect(outcome).not.toBe(succeeded);
+  });
+
+  it("settleRelayOrFail: a successful flush() leaves a SUCCEEDED result untouched", async () => {
+    const { settleRelayOrFail } = await import("../deploy/cloudflare/apf-document-host/src/artifact-relay.js");
+    const succeeded = resultEnvelope("SUCCEEDED");
+    const outcome = await settleRelayOrFail(succeeded, () => Promise.resolve(), message);
+    expect(outcome).toBe(succeeded);
+  });
+
+  it("settleRelayOrFail: a FAILED router result is returned untouched without even calling flush() — relaying only ever gates a SUCCEEDED result (a handler that already failed for its own reason must not be masked, or re-triggered into a relay)", async () => {
+    const { settleRelayOrFail } = await import("../deploy/cloudflare/apf-document-host/src/artifact-relay.js");
+    let flushCalled = false;
+    const failed = resultEnvelope("FAILED");
+    const outcome = await settleRelayOrFail(
+      failed,
+      () => {
+        flushCalled = true;
+        return Promise.resolve();
+      },
+      message,
+    );
+    expect(outcome).toBe(failed);
+    expect(flushCalled).toBe(false);
+  });
+});
+
+/** A handful of real Ed25519 keys the DH-ARTIFACT-RELAY-002 block below reuses across a few tests. */
+function signedReceiver(w: ReturnType<typeof world>, artifacts: ArtifactWriter, scopes: string[] = ["document.stamp"]) {
+  const clock = new FakeClock(START);
+  const gatewayClock = new FakeClock(START);
+  const audit = new Audit(clock);
+  const keyPair = generateKeyPair();
+  const registry = new KeyRegistry();
+  registry.add({ keyId: "k1", publicKey: keyPair.publicKey, validFrom: iso(new Date(0)) });
+  const identities = new IdentityProvider([{ actorId: "svc-test", actorType: "service", tenantId: "t1", scopes, authStrength: "client-credentials" }]);
+  const gateway = new Gateway({ identities, signer: new Signer("k1", keyPair.privateKey), clock: gatewayClock });
+  const credentials = new CredentialResolver(
+    { [host.STAMP_HANDLER_ID]: { [host.STAMP_CREDENTIAL]: "dms-secret" }, [archiveHandler.ARCHIVE_HANDLER_ID]: { [archiveHandler.ARCHIVE_CREDENTIAL]: "archive-secret" } },
+    audit,
+  );
+  const executor = new ExecutorHost({ hostId: host.descriptor.module, clock, audit, credentials });
+  executor.register(host.createStampHandler({ artifacts, dms: w.dms, credentials, clock }));
+  executor.register(archiveHandler.createArchiveHandler({ artifacts, archive: w.archive, credentials, clock }));
+  const grants = (capability: string): Policy => ({
+    policyRef: `test.${capability}`,
+    capability,
+    capabilityVersion: "1",
+    owner: "test",
+    grants: [{ actorId: "svc-test", scopes: [capability], tenants: ["t1"] }],
+    failClosed: true,
+  });
+  const router = new Router({ registry, clock, audit, lifecycle: new LifecycleRegistry({ [host.descriptor.module]: "ACTIVE" }) });
+  router.register({
+    descriptor: host.descriptor as never,
+    policies: { "document.stamp": grants("document.stamp"), "document.archive": grants("document.archive") },
+    capabilities: [
+      { name: "document.stamp", version: "1", inputSchema: host.stampInputSchema, handler: executor.handlerFor("document.stamp") },
+      { name: "document.archive", version: "1", inputSchema: host.archiveInputSchema, handler: executor.handlerFor("document.archive") },
+    ],
+  });
+  return { clock, gateway, executor, router };
+}
+
+describe("DH-ARTIFACT-RELAY-002 stamp-handler.ts awaits ArtifactWriter.flush() INSIDE the handler, before deciding SUCCEEDED vs FAILED (the blocker found in the 2026-09-17 review of the first attempt at this fix: awaiting the relay only right before the /dispatch HTTP response is too late — ExecutorHost had already committed a SUCCEEDED outcome to the idempotency ledger inside router.route(), before any dispatch-level check ran; a retry under the same idempotencyKey then replayed that stale, never-registered outcome from the ledger cache forever, without ever calling the handler — hence derive() — again)", () => {
+  it("a rejecting flush() turns what would have been a SUCCEEDED document.stamp outcome into a retryable, DEPENDENCY-class FAILED one, straight out of the handler — before ExecutorHost ever sees a SUCCEEDED outcome to commit", async () => {
+    const w = world();
+    const clock = new FakeClock(START);
+    const inner = new ArtifactStore(clock);
+    const art = inner.put({ tenantId: "t1", bytes: "faktura 123", receivedFrom: "test" });
+    let flushCalls = 0;
+    const artifacts: ArtifactWriter = {
+      get: (id) => inner.get(id),
+      put: (input) => inner.put(input),
+      derive: (originalId, bytes, producer) => inner.derive(originalId, bytes, producer),
+      flush: async () => {
+        flushCalls += 1;
+        throw new Error("gateway unreachable (simulated)");
+      },
+    };
+    const credentials = new CredentialResolver({ [host.STAMP_HANDLER_ID]: { [host.STAMP_CREDENTIAL]: "dms-secret" } }, new Audit(clock));
+    const spec = host.createStampHandler({ artifacts, dms: w.dms, credentials, clock });
+
+    const message = stampMessage(art.artifactId, art.sha256, clock);
+    const context: TrustedContext = {
+      dispatchId: newId("disp"),
+      tenantId: "t1",
+      actorId: "svc-test",
+      actorType: "service",
+      scopes: ["document.stamp"],
+      sourceComponent: "test",
+      authStrength: "client-credentials",
+      authenticatedAt: iso(clock.now()),
+      expiresAt: iso(plus(clock.now(), 30 * MINUTE)),
+    };
+    // run() resolves its credential via CredentialResolver.resolve(), which only works inside runAs()'s execution
+    // context — the same wrapping ExecutorHost.execute() does in production (executor-host.ts) before calling spec.run().
+    const outcome = await credentials.runAs(host.STAMP_HANDLER_ID, () => spec.run({ message, context }));
+
+    expect(flushCalls).toBe(1); // derive() ran and flush() was actually awaited, not skipped
+    expect(outcome.status).toBe("FAILED");
+    if (outcome.status !== "FAILED") throw new Error("unreachable");
+    expect(outcome.error.code).toBe("ARTIFACT_RELAY_FAILED");
+    expect(outcome.error.class).toBe("DEPENDENCY");
+    expect(outcome.error.retryable).toBe(true); // so ExecutorHost's own release()-on-FAILED path (not resolve()) leaves the reservation retryable
+  });
+
+  it("full ExecutorHost + Router loop: a relay failure on attempt 1 does NOT poison the idempotency ledger — the SAME idempotencyKey retried after the flush starts succeeding re-runs the handler (a fresh derive()) instead of replaying a cached, never-registered SUCCEEDED outcome (the actual end-to-end regression for the blocker: this is exactly the interaction the first attempt's tests never exercised)", async () => {
+    const w = world();
+    const inner = new ArtifactStore(new FakeClock(START));
+    const art = inner.put({ tenantId: "t1", bytes: "faktura 123", receivedFrom: "test" });
+    let flushCalls = 0;
+    let failNextFlush = true;
+    const derivedIds: string[] = [];
+    const artifacts: ArtifactWriter = {
+      get: (id) => inner.get(id),
+      put: (input) => inner.put(input),
+      derive: (originalId, bytes, producer) => {
+        const d = inner.derive(originalId, bytes, producer);
+        derivedIds.push(d.artifactId);
+        return d;
+      },
+      flush: async () => {
+        flushCalls += 1;
+        if (failNextFlush) throw new Error("gateway unreachable (simulated, attempt 1 only)");
+      },
+    };
+    const receiver = signedReceiver(w, artifacts);
+    const sharedIdempotencyKey = newId("key");
+    const dispatchAttempt = () => {
+      const msg = { ...stampMessage(art.artifactId, art.sha256, receiver.clock), idempotencyKey: sharedIdempotencyKey };
+      return receiver.router.route(receiver.gateway.dispatch(msg, "svc-test"));
+    };
+
+    // Attempt 1: the relay fails. The handler must report FAILED/retryable, and — critically — the idempotency
+    // reservation must be released, not resolved to a cached SUCCEEDED (this is the property the first fix attempt
+    // got wrong: it awaited the relay only at the /dispatch response boundary, after ExecutorHost had already
+    // committed the ledger inside router.route()).
+    const attempt1 = await dispatchAttempt();
+    expect(attempt1.status).toBe("FAILED");
+    expect(attempt1.error?.code).toBe("ARTIFACT_RELAY_FAILED");
+    expect(attempt1.error?.retryable).toBe(true);
+    expect(await receiver.executor.remembered("t1", "document.stamp", sharedIdempotencyKey)).toBeUndefined(); // no poisoned DONE record
+
+    // Attempt 2 (the orchestrator's technical retry, same idempotencyKey): the relay now succeeds. If the ledger
+    // had been poisoned by attempt 1, this would replay the cached FAILED (or a stale SUCCEEDED with attempt 1's
+    // never-registered artifactId) without ever calling derive() again — flushCalls would still read 1.
+    failNextFlush = false;
+    const attempt2 = await dispatchAttempt();
+    expect(attempt2.status).toBe("SUCCEEDED");
+    expect(flushCalls).toBe(2); // the handler genuinely ran again — not served from the idempotency cache
+    expect(derivedIds).toHaveLength(2); // derive() ran twice: attempt 1's (unregistered, abandoned) derivation and attempt 2's real one
+    expect(attempt2.payload?.stampedArtifactId).toBe(derivedIds[1]); // the SUCCEEDED result carries attempt 2's artifact, never attempt 1's orphaned one
+    expect(await receiver.executor.remembered("t1", "document.stamp", sharedIdempotencyKey)).toMatchObject({ status: "SUCCEEDED" });
+  });
+
+  it("document.archive derives nothing, so its flush() is never even reached — only stamp-handler.ts's two branches call artifacts.derive() (archive-handler.ts never does), confirmed by grep and proven here with a flush() that would throw if it were ever called", async () => {
+    const w = world();
+    const inner = new ArtifactStore(new FakeClock(START));
+    const art = inner.put({ tenantId: "t1", bytes: "faktura 123", receivedFrom: "test" });
+    const artifacts: ArtifactWriter = {
+      get: (id) => inner.get(id),
+      put: (input) => inner.put(input),
+      derive: (originalId, bytes, producer) => inner.derive(originalId, bytes, producer),
+      flush: async () => {
+        throw new Error("flush() must never be called for document.archive — it derives nothing");
+      },
+    };
+    const receiver = signedReceiver(w, artifacts, ["document.archive"]);
+    const message: MessageEnvelope = {
+      messageId: newId("msg"),
+      correlationId: newId("cor"),
+      type: "command",
+      capability: "document.archive",
+      capabilityVersion: "1",
+      schemaVersion: "1",
+      idempotencyKey: newId("key"),
+      createdAt: iso(receiver.clock.now()),
+      notValidAfter: iso(plus(receiver.clock.now(), 30 * MINUTE)),
+      payload: { artifactId: art.artifactId, sha256: art.sha256 },
+    };
+    const result = await receiver.router.route(receiver.gateway.dispatch(message, "svc-test"));
+    expect(result.status).toBe("SUCCEEDED");
   });
 });

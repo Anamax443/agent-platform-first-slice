@@ -48,6 +48,24 @@ export interface ArtifactReader {
 export interface ArtifactWriter extends ArtifactReader {
   put(input: { tenantId: string; bytes: string; receivedFrom: string }): Artifact;
   derive(originalId: string, bytes: string, producer: string): Artifact;
+  /**
+   * Optional: settle whatever out-of-band replication the derive() calls made during this request need before a
+   * caller may treat their result as safe to hand back as fact. `derive()` itself stays synchronous (a handler
+   * needs the new artifact's id/hash immediately); an implementation with nothing to replicate (ArtifactStore,
+   * the gateway's SqliteArtifacts) simply omits this.
+   *
+   * apf-document-host's SingleArtifactStore is the one implementation that needs it: document.stamp's derived
+   * artifact has to reach the gateway (R2 + a registration call) before anything downstream can look it up by id.
+   * A handler that derives and is about to return SUCCEEDED MUST await this (when present) first, and turn a
+   * rejection into a FAILED outcome instead — see stamp-handler.ts. Awaiting it only at the /dispatch response
+   * boundary is NOT enough: ExecutorHost commits a SUCCEEDED outcome to the idempotency ledger the instant the
+   * handler returns (executor-host.ts, before any dispatch-level check runs), and a retry under the same
+   * idempotencyKey replays that cached outcome without ever calling the handler again — so a relay that failed
+   * after the handler already returned SUCCEEDED would poison the ledger permanently (RESOURCE_TENANT_UNRESOLVED
+   * on the notify step, found live on farm-bass443 every mail-intake instance 2026-09-17; the permanently-stuck
+   * variant of that bug was found in review the same day, before it ever reached production).
+   */
+  flush?(): Promise<void>;
 }
 
 /** Immutable original artifacts + derived artifacts with provenance (FOUNDATION-core §7, EVD-001). */
