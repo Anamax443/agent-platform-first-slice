@@ -132,6 +132,10 @@ export interface FarmModel {
   instanceLimit: number;
   instanceWindow: string;
   auditLog: AuditLogRow[];
+  /** Token/model usage for exactly the instances in `instances` above (index.ts modelUsageFor, targeted by
+   * workflow_id) — what Ohrada/Výsledek/Stáj step rows read for usageForStep(), so a step's own usage is never
+   * hidden just because other farm activity pushed it out of `auditLog`'s shared "last 50" window. */
+  usageLog: AuditLogRow[];
   /** Deník tab's own date-range picker (index.ts GET /farm ?denikFrom=&denikTo=, buildFarmModel) — the currently
    * active bounds, ISO 8601 date-ish strings, so the page can pre-fill the two date inputs and build the matching
    * GET /audit.csv?from=&to= export link. Both absent = no range picked, `auditLog` above is just the usual last
@@ -975,12 +979,12 @@ export function renderFarm(m: FarmModel): string {
   const teletnikGrid = penGridOf(teletnikCapabilities);
 
   // Owner's request 17.9.2026: "u každého kroku [vidět] použitý AI model a kolik spotřeboval tokenů" — matched
-  // against m.auditLog (the farm-wide recent window, already in scope) by workflowId + stepId + executionId,
-  // same discipline as stepsTable()'s per-instance usageFor() on the detail page. Best-effort: an instance old
-  // enough to have scrolled out of that window simply shows no usage line, same as a step that never called a
-  // model at all — never a wrong/stale number.
+  // against m.usageLog (index.ts modelUsageFor, targeted by workflow_id for exactly these instances, not the
+  // shared farm-wide window) by workflowId + stepId + executionId, same discipline as stepsTable()'s per-instance
+  // usageFor() on the detail page. Still returns undefined for a step that genuinely never called a model — never
+  // a wrong/stale number.
   const usageForStep = (workflowId: string, s: Instance["steps"][number]): AuditLogRow | undefined =>
-    m.auditLog.find(
+    m.usageLog.find(
       (r) =>
         r.workflowId === workflowId &&
         r.kind === "model-usage" &&

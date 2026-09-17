@@ -85,6 +85,7 @@ const model: FarmModel = {
   instanceLimit: 15,
   instanceWindow: "",
   auditLog: [{ at: "2026-09-09T08:00:00Z", kind: "state", workflowId: "wf-ok1", tenantId: "tenant-42", capability: "document.classify", details: {} }],
+  usageLog: [],
   inbox: { pending: [], failed: [], batchLimit: 20 },
   workflows: ["document-intake", "mail-intake"],
   models: { default: "llama-8b", choices: [{ key: "llama-8b", label: "Llama 8B", provider: "workers-ai", model: "@cf/meta/llama-3.1-8b", isDefault: true }] },
@@ -282,7 +283,7 @@ describe("PAGE-FARM-001 renderFarm() actually runs, not just typechecks", () => 
     expect(ohradaSection).toContain("3 / 1");
   });
 
-  it("Ohrada row shows which model ran the step and how many tokens it used (owner's request 17.9.2026: 'u každého kroku vidět použitý AI model a kolik spotřeboval tokenů') — even on a FAILED attempt, matched by stepId+executionId against m.auditLog", () => {
+  it("Ohrada row shows which model ran the step and how many tokens it used (owner's request 17.9.2026: 'u každého kroku vidět použitý AI model a kolik spotřeboval tokenů') — even on a FAILED attempt, matched by stepId+executionId against m.usageLog", () => {
     const withUsage: FarmModel = {
       ...model,
       now: "2026-09-17T07:00:00Z",
@@ -327,7 +328,7 @@ describe("PAGE-FARM-001 renderFarm() actually runs, not just typechecks", () => 
           ],
         },
       ],
-      auditLog: [
+      usageLog: [
         { at: "2026-09-17T06:06:07.900Z", kind: "model-usage", workflowId: "wf-usage1", tenantId: "tenant-42", capability: "document.classify", details: { stepId: "classify", executionId: "exec-usage-1", inputTokens: 842, outputTokens: 6 } },
         // a DIFFERENT executionId for the same stepId (a superseded retry) must never be picked up instead.
         { at: "2026-09-17T06:06:05.000Z", kind: "model-usage", workflowId: "wf-usage1", tenantId: "tenant-42", capability: "document.classify", details: { stepId: "classify", executionId: "exec-usage-STALE", inputTokens: 999, outputTokens: 999 } },

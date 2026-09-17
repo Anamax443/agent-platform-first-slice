@@ -6,6 +6,7 @@ import { AnthropicAdapter } from "../src/adapters/anthropic.js";
 import type { LlmAdapter, TokenUsage } from "../src/adapters/llm.js";
 import { WorkersAiAdapter, type WorkersAiBinding } from "../src/adapters/workers-ai.js";
 import { createDocumentClassifier } from "../src/components/document-classifier/handler.js";
+import { createInvoiceExtractor } from "../src/components/invoice-extractor/handler.js";
 import { ArtifactStore } from "../src/platform/artifacts.js";
 import { Audit } from "../src/platform/audit.js";
 import { FakeClock, iso, plus, MINUTE } from "../src/platform/clock.js";
@@ -13,7 +14,7 @@ import { newId } from "../src/platform/ids.js";
 import { LifecycleRegistry } from "../src/platform/lifecycle.js";
 import { Router, type RegisteredComponent } from "../src/platform/router.js";
 import { KeyRegistry } from "../src/platform/signing.js";
-import type { DispatchEnvelope, Handler, HandlerOutcome, MessageEnvelope, TrustedContext } from "../src/platform/types.js";
+import type { DispatchEnvelope, Handler, HandlerOutcome, MessageEnvelope, Provenance, TrustedContext } from "../src/platform/types.js";
 
 const START = "2026-09-17T08:00:00Z";
 
@@ -130,6 +131,20 @@ class FakeUsageModel implements LlmAdapter {
   }
 }
 
+/** Like FakeUsageModel, but reports usage and then throws — the MODEL_UNAVAILABLE path (17.9.2026 fix): tokens
+ * can be billed even when the call ultimately fails, and the model attempted should still be identifiable. */
+class FakeFailingModel implements LlmAdapter {
+  readonly modelId = "fake-failing-model-1";
+  readonly promptVersion = "test-1";
+
+  constructor(private readonly usage: TokenUsage) {}
+
+  async complete(_prompt: string, onUsage?: (u: TokenUsage) => void): Promise<string> {
+    onUsage?.(this.usage);
+    throw new Error("simulated network failure");
+  }
+}
+
 describe("document-classifier handler: HandlerOutcome.modelUsage (F2 unaffected — this only adds a sibling field)", () => {
   const TENANT = "t-model-usage";
 
@@ -205,6 +220,89 @@ describe("document-classifier handler: HandlerOutcome.modelUsage (F2 unaffected 
 
     expect(outcome.status).toBe("SUCCEEDED");
     expect(outcome.modelUsage).toBeUndefined();
+  });
+
+  it("a FAILED classification (model output outside the documentType allowlist) still carries provenance.modelId, not just modelUsage — /farm's model badge (page.ts modelIdNote) reads outcome.provenance, and until 17.9.2026 FAILED never set it at all", async () => {
+    const clock = new FakeClock(START);
+    const artifacts = new ArtifactStore(clock);
+    const artifact = artifacts.put({ tenantId: TENANT, bytes: "some ambiguous document text", receivedFrom: "test" });
+    const model = new FakeUsageModel({ inputTokens: 20, outputTokens: 4 }, "NOT_A_REAL_TYPE");
+    const handler = createDocumentClassifier({ artifacts, models: { llm: model }, clock });
+
+    const now = iso(clock.now());
+    const outcome = await handler({
+      message: {
+        messageId: newId("msg"),
+        correlationId: newId("cor"),
+        type: "command",
+        capability: "document.classify",
+        capabilityVersion: "1",
+        schemaVersion: "1",
+        idempotencyKey: newId("key"),
+        createdAt: now,
+        notValidAfter: iso(plus(clock.now(), MINUTE)),
+        payload: { artifactId: artifact.artifactId },
+      },
+      context: {
+        dispatchId: newId("dsp"),
+        tenantId: TENANT,
+        actorId: "svc-test",
+        actorType: "service",
+        scopes: ["document.classify"],
+        sourceComponent: "test-harness",
+        authenticatedAt: now,
+        expiresAt: iso(plus(clock.now(), MINUTE)),
+      },
+    });
+
+    expect(outcome.status).toBe("FAILED");
+    if (outcome.status === "FAILED") expect(outcome.error.code).toBe("MODEL_OUTPUT_NOT_ALLOWED");
+    expect(outcome.modelUsage).toEqual({ inputTokens: 20, outputTokens: 4 });
+    expect(outcome.provenance?.modelId).toBe("fake-usage-model-1");
+    expect(outcome.provenance?.promptVersion).toBe("test-1");
+  });
+});
+
+describe("invoice-extractor handler: FAILED outcomes carry provenance.modelId too (same fix as document-classifier)", () => {
+  const TENANT = "t-model-usage-invoice";
+
+  it("MODEL_UNAVAILABLE (the model call itself throws) still reports which model was attempted and any usage billed before the failure", async () => {
+    const clock = new FakeClock(START);
+    const artifacts = new ArtifactStore(clock);
+    const artifact = artifacts.put({ tenantId: TENANT, bytes: "Faktura c. 123, DIC CZ00000000, castka 1000 Kc", receivedFrom: "test" });
+    const model = new FakeFailingModel({ inputTokens: 15, outputTokens: 0 });
+    const handler = createInvoiceExtractor({ artifacts, models: { llm: model }, clock });
+
+    const now = iso(clock.now());
+    const outcome = await handler({
+      message: {
+        messageId: newId("msg"),
+        correlationId: newId("cor"),
+        type: "command",
+        capability: "invoice.extract",
+        capabilityVersion: "1",
+        schemaVersion: "1",
+        idempotencyKey: newId("key"),
+        createdAt: now,
+        notValidAfter: iso(plus(clock.now(), MINUTE)),
+        payload: { artifactId: artifact.artifactId },
+      },
+      context: {
+        dispatchId: newId("dsp"),
+        tenantId: TENANT,
+        actorId: "svc-test",
+        actorType: "service",
+        scopes: ["invoice.extract"],
+        sourceComponent: "test-harness",
+        authenticatedAt: now,
+        expiresAt: iso(plus(clock.now(), MINUTE)),
+      },
+    });
+
+    expect(outcome.status).toBe("FAILED");
+    if (outcome.status === "FAILED") expect(outcome.error.code).toBe("MODEL_UNAVAILABLE");
+    expect(outcome.modelUsage).toEqual({ inputTokens: 15, outputTokens: 0 });
+    expect(outcome.provenance?.modelId).toBe("fake-failing-model-1");
   });
 });
 
@@ -321,5 +419,18 @@ describe("Router.finish(): the \"model-usage\" audit record (additive, never tou
     const result = await f.route();
     expect(result.status).toBe("FAILED");
     expect(f.audit.byKind("model-usage")).toHaveLength(0);
+  });
+
+  it("carries outcome.provenance into ResultEnvelope.provenance on a FAILED outcome too, not just SUCCEEDED (17.9.2026 fix — a FAILED step should still say which model ran)", async () => {
+    const provenance: Provenance = { producerComponent: MODULE, modelId: "fake-model-x", promptVersion: "v1" };
+    const f = fixture(async (): Promise<HandlerOutcome> => ({
+      status: "FAILED",
+      error: { code: "MODEL_OUTPUT_NOT_ALLOWED", class: "QUALITY", retryable: true, message: "synthetic" },
+      provenance,
+    }));
+
+    const result = await f.route();
+    expect(result.status).toBe("FAILED");
+    expect(result.provenance).toEqual(provenance);
   });
 });

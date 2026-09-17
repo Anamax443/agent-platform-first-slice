@@ -46,9 +46,15 @@ export function buildPrompt(text: string, allowed: readonly string[]): string {
 }
 
 export function createDocumentClassifier(deps: ClassifierDeps): Handler {
-  // usage carries a second, optional arg so the every-return-point-before-complete() callers below stay
-  // byte-identical to before this change (failed(error) with no modelUsage field).
-  const failed = (error: ReturnType<typeof capabilityError>, usage?: TokenUsage): HandlerOutcome => ({ status: "FAILED", error, ...(usage ? { modelUsage: usage } : {}) });
+  // usage/provenance carry optional extra args so the every-return-point-before-complete() callers below stay
+  // byte-identical to before this change (failed(error) with neither field). provenance is only ever passed by
+  // callers past the model.complete() call, where model.modelId is actually known.
+  const failed = (error: ReturnType<typeof capabilityError>, usage?: TokenUsage, provenance?: Provenance): HandlerOutcome => ({
+    status: "FAILED",
+    error,
+    ...(usage ? { modelUsage: usage } : {}),
+    ...(provenance ? { provenance } : {}),
+  });
 
   return async ({ message, context }) => {
     const p = message.payload as unknown as Input;
@@ -84,7 +90,11 @@ export function createDocumentClassifier(deps: ClassifierDeps): Handler {
     } catch (e) {
       if (e instanceof DependencyTimeout) return failed(platformError("DEPENDENCY_TIMEOUT", "model did not answer before the deadline", { strategy, ms: e.ms }), usage);
       // The reason is evidence for the operator (wrong model id, quota, network); truncated, never the document.
-      return failed(capabilityError("MODEL_UNAVAILABLE", "DEPENDENCY", true, "model call failed", { strategy, modelId: model.modelId, reason: String(e).slice(0, 200) }), usage);
+      return failed(
+        capabilityError("MODEL_UNAVAILABLE", "DEPENDENCY", true, "model call failed", { strategy, modelId: model.modelId, reason: String(e).slice(0, 200) }),
+        usage,
+        { ...base, modelId: model.modelId },
+      );
     }
 
     // F2: the model answer is data. Only an exact allowlist member becomes a value; everything else is a QUALITY failure
@@ -99,6 +109,7 @@ export function createDocumentClassifier(deps: ClassifierDeps): Handler {
           allowed: [...DOCUMENT_TYPES],
         }),
         usage,
+        { ...base, modelId: model.modelId, promptVersion: model.promptVersion },
       );
     }
 

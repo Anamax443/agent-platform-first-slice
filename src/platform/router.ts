@@ -178,6 +178,7 @@ export class Router {
         break;
       case "FAILED":
         res.error = outcome.error;
+        if (outcome.provenance) res.provenance = outcome.provenance;
         break;
       case "WAITING":
         res.waitReason = outcome.waitReason;

@@ -121,14 +121,18 @@ export interface TokenUsage {
   outputTokens: number;
 }
 
-/** What a handler returns before the router wraps it into a ResultEnvelope. `modelUsage` is additive on every
- * variant: a handler that never calls an LlmAdapter never sets it, and the router only audits it when present. */
+/** What a handler returns before the router wraps it into a ResultEnvelope. `modelUsage` and `provenance` are
+ * additive on every variant: a handler that never calls an LlmAdapter never sets them, and the router only acts
+ * on them when present. `provenance` used to live only on SUCCEEDED, which meant a FAILED result (e.g. a model
+ * call that answered but with disallowed output, QUALITY/MODEL_OUTPUT_NOT_ALLOWED) could never say which model
+ * ran — even though the handler knows modelId at that point. Owner's request 17.9.2026: the model used should be
+ * visible on every step, failed ones included. */
 export type HandlerOutcome = (
-  | { status: "SUCCEEDED"; payload: Record<string, unknown>; provenance?: Provenance }
+  | { status: "SUCCEEDED"; payload: Record<string, unknown> }
   | { status: "FAILED"; error: ErrorObject }
   | { status: "WAITING"; waitReason: WaitReason; deadline: string; reviewTaskId?: string; payload?: Record<string, unknown> }
   | { status: "UNKNOWN_OUTCOME"; reconciliationRef: string }
-) & { modelUsage?: TokenUsage };
+) & { modelUsage?: TokenUsage; provenance?: Provenance };
 
 export interface HandlerInput {
   message: MessageEnvelope;

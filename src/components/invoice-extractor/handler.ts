@@ -86,9 +86,15 @@ function field<T>(value: T | undefined, source: "llm" | "rules"): FieldValue<T> 
 }
 
 export function createInvoiceExtractor(deps: ExtractorDeps): Handler {
-  // usage carries a second, optional arg so the every-return-point-before-complete() callers below stay
-  // byte-identical to before this change (failed(error) with no modelUsage field).
-  const failed = (error: ReturnType<typeof capabilityError>, usage?: TokenUsage): HandlerOutcome => ({ status: "FAILED", error, ...(usage ? { modelUsage: usage } : {}) });
+  // usage/provenance carry optional extra args so the every-return-point-before-complete() callers below stay
+  // byte-identical to before this change (failed(error) with neither field). provenance is only ever passed by
+  // callers past the model.complete() call, where model.modelId is actually known.
+  const failed = (error: ReturnType<typeof capabilityError>, usage?: TokenUsage, provenance?: Provenance): HandlerOutcome => ({
+    status: "FAILED",
+    error,
+    ...(usage ? { modelUsage: usage } : {}),
+    ...(provenance ? { provenance } : {}),
+  });
 
   return async ({ message, context }) => {
     const p = message.payload as unknown as Input;
@@ -113,17 +119,29 @@ export function createInvoiceExtractor(deps: ExtractorDeps): Handler {
       );
     } catch (e) {
       if (e instanceof DependencyTimeout) return failed(platformError("DEPENDENCY_TIMEOUT", "model did not answer before the deadline", { strategy, ms: e.ms }), usage);
-      return failed(capabilityError("MODEL_UNAVAILABLE", "DEPENDENCY", true, "model call failed", { strategy, modelId: model.modelId, reason: String(e).slice(0, 200) }), usage);
+      return failed(
+        capabilityError("MODEL_UNAVAILABLE", "DEPENDENCY", true, "model call failed", { strategy, modelId: model.modelId, reason: String(e).slice(0, 200) }),
+        usage,
+        { ...base, modelId: model.modelId },
+      );
     }
 
     let parsed: unknown;
     try {
       parsed = JSON.parse(extractJsonObject(raw));
     } catch {
-      return failed(capabilityError("MODEL_OUTPUT_NOT_ALLOWED", "QUALITY", true, "model output is not valid JSON", { strategy, outputSha256: sha256(raw), outputLength: raw.length }), usage);
+      return failed(
+        capabilityError("MODEL_OUTPUT_NOT_ALLOWED", "QUALITY", true, "model output is not valid JSON", { strategy, outputSha256: sha256(raw), outputLength: raw.length }),
+        usage,
+        { ...base, modelId: model.modelId, promptVersion: model.promptVersion },
+      );
     }
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-      return failed(capabilityError("MODEL_OUTPUT_NOT_ALLOWED", "QUALITY", true, "model output is not a JSON object", { strategy, outputSha256: sha256(raw), outputLength: raw.length }), usage);
+      return failed(
+        capabilityError("MODEL_OUTPUT_NOT_ALLOWED", "QUALITY", true, "model output is not a JSON object", { strategy, outputSha256: sha256(raw), outputLength: raw.length }),
+        usage,
+        { ...base, modelId: model.modelId, promptVersion: model.promptVersion },
+      );
     }
     const candidate = parsed as Record<string, unknown>;
 

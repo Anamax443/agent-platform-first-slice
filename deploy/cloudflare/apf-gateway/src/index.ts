@@ -1084,6 +1084,15 @@ const inclusiveDayEnd = (to: string): string => (to.length === 10 ? `${to}T23:59
  * `range.to` narrow it to an ISO 8601 date-ish window (plain string >= / <= against the `at` column — same idiom
  * /audit.json's own ?after= already relies on) — GET /farm's denikFrom/denikTo. Existing callers that pass only
  * `limit` (or nothing) keep their exact prior behavior; `range` is additive. */
+const toAuditLogRow = (full: AuditRecord): AuditLogRow => ({
+  at: full.at,
+  kind: full.kind,
+  workflowId: full.workflowId ?? null,
+  tenantId: full.tenantId ?? null,
+  capability: full.capability ?? null,
+  details: full.details,
+});
+
 const auditLog = async (env: Env, limit = 50, range?: { from?: string; to?: string }): Promise<AuditLogRow[]> => {
   await ensureD1Audit(env.AUDIT);
   const conditions: string[] = [];
@@ -1100,10 +1109,22 @@ const auditLog = async (env: Env, limit = 50, range?: { from?: string; to?: stri
   const rows = await env.AUDIT.prepare(`SELECT json FROM audit ${where}ORDER BY at DESC LIMIT ?`)
     .bind(...binds, limit)
     .all<{ json: string }>();
-  return rows.results.map((r) => {
-    const full = JSON.parse(r.json) as AuditRecord;
-    return { at: full.at, kind: full.kind, workflowId: full.workflowId ?? null, tenantId: full.tenantId ?? null, capability: full.capability ?? null, details: full.details };
-  });
+  return rows.results.map((r) => toAuditLogRow(JSON.parse(r.json) as AuditRecord));
+};
+
+/** Token/model usage for exactly the instances GET /farm is about to render (Ohrada/Výsledek/Stáj step rows) —
+ * targeted by workflow_id instead of auditLog()'s shared farm-wide "last 50" window, which a busy farm can push a
+ * step's own model-usage record out of within minutes even though the step itself is still on screen (owner's
+ * report 2026-09-17: "nevidím spotřebu tokenů"). Bounded by how many instances the page ever renders
+ * (instanceLimit, default 15) — never a farm-wide scan. */
+const modelUsageFor = async (env: Env, workflowIds: string[]): Promise<AuditLogRow[]> => {
+  if (workflowIds.length === 0) return [];
+  await ensureD1Audit(env.AUDIT);
+  const placeholders = workflowIds.map(() => "?").join(", ");
+  const rows = await env.AUDIT.prepare(`SELECT json FROM audit WHERE kind = 'model-usage' AND workflow_id IN (${placeholders})`)
+    .bind(...workflowIds)
+    .all<{ json: string }>();
+  return rows.results.map((r) => toAuditLogRow(JSON.parse(r.json) as AuditRecord));
 };
 
 /**
@@ -1426,7 +1447,10 @@ async function buildFarmModel(env: Env, instanceLimit: number, instanceWindow: s
     listWorkshopSessions(env),
   ]);
   // Žlab summary from D1 (M0 D-5) — an unreachable D1 shows as "nedostupný" on the page, never as zero.
-  const zlab = await zlabStats(env).catch(() => undefined);
+  const [zlab, usageLog] = await Promise.all([
+    zlabStats(env).catch(() => undefined),
+    modelUsageFor(env, instances.map((i) => i.workflowId)),
+  ]);
   // Admission Gate visibility (HANDOFF 70/71): the same LifecycleRegistry the Router enforces, read here only —
   // this page never writes it. Quarantining a module still means editing config/<installation>/lifecycle.json
   // and redeploying (a human decision with its own commit), not a button on this page.
@@ -1482,6 +1506,7 @@ async function buildFarmModel(env: Env, instanceLimit: number, instanceWindow: s
     instanceLimit,
     instanceWindow,
     auditLog: log,
+    usageLog,
     denikFrom,
     denikTo,
     inbox,
