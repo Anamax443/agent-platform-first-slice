@@ -104,6 +104,17 @@ describe("PAGE-FARM-001 renderFarm() actually runs, not just typechecks", () => 
     expect(html).toContain('src="/farm/ilustrace.png"');
   });
 
+  it("favicon is a base64 data URI whose decoded SVG declares explicit width/height, not just viewBox (owner live 17.9.2026: 'nechci glóbus' — a bare-viewBox, unencoded SVG data URI decoded to 0x0 in a browser and Chrome silently fell back to its own default globe icon instead)", () => {
+    const html = renderFarm(model);
+    const href = /<link rel="icon" href="(data:image\/svg\+xml;base64,[^"]+)">/.exec(html)?.[1];
+    expect(href).toBeTruthy();
+    const svg = Buffer.from(href!.slice("data:image/svg+xml;base64,".length), "base64").toString("utf8");
+    expect(svg).toContain("<svg ");
+    expect(svg).toMatch(/width="\d+"/);
+    expect(svg).toMatch(/height="\d+"/);
+    expect(svg).toContain("viewBox=");
+  });
+
   it("all 9 role sections exist (rebuild 13.9.2026 + Nastavení + Teletník 14.9.2026: Přehled/Podatelna/Ohrada/Stáj/Teletník/Argos/Výsledek/Deník/Nastavení)", () => {
     const html = renderFarm(model);
     for (const id of ["view-prehled", "view-podatelna", "view-ohrada", "view-staj", "view-teletnik", "view-argos", "view-vysledek", "view-denik", "view-nastaveni"]) {

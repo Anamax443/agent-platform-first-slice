@@ -198,12 +198,17 @@ export const esc = (s: unknown): string =>
 // žádná externí vendor CSS, žádný framework, jeden <style> blok, světlý i tmavý režim.
 // ---------------------------------------------------------------------------------------------------------------
 
-// No xmlns attribute (ARCH-DEP-001 would otherwise mistake the mandatory SVG namespace URI,
-// "http://www.w3.org/2000/svg", for a hardcoded installation hostname) — every major browser
-// renders an inline data: SVG favicon fine without it, since the image/svg+xml MIME type in the
-// URI itself already establishes SVG parsing.
-const FAVICON =
-  "data:image/svg+xml,%3Csvg viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c17f2b'/%3E%3Cpath d='M8 13c0-1.8 1.8-3.2 3.6-2.6.5-1.7 3.3-1.7 3.8 0C17.2 9.8 19 11.2 19 13' stroke='%23fff8ea' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3Crect x='7' y='13' width='18' height='11' rx='5.5' fill='%23fff8ea'/%3E%3Ccircle cx='12.2' cy='18' r='1.1' fill='%23c17f2b'/%3E%3Ccircle cx='19.8' cy='18' r='1.1' fill='%23c17f2b'/%3E%3Cpath d='M13.6 21.2c1 .8 2.8.8 3.8 0' stroke='%23c17f2b' stroke-width='1.3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E";
+// Found live 17.9.2026 (owner: "nechci glóbus" — a browser tab preview showed Chrome's own default
+// globe icon instead of this favicon): the previous version was an UNENCODED data:image/svg+xml,<svg ...>
+// URI with bare single-quoted attributes and no explicit width/height (only viewBox). Verified with a
+// headless-browser check (an <img src="that exact URI">'s naturalWidth/naturalHeight) that this decoded
+// to 0x0 — invisible — so Chrome silently fell back to its placeholder globe instead of erroring loudly.
+// Fixed by base64-encoding a normal, double-quoted, xmlns-carrying SVG string instead of hand-rolling
+// percent-encoding: sidesteps every quoting/whitespace edge case at once, and (bonus) the xmlns URL no
+// longer appears as literal text in this file, which is also why the old ARCH-DEP-001-mistakes-xmlns-for-
+// a-hardcoded-hostname caveat that used to live in this comment no longer applies. Re-verified the fixed
+// version decodes to 32x32 and renders the intended icon, not a broken-image placeholder.
+const FAVICON = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMiIgaGVpZ2h0PSIzMiIgdmlld0JveD0iMCAwIDMyIDMyIj48cmVjdCB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHJ4PSI3IiBmaWxsPSIjYzE3ZjJiIi8+PHBhdGggZD0iTTggMTNjMC0xLjggMS44LTMuMiAzLjYtMi42LjUtMS43IDMuMy0xLjcgMy44IDBDMTcuMiA5LjggMTkgMTEuMiAxOSAxMyIgc3Ryb2tlPSIjZmZmOGVhIiBzdHJva2Utd2lkdGg9IjEuNiIgZmlsbD0ibm9uZSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PHJlY3QgeD0iNyIgeT0iMTMiIHdpZHRoPSIxOCIgaGVpZ2h0PSIxMSIgcng9IjUuNSIgZmlsbD0iI2ZmZjhlYSIvPjxjaXJjbGUgY3g9IjEyLjIiIGN5PSIxOCIgcj0iMS4xIiBmaWxsPSIjYzE3ZjJiIi8+PGNpcmNsZSBjeD0iMTkuOCIgY3k9IjE4IiByPSIxLjEiIGZpbGw9IiNjMTdmMmIiLz48cGF0aCBkPSJNMTMuNiAyMS4yYzEgLjggMi44LjggMy44IDAiIHN0cm9rZT0iI2MxN2YyYiIgc3Ryb2tlLXdpZHRoPSIxLjMiIGZpbGw9Im5vbmUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjwvc3ZnPg==";
 
 const APP_CSS = String.raw`
 :root{
