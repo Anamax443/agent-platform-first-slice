@@ -256,7 +256,13 @@ export function wirePlatform(o: WiringOptions): Wiring {
         name: CLASSIFY,
         version: "1",
         inputSchema: classifier.inputSchema,
-        handler: classifier.createDocumentClassifier({ artifacts: o.artifacts, models: buildAdapters(o.installation, o.secrets, o.ai), clock: o.clock, modelTimeoutMs: o.modelTimeoutMs ?? 60_000 }),
+        handler: classifier.createDocumentClassifier({
+          artifacts: o.artifacts,
+          models: buildAdapters(o.installation, o.secrets, o.ai),
+          clock: o.clock,
+          modelTimeoutMs: o.modelTimeoutMs ?? 60_000,
+          ...writerFor(CLASSIFY),
+        }),
       },
     ],
   });

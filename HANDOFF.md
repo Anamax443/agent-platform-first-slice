@@ -2,6 +2,102 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-18 (179) — Oprava 3 P0 mezer po #178: fan-out z živého mailIntake() nikdy nevolaný, document.classify v LIVE wiringu nezapisoval evidenci, chyběl Workers-safe FactCatalog
+
+**Zjištění recenze (přesná citace nálezu):** funkce nasazená, ale nedosažitelná ("deployed-but-unreachable
+feature") + rozjezd mezi živým a testovacím zapojením ("live/test wiring divergence"), na který 649 zelených
+testů nestačilo — protože **všech** 649 testů běželo přes `src/slice.ts`'s `createSlice()` (test-only kompozice),
+nikdy přes `deploy/cloudflare/apf-gateway/src/platform-wiring.ts`'s `wirePlatform()` (LIVE kompozice, to, co
+skutečně běží v Durable Objectu na farmě). `createSlice()` zapojuje evidenci do `document.classify`
+bezpodmínečně; `wirePlatform()` ji nezapojoval vůbec — testy tenhle rozdíl nemohly nikdy uvidět, protože se na
+`wirePlatform()` nikdy nedívaly.
+
+**Mezera 1 (Gap 1 — nedosažitelnost):** `index.ts`'s `mailIntake()` spustil mail-intake orchestrátor, udělal
+`waitUntil(copyOut())`, přezbrojil review alarm a vrátil se — nikdy se nepodíval na `mail.ingest`'s
+`attachmentArtifactIds[]` a nikdy nezavolal `fanOutAttachments()` (`src/platform/attachment-fanout.ts`). Přílohové
+WorkflowDefy `attachment-classify`/`attachment-extract` (registrované v `GATEWAY_CAPABILITIES`/
+`WORKFLOW_DEFINITIONS`, viditelné na `/version`) byly z reálné příchozí pošty nedosažitelné — celé #178 bylo mrtvý
+kód, dokud nešlo skrz `mailIntake()`.
+
+**Mezera 2 (Gap 2 — chybějící `...writerFor(CLASSIFY)`):** `wirePlatform()`'s registrace `document.classify`
+(řádek ~259) volala `classifier.createDocumentClassifier({...})` bez `evidence` klíče vůbec — na rozdíl od
+`cz.company.verify`/`cz.vat.verify` o pár řádků níž, obě se svým `...writerFor(COMPANY_VERIFY)` /
+`...writerFor(VAT_VERIFY)`. `wirePlatform()`'s vlastní `writerFor()` closure (definovaná pár řádků nad `CLASSIFY`)
+už dělala přesně co bylo potřeba — jen se pro `CLASSIFY` nikdy nezavolala. I po opravě Gap 1 by živý
+`document.classify` nikdy nezapsal `document.type.invoiceConfirmed` (evidence, kterou #178 udělalo branou pro
+`invoice.extract`) — `planner.plan()` by pro každou živou přílohu vracel `CAPABILITY_GAP` navždy. Oprava: jeden
+přidaný `...writerFor(CLASSIFY)`, přesně mirror vzoru o pár řádků níž.
+
+**Mezera 3 (Gap 3 — chybějící Workers-safe FactCatalog, nalezeno při zkoumání, ne recenzentem):**
+`fanOutAttachments()` potřebuje instanci `FactCatalog` (`contracts/facts.v1.json` + 8×
+`src/components/*/facts.json`). Jediný existující loader (`tests/harness/facts.ts`'s `realCatalog()`) používá
+`node:fs` (`readdirSync`/`existsSync`) s vlastním komentářem "tests only; the platform never reads files" —
+`node:fs` v Cloudflare Workers runtime neexistuje, takže tenhle loader nešlo pro živý deploy použít vůbec.
+Nový soubor `deploy/cloudflare/apf-gateway/src/fact-catalog-bundle.ts`: stejný vzor jako
+`src/platform/workflow.ts`'s `WORKFLOW_DEFINITIONS` — statické ESM JSON importy (`with { type: "json" }`) všech
+9 souborů, `FactCatalog.build()` zavolané jednou při importu, export `FACT_CATALOG`. **Umístění vědomě mimo
+`src/platform/`:** `ARCH-DEP-001` (`scripts/arch-dep.mjs`) zakazuje čemukoliv pod `platform/` importovat
+`../components/*` (přesně to, co `attachment-fanout.ts`'s vlastní komentář dokumentuje — "platform/* stays free
+of a src/components/* import") — ověřeno živě: soubor nejdřív napsaný do `src/platform/` shodil
+`tests/arch.test.ts` (8 nálezů, `platform imports component or adapter "../components/.../facts.json"`), přesunuto
+vedle `platform-wiring.ts` (deploy-vrstva, kompoziční kořen, kde `platform-wiring.ts` sám tuhle hranici už
+překračuje volně) — `ARCH-DEP-001` na `deploy/cloudflare/apf-gateway/src/*` bez vnořené `platform/` složky
+nedopadá.
+
+**Oprava Gap 1 (`index.ts`):** nová `private async fanOutAttachmentsIfAny(workflowId, tenantId, correlationId,
+wiring)` — čte `mail.ingest`'s krok ze `this.journal.get(workflowId)` stejným vzorem jako existující
+`recordClassifyResult()` o pár řádků níž (`inst?.steps.find(s => s.capability === "mail.ingest" && s.status ===
+"SUCCEEDED")`), vytáhne `attachmentArtifactIds[]` z payloadu, a když nejsou prázdné, zavolá `fanOutAttachments()`
+s `classifyOrchestrator`/`extractOrchestrator` = `this.orchestratorFor(workflowDef("attachment-classify"/
+"attachment-extract"), wiring)` (mirror existujícího vzoru o dva řádky výš), `catalog: FACT_CATALOG`,
+`evidence: wiring.evidence`. Volané z `mailIntake()` přes `this.ctx.waitUntil(this.fanOutAttachmentsIfAny(...))`,
+hned vedle existujícího `waitUntil(copyOut())` — **rozhodnutí await-vs-waitUntil:** fan-out volá AI model na
+přílohu (klasifikace, a pro potvrzenou fakturu i extrakce) — u víc příloh by `await` riskoval timeout na
+`mailIntake()`, jehož vlastní kapabilita (`mail.ingest`) už úspěšně doběhla. Na rozdíl od existujícího
+`waitUntil(copyOut())` (jehož vlastní selhání je neviditelný unhandled rejection — přesně mezera, kterou HANDOFF
+166 našel pro zrcadlení Žlabu) je fan-out obalený `try/catch` a při selhání zapíše `this.audit.append({kind:
+"state", capability: "attachment-fanout", details: {status:"FAILED", reason}})` + `console.error` — stejná kázeň
+jako `visualStampIfApplicable()`'s vlastní `try/catch`+`console.error`, jen s auditním záznamem navíc, protože
+tohle selhání je živé orchestrační rozhodnutí (jestli `invoice.extract` vůbec proběhlo), ne kosmetický vedlejší
+efekt. Na konci (úspěch i selhání) znovu volá `rearmReviewAlarm()` — přílohové workflow mohou samy vytvořit
+review úkol po tom, co mail-intake instance svůj vlastní `rearmReviewAlarm()` už zavolala.
+
+**Oprava Gap 2 (`platform-wiring.ts`):** `...writerFor(CLASSIFY)` přidáno do `document.classify`'s konstrukce
+handleru — jednořádková třída oprav, přesně mirror `COMPANY_VERIFY`/`VAT_VERIFY`.
+
+**Oprava Gap 3:** nový `deploy/cloudflare/apf-gateway/src/fact-catalog-bundle.ts` (viz výš), import v `index.ts`
+(`FACT_CATALOG`), předaný do `fanOutAttachments()` jako `catalog`.
+
+**Nový test `tests/gw-platform-wiring-fanout.test.ts` (7 testů) — jediný test v repu, co jde skrz skutečné
+`wirePlatform()`, ne `createSlice()`/`realCatalog()`:** staví `Wiring` přes reálné `wirePlatform()` (živá
+`Installation` `LOCAL_FAKES`, reálný `EvidenceLedger` nad `MemoryEvidenceStore`, reálné `FakeLlmAdapter`/
+`KeywordClassifierAdapter` z `buildAdapters()` — žádný mock klasifikátoru). Dokazuje: (a) klasifikace INVOICE
+přílohy skrz živý `document.classify` handler **zapíše** `document.type.invoiceConfirmed` evidenci (přesně to, co
+Gap 2 rozbilo), CONTRACT nezapíše nic (asymetrie gate zůstala); (b) `plan()` nad **reálným** `FACT_CATALOG`
+odmítne `invoice.extract` bez evidence a naplánuje ho s ní (přesně to, co Gap 3 odblokovalo); (c) end-to-end přes
+`fanOutAttachments()` se skutečnou `wirePlatform()`-wiringou i skutečným `FACT_CATALOG` — INVOICE příloha
+klasifikuje→zapečetí→naplánuje→extrahuje a vytvoří derived artefakt, CONTRACT skončí `CAPABILITY_GAP`, ne pádem;
+(d) source-level "wiring trap" test, že `mailIntake()`'s tělo metody skutečně volá `this.fanOutAttachmentsIfAny(`
+a že ta metoda čte `mail.ingest`'s krok a volá `fanOutAttachments(`/`FACT_CATALOG` (runtime test na úrovni
+Durable Object třídy není v tomhle repu možný — `vitest.config.ts` běží čistý Node bez
+`@cloudflare/vitest-pool-workers`, `index.ts` importuje `cloudflare:workers` na modulové úrovni, což se pod
+čistým Node nenačte). **Ověřeno, že test skutečně padá bez oprav:** dočasné vrácení `platform-wiring.ts` na
+předchozí verzi (`git stash`) shodilo přesně dva testy vázané na Gap 2/Gap 3 (`expected undefined to match
+object...`, `expected 'CAPABILITY_GAP' to be 'PLANNED'`) — po vrácení opravy zpátky všech 7 zelených.
+
+**Stav:** `npm test` **656/656** (649 + 7 nových), `npx tsc --noEmit`, `npx tsc -p deploy/cloudflare/tsconfig.json`
+(zvlášť, kvůli `deploy/cloudflare/*` — chytá Workers-nekompatibilní kód typu náhodný `node:fs` import, což
+obyčejné `tsc --noEmit` nemusí), `npm run arch` (`ARCH-DEP-001 OK`), `npm run farm:check` (12/12 konfigů,
+`wrangler deploy --dry-run` na `apf-gateway` obou instalací) — všechno zeleně. Jen lokální změny a lokální test
+běh; **žádný push, žádný deploy, žádný commit** (mimo rozsah zadání).
+
+**Vědomě mimo rozsah (zapsáno, ne vyřešeno, podle zadání):** `attachmentArtifactIds[]` → bohatší
+`attachments[]` kontrakt (filename/contentType/status/errorCode) — samostatný pozdější commit ("2B").
+`mail.ingest`'s tiché přeskočení selhané extrakce nezměněno. `Case` nikde nezapojen (pozdější commit "3").
+`mail-intake.v3.json`'s top-level `classify` krok nad kombinovaným tělem nezměněn. Živý test e-mail na farmu ani
+žádný zásah na nasazené Cloudflare prostředí — tenhle úkol je čistě lokální repo. `docs/SEVERKA.md`/`README.md`'s
+zastaralé řádky o roadmapě/capabilities nezměněny (samostatný úklid dokumentace).
+
 ## 2026-09-18 (178) — Commit 1 (vlastníkův schválený návrh): invoice.extract gated na klasifikační evidenci, fan-out driver nad přílohami přes skutečné plan()
 
 **Účel:** vlastníkovo explicitně schválené zadání "Commit 1" — `invoice.extract` dnes běžel nad jakýmkoliv

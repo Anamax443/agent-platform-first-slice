@@ -18,6 +18,7 @@ import type { SecretsSource } from "../../../../src/installation.js";
 import type { AuditRecord } from "../../../../src/platform/audit.js";
 import { auditRowsToCsv, type AuditCsvRow } from "../../../../src/platform/audit-csv.js";
 import { sha256Bytes, type Artifact } from "../../../../src/platform/artifacts.js";
+import { fanOutAttachments } from "../../../../src/platform/attachment-fanout.js";
 import { iso, SystemClock, type Clock } from "../../../../src/platform/clock.js";
 import { platformError } from "../../../../src/platform/errors.js";
 import { newId } from "../../../../src/platform/ids.js";
@@ -56,6 +57,7 @@ import {
   type SelfTestRow,
   type Wired,
 } from "./page.js";
+import { FACT_CATALOG } from "./fact-catalog-bundle.js";
 import { COW_WORKSHOP, describeModels, gatewayCatalog, modelAdapterFor, wirePlatform, type Wiring } from "./platform-wiring.js";
 import { runSelfTest, requiredTestsFor, selfTestCapabilityForTick, SELF_TEST_CAPABILITIES, SELF_TEST_WORKFLOW_ID } from "./self-test.js";
 import { newSession, sendMessage, type WorkshopSession } from "./workshop.js";
@@ -688,8 +690,76 @@ export class WorkflowInstance extends DurableObject<Env> {
     });
     await orchestrator.run(inst.workflowId);
     this.ctx.waitUntil(this.copyOut());
+    this.ctx.waitUntil(this.fanOutAttachmentsIfAny(inst.workflowId, inst.tenantId, inst.correlationId, wiring));
     await this.rearmReviewAlarm();
     return this.view() as InstanceView;
+  }
+
+  /**
+   * Attachment fan-out (owner's Commit 1, M0-FACT-CONTRACT-V1.md část C, 18.9.2026 + its follow-up fix): mail.ingest's
+   * own attachmentArtifactIds[] (its output payload, unchanged) never drove anything after it — attachment-classify/
+   * attachment-extract were registered (GATEWAY_CAPABILITIES, WORKFLOW_DEFINITIONS) and reachable through
+   * src/platform/attachment-fanout.ts, but nothing on the live farm ever called fanOutAttachments(), so both
+   * WorkflowDefs sat unreachable from real inbound mail despite /version listing them. Reads mail.ingest's own step
+   * result out of the journal the same way recordClassifyResult() (above) reads document.classify's — the payload
+   * lives only in this instance's own journal entry, there is no other channel for it.
+   *
+   * Runs in the background (ctx.waitUntil), same as copyOut() two lines above: fan-out calls an AI model per
+   * attachment (classify, and for each attachment classify actually confirms as INVOICE, invoice.extract too) —
+   * awaiting it here would let one slow or many-attachment mail hold mailIntake()'s own response hostage, risking a
+   * timeout on a request whose own capability (mail.ingest) already succeeded. Unlike copyOut()'s waitUntil() call,
+   * whose own failure becomes an invisible unhandled rejection (exactly the gap HANDOFF 166 found for the Žlab
+   * mirror, only ever caught because selfTest()/copyOutNow() await copyOut() directly elsewhere), a fan-out failure
+   * here is caught and written to the shared audit trail (kind: "state", capability: "attachment-fanout") — the
+   * same "a background failure must stay legible" discipline visualStampIfApplicable() already applies with its own
+   * try/catch + console.error, with an audit record added on top because this failure is a live orchestration
+   * decision (whether invoice.extract ran at all for this mail's attachments), not a cosmetic side effect. Also
+   * re-arms the review alarm afterwards: attachment-classify/attachment-extract can create their own review tasks
+   * (onFailed: BUSINESS/VALIDATION -> review in their WorkflowDefs) after the mail-intake instance's own
+   * rearmReviewAlarm() call already ran.
+   */
+  private async fanOutAttachmentsIfAny(workflowId: string, tenantId: string, correlationId: string, wiring: Wiring): Promise<void> {
+    const inst = this.journal.get(workflowId);
+    const step = inst?.steps.find((s) => s.capability === "mail.ingest" && s.status === "SUCCEEDED");
+    const payload = step?.result?.payload as { attachmentArtifactIds?: unknown } | undefined;
+    const attachmentArtifactIds = Array.isArray(payload?.attachmentArtifactIds) ? (payload.attachmentArtifactIds as string[]) : [];
+    if (attachmentArtifactIds.length === 0) return;
+    if (!wiring.evidence) {
+      // WiringOptions.evidence absent (no durable Žlab for this installation) — fan-out has no evidence to plan()
+      // against and would only ever see CAPABILITY_GAP; skipping is honest, not a silent no-op (still audited).
+      this.audit.append({ kind: "state", workflowId, tenantId, correlationId, capability: "attachment-fanout", details: { status: "SKIPPED", reason: "no evidence ledger wired for this installation" } });
+      return;
+    }
+    try {
+      const outcomes = await fanOutAttachments(
+        {
+          classifyOrchestrator: this.orchestratorFor(workflowDef("attachment-classify"), wiring),
+          extractOrchestrator: this.orchestratorFor(workflowDef("attachment-extract"), wiring),
+          catalog: FACT_CATALOG,
+          evidence: wiring.evidence,
+        },
+        { tenantId, attachmentArtifactIds, correlationId },
+      );
+      this.audit.append({
+        kind: "state",
+        workflowId,
+        tenantId,
+        correlationId,
+        capability: "attachment-fanout",
+        details: { status: "SUCCEEDED", attachments: outcomes.length, extracted: outcomes.filter((o) => o.extract?.status === "SUCCEEDED").length },
+      });
+    } catch (e) {
+      console.error(`[apf-gateway] attachment fan-out failed workflowId=${workflowId}: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
+      this.audit.append({
+        kind: "state",
+        workflowId,
+        tenantId,
+        correlationId,
+        capability: "attachment-fanout",
+        details: { status: "FAILED", reason: String((e as Error)?.message ?? e).slice(0, 500) },
+      });
+    }
+    await this.rearmReviewAlarm();
   }
 
   /**
