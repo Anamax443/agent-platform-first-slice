@@ -187,8 +187,10 @@ export function createIngestHandler(deps: IngestDeps): HostHandlerSpec {
      * truth" rung of the owner's own recovery ladder (release on proven-not-happened / resolve-as-DONE on
      * proven-happened / escalate on cannot-establish), not a placeholder that forgot the other two branches.
      *
-     * What this turns the bug into: after `reconciliationBudget` (orchestrator.ts, default 3) alarm-triggered
-     * attempts, a real, visible, audited ReviewService task (reasonCode UNKNOWN_OUTCOME_UNRESOLVED) a human can
+     * What this turns the bug into: once the alarm-triggered recover() reaches this step, orchestrator.ts's
+     * reconcile() consults this reconciler `reconciliationBudget` times (default 3) back-to-back inside that ONE
+     * call — all attempts land in a single alarm tick, not one per tick — and then creates a real, visible, audited
+     * ReviewService task (reasonCode UNKNOWN_OUTCOME_UNRESOLVED) a human can
      * act on — orchestrator.ts's resumeAfterReview() already lets a human's APPROVE there ("I confirmed by hand
      * this mail was ingested") correctly resume the workflow. The idempotency row itself stays RESERVED even after
      * that human resolution (reconcilerFor() only resolves/releases on SUCCEEDED/FAILED, never on UNKNOWN) — a
