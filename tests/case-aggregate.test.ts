@@ -55,8 +55,8 @@ describe("CASE-AGG-001 aggregateCaseStatus() — pure Case-level generalization 
     expect(aggregateCaseStatus(["CANCELLED", "CANCELLED"])).toBe("CANCELLED");
   });
 
-  it("refuses an empty instance list — a Case always has at least one instance (newCase() guarantees this)", () => {
-    expect(() => aggregateCaseStatus([])).toThrow(CaseError);
+  it("zero instances -> UNSTARTED (this change, 18.9.2026 — the old 'a Case always has at least one instance' invariant no longer holds now that newCase() can be called without an instance; see case.ts's aggregateCaseStatus() doc comment)", () => {
+    expect(aggregateCaseStatus([])).toBe("UNSTARTED");
   });
 });
 

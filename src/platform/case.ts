@@ -76,8 +76,22 @@ export interface Case {
  * terminal SUCCEEDED while others reached a terminal FAILED/CANCELLED — "2 of 3 attachments extracted fine, one
  * genuinely failed" (the owner's own example for the sibling fan-out-level aggregate, summarizeFanoutOutcomes()'s
  * PARTIAL, in attachment-fanout.ts) — not a brand-new unrelated enum.
+ *
+ * UNSTARTED (this change, 18.9.2026, fixing the gap a rigorous external audit performed after commit 7971ede
+ * named — "Case can exist with 0 instances"): means no member instance exists yet — the Case was built from an
+ * impulse before any workflow started. Before this change, `newCase()` always REQUIRED an `instance` argument, so
+ * a Case could not structurally represent the pre-planning state that AUTONOMOUS-RUNTIME-V1.md's own part 2
+ * (originCaseId-optional reasoning) and part 6 step 8 (the eventual Case-level replanning loop) assume will exist
+ * — and the ADR's own acceptance scenario C (part 8: one mail containing a contract, an invoice, and an ordinary
+ * photo, three different document.type values arriving under one impulse before any of them is individually
+ * planned) needs exactly this "Case exists, nothing has run yet" state to be representable, well before
+ * CurrentCaseProjection (part 6 step 3) is built on top of it. Deliberately does NOT reuse the ADR's future
+ * goalStatus vocabulary (docs/AUTONOMOUS-RUNTIME-V1.md part 7, line ~293-294:
+ * UNRESOLVED/PLANNABLE/SATISFIED/CAPABILITY_GAP/NEEDS_INPUT/NEEDS_APPROVAL) — CaseStatus stays pure
+ * execution-health per this file's own existing doc comment above and the ADR's own executionStatus/goalStatus
+ * split; conflating the two is reserved for part 6 step 6 (intent->goal mapping), out of scope here.
  */
-export type CaseStatus = InstanceStatus | "PARTIAL";
+export type CaseStatus = InstanceStatus | "PARTIAL" | "UNSTARTED";
 
 /**
  * Pure aggregate over every member instance's own CURRENT InstanceStatus (journal.ts stays the source of truth
@@ -105,10 +119,19 @@ export type CaseStatus = InstanceStatus | "PARTIAL";
  *
  * A Case with only its first instance so far (before any fan-out has run — the common case right after
  * newCase()) is just the N=1 case of the same rules: single RUNNING -> RUNNING, single SUCCEEDED -> SUCCEEDED,
- * single FAILED -> FAILED, etc. — always coherent, never a special case.
+ * single FAILED -> FAILED, etc. — always coherent, never a special case. As of this change (18.9.2026), N=0 is
+ * covered too: an empty `statuses` list (a Case built from an impulse before any instance ever started) returns
+ * UNSTARTED, logically first in the priority order above — nothing can be running, waiting, or terminal if
+ * nothing has started. This is the one case `newCase()` no longer rules out as of this change: previously
+ * `newCase()` always required exactly one instance, and this function threw on an empty list as an invariant
+ * check on that guarantee; that invariant is gone now that `newCase()`'s `instance` argument is optional (see
+ * `newCase()` below) and a Case can be opened directly from an impulse before any workflow exists.
+ * AUTONOMOUS-RUNTIME-V1.md part 6 step 8's eventual /impulse path (out of scope for this task — see this file's
+ * own top-of-file comment and case.ts's newCase() doc comment below) will be the first LIVE producer of such a
+ * Case; this change only makes the primitive able to represent and aggregate it, it does not wire that path.
  */
 export function aggregateCaseStatus(statuses: readonly InstanceStatus[]): CaseStatus {
-  if (statuses.length === 0) throw new CaseError("aggregateCaseStatus: cannot aggregate an empty instance list — a Case always has at least one instance (newCase() guarantees this)");
+  if (statuses.length === 0) return "UNSTARTED";
   if (statuses.some((s) => s === "RUNNING")) return "RUNNING";
   if (statuses.some((s) => s === "WAITING")) return "WAITING";
   // Everything left is terminal: SUCCEEDED, FAILED or CANCELLED.
@@ -125,8 +148,30 @@ export class CaseError extends Error {
   }
 }
 
-/** A fresh Case around one impulse and its first workflow instance. tenantId must agree — a Case can never span tenants (same boundary as every other tenant-scoped record). */
-export function newCase(input: { caseId: string; impulse: NormalizedImpulse; instance: Pick<Instance, "workflowId" | "tenantId" | "status" | "createdAt" | "updatedAt"> }): Case {
+/**
+ * A fresh Case around one impulse, and OPTIONALLY its first workflow instance (this change, 18.9.2026 —
+ * previously `instance` was required; see CaseStatus's UNSTARTED and aggregateCaseStatus()'s doc comment above
+ * for why). tenantId must agree with the instance when one is given — a Case can never span tenants (same
+ * boundary as every other tenant-scoped record); with no instance, tenantId is taken directly from the impulse
+ * instead, since there is nothing yet to cross-check it against.
+ *
+ * No new timestamp field was added to `input` for the no-instance branch: `createdAt`/`updatedAt` are sourced
+ * from `input.impulse.receivedAt` — the moment the impulse itself arrived is the correct "Case opened at" instant
+ * when nothing has started yet, and reusing it keeps this function pure (no I/O, no clock dependency) and keeps
+ * the required->optional diff to exactly the one `instance` field, not two.
+ */
+export function newCase(input: { caseId: string; impulse: NormalizedImpulse; instance?: Pick<Instance, "workflowId" | "tenantId" | "status" | "createdAt" | "updatedAt"> }): Case {
+  if (!input.instance) {
+    return {
+      caseId: input.caseId,
+      tenantId: input.impulse.tenantId,
+      impulse: input.impulse,
+      instances: [],
+      status: "UNSTARTED",
+      createdAt: input.impulse.receivedAt,
+      updatedAt: input.impulse.receivedAt,
+    };
+  }
   if (input.impulse.tenantId !== input.instance.tenantId) {
     throw new CaseError(`impulse tenantId ${input.impulse.tenantId} does not match instance tenantId ${input.instance.tenantId} — a Case cannot span tenants`);
   }
@@ -146,6 +191,11 @@ export function newCase(input: { caseId: string; impulse: NormalizedImpulse; ins
  * goal derived from the same impulse) — never removes or reorders `instances` (append-only, same discipline as
  * the Žlab and Audit). Refuses a workflowId already present (idempotency: adding the same instance twice would
  * silently duplicate history) and a tenantId mismatch.
+ *
+ * Also correctly appends the FIRST instance onto an UNSTARTED, zero-instance Case built by `newCase()` without an
+ * `instance` argument (this change, 18.9.2026 — see CaseStatus's UNSTARTED and newCase()'s doc comment above):
+ * `c.instances.includes(...)` is simply false on an empty array and the spread below already handles an empty
+ * starting array with no modification needed — this function's own logic never assumed a non-empty starting list.
  */
 export function addInstance(c: Case, instance: Pick<Instance, "workflowId" | "tenantId" | "status" | "updatedAt">): Case {
   if (instance.tenantId !== c.tenantId) throw new CaseError(`instance tenantId ${instance.tenantId} does not match case tenantId ${c.tenantId}`);
