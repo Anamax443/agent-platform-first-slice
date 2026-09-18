@@ -19,7 +19,7 @@ import { describe, expect, it } from "vitest";
 import type { Instance, StepRecord } from "../src/platform/journal.js";
 import { isRunningStepStale, type WorkflowDef } from "../src/platform/orchestrator.js";
 import { fanoutRetryDecision, type FanoutJobRecord } from "../deploy/cloudflare/apf-gateway/src/fanout-retry.js";
-import { nextAlarmWakeMs, runAlarmTick, type AlarmSubsystem } from "../deploy/cloudflare/apf-gateway/src/alarm-scheduler.js";
+import { nextAlarmWakeMs, runAlarmCycle, runAlarmTick, type AlarmSubsystem, type AlarmCycleDeps } from "../deploy/cloudflare/apf-gateway/src/alarm-scheduler.js";
 import type { DurableJobRecord } from "../src/platform/durable-job.js";
 
 const OPTS = { fanoutGraceMs: 5 * 60_000, fanoutMaxAttempts: 5, copyoutGraceMs: 60_000 };
@@ -462,5 +462,195 @@ describe("runAlarmTick — subsystemBudgetMs bounds a HUNG subsystem, not just a
       new Promise<"still-pending">((resolve) => setTimeout(() => resolve("still-pending"), BUDGET_MS * 3)),
     ]);
     expect(outcome).toBe("still-pending");
+  });
+});
+
+// RG2-B (Reliability Gate, 2026-09-18): tests for runAlarmCycle() — the ONE thing this change added, one level up
+// from runAlarmTick() above. Closes two real bugs in index.ts's pre-RG2-B alarm() body: (1) an early
+// `if (!inst) return` that exited before `finally { copyOut(); rearmAlarm(); }` ever ran for the journal-less
+// self-test instance, silently losing that instance's own only remaining wake-up; (2) `wiring()`/
+// `orchestratorFor()` calls that ran BEFORE the try block, so a thrown signing-key/config error skipped
+// rearmAlarm() entirely. Every scenario below asserts BOTH which failure callback fired (if any) AND that rearm()
+// ran exactly once, via a shared `order` array both fakes push onto — proving not just "it was called" but "it
+// was called after copyOut(), regardless of what happened before it".
+describe("runAlarmCycle — a throw anywhere in bootstrap-or-tick must never skip the final copyOut()+rearm() step", () => {
+  it("buildTick() itself throws (e.g. a bad/missing GATEWAY_SIGNING_KEY) -> onBootstrapFailure fires, copyOut() and rearm() still both run", async () => {
+    const order: string[] = [];
+    let bootstrapErr: unknown;
+    await runAlarmCycle({
+      buildTick: () => {
+        throw new Error("wiring: bad GATEWAY_SIGNING_KEY");
+      },
+      tickOpts: {},
+      onBootstrapFailure: (err) => {
+        bootstrapErr = err;
+      },
+      copyOut: async () => {
+        order.push("copyOut");
+      },
+      onCopyOutFailure: () => {
+        throw new Error("onCopyOutFailure must not be called: copyOut() itself never throws in this scenario");
+      },
+      rearm: async () => {
+        order.push("rearm");
+      },
+    });
+    expect(bootstrapErr).toBeInstanceOf(Error);
+    expect((bootstrapErr as Error).message).toBe("wiring: bad GATEWAY_SIGNING_KEY");
+    expect(order).toEqual(["copyOut", "rearm"]);
+  });
+
+  it("buildTick() returns undefined (the journal-less self-test instance) -> runAlarmTick is skipped entirely, but copyOut() and rearm() still both run — the actual fix for the journal-less pending-copyout-job bug", async () => {
+    const order: string[] = [];
+    let bootstrapCalled = false;
+    await runAlarmCycle({
+      buildTick: () => undefined,
+      tickOpts: {},
+      onBootstrapFailure: () => {
+        bootstrapCalled = true;
+      },
+      copyOut: async () => {
+        order.push("copyOut");
+      },
+      onCopyOutFailure: () => {
+        throw new Error("onCopyOutFailure must not be called: copyOut() itself never throws in this scenario");
+      },
+      rearm: async () => {
+        order.push("rearm");
+      },
+    });
+    expect(bootstrapCalled).toBe(false); // buildTick() returning undefined is not itself a failure
+    expect(order).toEqual(["copyOut", "rearm"]);
+  });
+
+  it("runAlarmTick() itself throwing (its own onFailure callback throwing, escaping the per-subsystem isolation runAlarmTick() otherwise guarantees) -> onBootstrapFailure fires, copyOut()+rearm() still run", async () => {
+    const order: string[] = [];
+    let bootstrapErr: unknown;
+    await runAlarmCycle({
+      buildTick: () => ({
+        recover: () => {
+          throw new Error("recover() boom");
+        },
+        retryFanout: () => {},
+        applyReviewExpiries: () => {},
+        // A real onFailure (index.ts's recordSubsystemFailure) is not expected to throw, but nothing in
+        // runAlarmTick()'s own contract prevents it — this is the deterministic, real-code way to make the real
+        // runAlarmTick() reject despite its documented "never throw" contract, exercising the belt-over-braces
+        // path runAlarmCycle()'s own doc comment describes.
+        onFailure: () => {
+          throw new Error("onFailure itself blew up");
+        },
+      }),
+      tickOpts: {},
+      onBootstrapFailure: (err) => {
+        bootstrapErr = err;
+      },
+      copyOut: async () => {
+        order.push("copyOut");
+      },
+      onCopyOutFailure: () => {
+        throw new Error("onCopyOutFailure must not be called: copyOut() itself never throws in this scenario");
+      },
+      rearm: async () => {
+        order.push("rearm");
+      },
+    });
+    expect(bootstrapErr).toBeInstanceOf(Error);
+    expect((bootstrapErr as Error).message).toBe("onFailure itself blew up");
+    expect(order).toEqual(["copyOut", "rearm"]);
+  });
+
+  it("copyOut() throws -> onCopyOutFailure fires, and rearm() still runs afterward", async () => {
+    const order: string[] = [];
+    let copyOutErr: unknown;
+    await runAlarmCycle({
+      buildTick: () => undefined,
+      tickOpts: {},
+      onBootstrapFailure: () => {
+        throw new Error("onBootstrapFailure must not be called: buildTick() never throws in this scenario");
+      },
+      copyOut: async () => {
+        order.push("copyOut-attempted");
+        throw new Error("D1 batch() rejected");
+      },
+      onCopyOutFailure: (err) => {
+        copyOutErr = err;
+      },
+      rearm: async () => {
+        order.push("rearm");
+      },
+    });
+    expect(copyOutErr).toBeInstanceOf(Error);
+    expect((copyOutErr as Error).message).toBe("D1 batch() rejected");
+    expect(order).toEqual(["copyOut-attempted", "rearm"]);
+  });
+
+  it("rearm() itself throws -> the promise runAlarmCycle() returns rejects (never swallowed — nothing durable is left to record it to), but only after copyOut() was already attempted", async () => {
+    const order: string[] = [];
+    const deps: AlarmCycleDeps = {
+      buildTick: () => undefined,
+      tickOpts: {},
+      onBootstrapFailure: () => {
+        throw new Error("onBootstrapFailure must not be called: buildTick() never throws in this scenario");
+      },
+      copyOut: async () => {
+        order.push("copyOut");
+      },
+      onCopyOutFailure: () => {
+        throw new Error("onCopyOutFailure must not be called: copyOut() itself never throws in this scenario");
+      },
+      rearm: async () => {
+        order.push("rearm-attempted");
+        throw new Error("setAlarm() rejected");
+      },
+    };
+    await expect(runAlarmCycle(deps)).rejects.toThrow("setAlarm() rejected");
+    expect(order).toEqual(["copyOut", "rearm-attempted"]); // copyOut() ran to completion before rearm() ever threw
+  });
+
+  it("happy path: real subsystems all run, then copyOut(), then rearm() exactly once — asserting call ORDER, not just call count", async () => {
+    const order: string[] = [];
+    let recovered = false;
+    let fannedOut = false;
+    let reviewsChecked = false;
+    let rearmCalls = 0;
+    await runAlarmCycle({
+      buildTick: () => ({
+        recover: () => {
+          recovered = true;
+          order.push("recover");
+        },
+        retryFanout: () => {
+          fannedOut = true;
+          order.push("fanout");
+        },
+        applyReviewExpiries: () => {
+          reviewsChecked = true;
+          order.push("reviews");
+        },
+        onFailure: () => {
+          throw new Error("onFailure must not be called: nothing fails in this scenario");
+        },
+      }),
+      tickOpts: {},
+      onBootstrapFailure: () => {
+        throw new Error("onBootstrapFailure must not be called: buildTick() never throws in this scenario");
+      },
+      copyOut: async () => {
+        order.push("copyOut");
+      },
+      onCopyOutFailure: () => {
+        throw new Error("onCopyOutFailure must not be called: copyOut() itself never throws in this scenario");
+      },
+      rearm: async () => {
+        rearmCalls++;
+        order.push("rearm");
+      },
+    });
+    expect(recovered).toBe(true);
+    expect(fannedOut).toBe(true);
+    expect(reviewsChecked).toBe(true);
+    expect(rearmCalls).toBe(1);
+    expect(order).toEqual(["recover", "fanout", "reviews", "copyOut", "rearm"]);
   });
 });

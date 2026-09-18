@@ -166,3 +166,98 @@ export async function runAlarmTick(subsystems: AlarmTickSubsystems, opts: AlarmT
     subsystems.onFailure("reviews", err);
   }
 }
+
+/**
+ * RG2-B (Reliability Gate, 2026-09-18): closes a narrower, adjacent gap in this SAME alarm/rearm machinery, one
+ * level up from runAlarmTick() above. index.ts's real alarm() body used to be:
+ *
+ *   const inst = this.journal.list()[0];
+ *   if (!inst) return;                                          // BUG 1
+ *   const wiring = this.wiring();                                // BUG 2 (can throw: bad/missing signing key)
+ *   const orchestrator = this.orchestratorFor(workflowDef(inst.workflow), wiring); // BUG 2b
+ *   try { await runAlarmTick(...); } finally { ctx.waitUntil(copyOut()); await rearmAlarm(); }
+ *
+ * BUG 1: the early `if (!inst) return` exits before the try/finally entirely. RG2-A already gave the journal-less
+ * self-test Durable Object (SELF_TEST_WORKFLOW_ID) its own durable copyout job (copyOut()'s own
+ * `workflowId = inst?.workflowId ?? SELF_TEST_WORKFLOW_ID` fallback) — but if THAT instance's alarm ever fires
+ * (e.g. because copyOut()'s own rearmAlarm() call armed one for a still-PENDING job), this early return meant the
+ * alarm fired, did nothing, and — Durable Object alarms are consumed once fired and are not rescheduled unless
+ * setAlarm() is called again — the instance silently lost its own only remaining wake-up. The exact same class of
+ * bug RG2-A's own adversarial review already found and fixed INSIDE copyOut() itself (an early `if (!inst) return`
+ * there used to skip its ordering-safe path for this same journal-less instance).
+ *
+ * BUG 2/2b: `wiring()`/`orchestratorFor()`/`workflowDef()` ran BEFORE the try block. A thrown signing-key/config
+ * error there skipped the `finally` entirely, so `rearmAlarm()` never ran — a Case would silently stop getting
+ * woken up until something unrelated happened to call rearmAlarm() again.
+ *
+ * The invariant this function exists to hold, and the ONLY thing it changes relative to the code above — a throw
+ * anywhere in bootstrap-or-tick must never skip the final `copyOut(); rearm();` step:
+ *
+ *   try   { const s = buildTick(); if (s) await runAlarmTick(s, tickOpts); }   // bootstrap + tick, one boundary
+ *   catch { onBootstrapFailure(err); }                                        // never rethrown
+ *   finally {
+ *     try   { await copyOut(); }
+ *     catch { onCopyOutFailure(err); }                                        // never rethrown
+ *     finally { await rearm(); }                                              // unconditional, always last
+ *   }
+ *
+ * `buildTick()` returning `undefined` (no journal instance — the journal-less self-test object) simply skips
+ * runAlarmTick() for this tick; it does NOT skip copyOut()/rearm() below, which is the actual fix for BUG 1 above.
+ * A throw from `buildTick()` itself (BUG 2/2b) is caught by the SAME `catch` runAlarmTick()'s own failures would
+ * hit if it ever somehow threw despite its "never throw" contract (belt over an already-fastened one) — either way
+ * `onBootstrapFailure` fires and copyOut()/rearm() still run, fixing BUG 2/2b.
+ *
+ * `rearm()` itself is deliberately NOT try/caught here: if it throws, this function's own returned promise rejects
+ * rather than swallowing the failure — there is nothing left downstream to durably record it to at that point
+ * (copyOut() has already been attempted, one way or the other, by the time rearm() runs). This mirrors
+ * runAlarmTick()'s own "never throw" contract being a promise about ITS three subsystems specifically, not a
+ * blanket guarantee that literally nothing in this file can ever reject.
+ *
+ * Deliberate, small behavior change from the pre-RG2-B code (index.ts's alarm() is the only call site this
+ * affects): alarm()'s own copyOut() call used to go through `this.ctx.waitUntil(this.copyOut())` — fire-and-forget
+ * — immediately followed by `await this.rearmAlarm()`, so alarm()'s own rearm could run BEFORE its own copyOut()
+ * actually finished. index.ts now supplies `copyOut: () => this.copyOut()` here, which this function `await`s
+ * directly, so alarm()'s own final rearm() reflects copyOut()'s truly-finished state. Safe specifically because
+ * alarm() is a background handler with no HTTP response to protect — unlike intake()/mailIntake()/decideReview(),
+ * which genuinely need to return a response without waiting for copyOut() and so keep their own
+ * `ctx.waitUntil(this.copyOut())` + own `rearmAlarm()` call sites completely unchanged (copyOut()'s own trailing
+ * `await this.rearmAlarm()`, added by RG2-A, stays load-bearing for THOSE call sites, where copyOut() may finish
+ * well after the request that triggered it already returned). In the alarm()-triggered case specifically, this
+ * makes copyOut()'s own internal rearm() call and this function's `rearm()` call a harmless, idempotent double-call
+ * back to back — rearmAlarm() is cheap and always recomputes from fresh durable state by design (see its own doc
+ * comment), so calling it twice in a row here is safe, not a bug to fix.
+ */
+export interface AlarmCycleDeps {
+  /** Build this tick's subsystems (wiring, orchestrator, the three AlarmTickSubsystems callbacks). Returns
+   * `undefined` when there is no journal instance to run a tick for (the journal-less self-test object) —
+   * runAlarmTick() is then simply skipped, but copyOut()/rearm() below still always run. May THROW (a bad signing
+   * key, a workflowDef() lookup failure, etc.) — that throw must not prevent copyOut()/rearm() from still
+   * running. */
+  buildTick: () => AlarmTickSubsystems | undefined;
+  tickOpts: AlarmTickOpts;
+  /** Called once if buildTick() itself throws, or (belt over an already-fastened one) if runAlarmTick() itself
+   * somehow throws despite its own per-subsystem isolation — never rethrown. */
+  onBootstrapFailure: (err: unknown) => void;
+  copyOut: () => Promise<void>;
+  /** Called if copyOut() throws — never rethrown. copyOut() already keeps its own durable job PENDING on failure
+   * (RG2-A); this exists purely so an unexpected rejection here can never skip rearm() below. */
+  onCopyOutFailure: (err: unknown) => void;
+  rearm: () => Promise<void>;
+}
+
+export async function runAlarmCycle(deps: AlarmCycleDeps): Promise<void> {
+  try {
+    const subsystems = deps.buildTick();
+    if (subsystems) await runAlarmTick(subsystems, deps.tickOpts);
+  } catch (err) {
+    deps.onBootstrapFailure(err);
+  } finally {
+    try {
+      await deps.copyOut();
+    } catch (err) {
+      deps.onCopyOutFailure(err);
+    } finally {
+      await deps.rearm();
+    }
+  }
+}

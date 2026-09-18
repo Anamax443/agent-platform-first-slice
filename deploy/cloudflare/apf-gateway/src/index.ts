@@ -70,7 +70,7 @@ import { D1_AUDIT_DDL, D1_EVIDENCE_DDL, D1_R2_REF_DDL, d1Sql, DDL, evidenceMirro
 // scheduler.ts) is the one place that folds it into the three-source Math.min(...), so index.ts only ever needs
 // its OWN two inputs (missingAttachments()/fanoutRetryDecision()) plus the combined result.
 import { fanoutRetryDecision, missingAttachments, type CaseMemberSummary, type FanoutJobRecord } from "./fanout-retry.js";
-import { nextAlarmWakeMs, runAlarmTick } from "./alarm-scheduler.js";
+import { nextAlarmWakeMs, runAlarmCycle } from "./alarm-scheduler.js";
 import { registerDerived, type DerivedArtifactRegistration, type RegisterDerivedResult } from "./artifact-registration.js";
 import { createPrivateKey, createPublicKey } from "node:crypto";
 import { verifyEvidence, type Evidence } from "../../../../src/platform/evidence.js";
@@ -1578,51 +1578,90 @@ export class WorkflowInstance extends DurableObject<Env> {
    * timeout becomes a DependencyTimeout, caught exactly like any other subsystem failure, and this doc comment's
    * own claim ("a recovery or fan-out failure can still never prevent reviews from running") now holds for a
    * HUNG subsystem too, not only a thrown one.
+   *
+   * RG2-B follow-up (adversarial review, 2026-09-18, same day): the shape above still had two gaps in the code
+   * that used to sit here directly (an `if (!inst) return` before the try, and `wiring()`/`orchestratorFor()`
+   * calls also before it) — either could skip step 4 and rearmAlarm() entirely. Both moved inside
+   * runAlarmCycle()'s (alarm-scheduler.ts) own try/finally via `buildTick()`; see that function's own doc comment
+   * for the exact bug this closes and why. This method is now a thin wrapper handing runAlarmCycle() real
+   * closures — the four-step shape and the ordering/isolation reasoning above are otherwise unchanged.
    */
   async alarm(): Promise<void> {
-    const inst = this.journal.list()[0];
-    if (!inst) return;
-    const wiring = this.wiring();
-    const orchestrator = this.orchestratorFor(workflowDef(inst.workflow), wiring);
-    const recordSubsystemFailure = (subsystem: "recovery" | "fanout" | "reviews", err: unknown) => {
-      const reason =
-        subsystem === "recovery"
-          ? "alarm-triggered recover() failed"
-          : subsystem === "fanout"
-          ? "alarm-triggered fan-out retry failed"
-          : "alarm-triggered review-expiry check failed";
-      this.audit.append({
-        kind: "reconciliation",
-        workflowId: inst.workflowId,
-        correlationId: inst.correlationId,
-        tenantId: inst.tenantId,
-        details: { reason, error: err instanceof Error ? err.message : String(err) },
-      });
-    };
-    try {
-      await runAlarmTick({
-        recover: async () => {
-          // Re-read rather than reuse the outer `inst`: applyReviewExpiries() (step 3) has not run yet at this
-          // point, but this same discipline (re-reading before acting, not trusting a value from before this
-          // subsystem's own turn) is what R2's original code already did here, and is what keeps this step
-          // correct regardless of what order these three subsystems end up running in.
-          const current = this.journal.list()[0];
-          if (current?.status === "RUNNING" && isRunningStepStale(current, workflowDef(current.workflow), this.clock.now())) {
-            await orchestrator.recover();
-          }
-        },
-        retryFanout: async () => {
-          await this.maybeRetryFanoutJob(inst, wiring);
-        },
-        applyReviewExpiries: async () => {
-          orchestrator.applyReviewExpiries();
-        },
-        onFailure: recordSubsystemFailure,
-      }, { subsystemBudgetMs: ALARM_SUBSYSTEM_BUDGET_MS });
-    } finally {
-      this.ctx.waitUntil(this.copyOut());
-      await this.rearmAlarm();
-    }
+    await runAlarmCycle({
+      buildTick: () => {
+        // RG2-B (2026-09-18): `inst`, `wiring()` and `orchestratorFor()` all move INSIDE buildTick() so a throw
+        // from any of them (a bad/missing GATEWAY_SIGNING_KEY, a workflowDef() lookup failure) is caught by
+        // runAlarmCycle()'s own try, not skipped past it the way the pre-RG2-B code's `if (!inst) return` and
+        // bare pre-try calls used to skip past `finally { copyOut(); rearmAlarm(); }` entirely. Returning
+        // `undefined` for the journal-less self-test instance (no early `return` here any more) is itself the fix
+        // for that same bug's other half: copyOut()/rearmAlarm() below still always run for that instance.
+        const inst = this.journal.list()[0];
+        if (!inst) return undefined;
+        const wiring = this.wiring();
+        const orchestrator = this.orchestratorFor(workflowDef(inst.workflow), wiring);
+        const recordSubsystemFailure = (subsystem: "recovery" | "fanout" | "reviews", err: unknown) => {
+          const reason =
+            subsystem === "recovery"
+              ? "alarm-triggered recover() failed"
+              : subsystem === "fanout"
+              ? "alarm-triggered fan-out retry failed"
+              : "alarm-triggered review-expiry check failed";
+          this.audit.append({
+            kind: "reconciliation",
+            workflowId: inst.workflowId,
+            correlationId: inst.correlationId,
+            tenantId: inst.tenantId,
+            details: { reason, error: err instanceof Error ? err.message : String(err) },
+          });
+        };
+        return {
+          recover: async () => {
+            // Re-read rather than reuse the outer `inst`: applyReviewExpiries() (step 3) has not run yet at this
+            // point, but this same discipline (re-reading before acting, not trusting a value from before this
+            // subsystem's own turn) is what R2's original code already did here, and is what keeps this step
+            // correct regardless of what order these three subsystems end up running in.
+            const current = this.journal.list()[0];
+            if (current?.status === "RUNNING" && isRunningStepStale(current, workflowDef(current.workflow), this.clock.now())) {
+              await orchestrator.recover();
+            }
+          },
+          retryFanout: async () => {
+            await this.maybeRetryFanoutJob(inst, wiring);
+          },
+          applyReviewExpiries: async () => {
+            orchestrator.applyReviewExpiries();
+          },
+          onFailure: recordSubsystemFailure,
+        };
+      },
+      tickOpts: { subsystemBudgetMs: ALARM_SUBSYSTEM_BUDGET_MS },
+      // RG2-B: a NEW, separate audit path from recordSubsystemFailure above — this fires for a failure that
+      // happens BEFORE any subsystem ever gets a chance to run at all (buildTick() itself throwing, or the
+      // belt-over-braces case of runAlarmTick() somehow throwing despite its own per-subsystem isolation), so
+      // `inst` may not even exist here. Kept as its own `kind: "reconciliation"` record (same audit kind the three
+      // named subsystem failures above already use) with a distinct `reason` string, rather than a new AuditKind,
+      // since this is still fundamentally the same "alarm tick didn't fully do its job, here's why" story.
+      onBootstrapFailure: (err) => {
+        const inst = this.journal.list()[0];
+        this.audit.append({
+          kind: "reconciliation",
+          workflowId: inst?.workflowId,
+          correlationId: inst?.correlationId,
+          tenantId: inst?.tenantId,
+          details: { reason: "alarm bootstrap failed (wiring/orchestrator construction, or an uncaught tick error)", error: err instanceof Error ? err.message : String(err) },
+        });
+      },
+      // RG2-B: awaited here (via runAlarmCycle's own `finally { await copyOut(); ... }`) rather than the
+      // pre-RG2-B `this.ctx.waitUntil(this.copyOut())` fire-and-forget — see runAlarmCycle()'s own doc comment
+      // (alarm-scheduler.ts) for exactly why that's safe only for this specific call site.
+      copyOut: () => this.copyOut(),
+      onCopyOutFailure: (err) => {
+        // copyOut() already durably keeps its own job PENDING on failure (RG2-A) and logs via console.error — this
+        // is purely so an unexpected rejection escaping copyOut() itself can never skip rearmAlarm() below.
+        console.error("[apf-gateway] alarm(): copyOut() rejected unexpectedly (its own durable job stays PENDING; rearmAlarm() still runs)", err);
+      },
+      rearm: () => this.rearmAlarm(),
+    });
   }
 
   /**
