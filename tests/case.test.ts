@@ -72,3 +72,31 @@ describe("CASE-003 NormalizedImpulse structurally carries no workflow/goal/inten
     expect(Object.keys(i).sort()).toEqual(["artifacts", "channel", "impulseId", "metadata", "receivedAt", "sender", "tenantId", "text", "thread"].sort());
   });
 });
+
+// CASE-004 (this change, 18.9.2026 — fixing the gap a rigorous external audit performed after commit 7971ede
+// named, "Case can exist with 0 instances"): newCase() no longer requires an `instance` argument. Before this
+// change a Case could not structurally represent "opened from an impulse, nothing has run yet" — the state
+// AUTONOMOUS-RUNTIME-V1.md's own acceptance scenario C (part 8) needs for a mail with three different
+// document.type attachments arriving before any of them is individually planned. See case.ts's CaseStatus
+// (UNSTARTED) and newCase()/addInstance() doc comments for the full reasoning.
+describe("CASE-004 newCase() with no instance yet — Case can exist with 0 instances (this change)", () => {
+  it("instances/status/tenantId/timestamps are sourced from the impulse alone when no instance is given", () => {
+    const c = newCase({ caseId: "case-1", impulse: impulse() });
+    expect(c).toEqual({
+      caseId: "case-1",
+      tenantId: TENANT,
+      impulse: impulse(),
+      instances: [],
+      status: "UNSTARTED",
+      createdAt: START,
+      updatedAt: START,
+    });
+  });
+
+  it("addInstance() appends the first instance onto an UNSTARTED case exactly like appending a second instance onto a started one (CASE-002 above) — no code-path change needed for the empty starting array", () => {
+    const c0 = newCase({ caseId: "case-1", impulse: impulse() });
+    const c1 = addInstance(c0, instance());
+    expect(c1.instances).toEqual(["wf-1"]);
+    expect(c1.status).toBe("RUNNING");
+  });
+});
