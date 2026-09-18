@@ -22,6 +22,12 @@
       "minLength": 1,
       "maxLength": 128,
       "description": "Only set by attachment-classify.v1.json's fan-out sub-instances (src/platform/attachment-fanout.ts), never mail-intake.v3.json's own top-level classify step — the Case the sealed evidence's originCaseId should carry (docs/AUTONOMOUS-RUNTIME-V1.md část 2). Never trusted as a business value, only threaded through to EvidenceWriter.write()'s per-call opts."
+    },
+    "attachmentEntityId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Only set by attachment-classify.v1.json's fan-out sub-instances (src/platform/attachment-fanout.ts), never mail-intake.v3.json's own top-level classify step — this attachment's own impulse.attachment entity id (mail.ingest's newEntityId() mint), used to scope document.type.invoiceConfirmed's sealed evidence to exactly this attachment within the Case (docs/AUTONOMOUS-RUNTIME-V1.md část 2, this change). Never trusted as a business value, only threaded through to the evidence subject."
     }
   }
 }

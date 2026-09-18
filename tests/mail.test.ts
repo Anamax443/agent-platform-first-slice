@@ -6,6 +6,7 @@ import { FakeExtractor } from "../src/adapters/extract.js";
 import { ArtifactStore } from "../src/platform/artifacts.js";
 import { FakeClock, MINUTE } from "../src/platform/clock.js";
 import { CredentialDenied } from "../src/platform/credentials.js";
+import { ENTITY_ID_PATTERN } from "../src/platform/fact-address.js";
 import {
   AI_AGENT,
   command,
@@ -308,13 +309,26 @@ describe("mail.ingest attachment splitting (owner, 17.9.2026: 'je jedno jestli j
     const extractor = new FakeExtractor("ok", "extracted PDF text");
     const slice = createSlice({ extractor });
     const instance = await runMailIntake(slice, { rawMail: bigMail });
-    const ingest = instance.steps.find((s) => s.stepId === "ingest")?.result?.payload as { attachmentArtifactIds: string[]; originalArtifactId: string };
+    const ingest = instance.steps.find((s) => s.stepId === "ingest")?.result?.payload as {
+      attachmentArtifactIds: string[];
+      attachments: { filename: string; status: string; artifactId?: string; entityId?: string }[];
+      originalArtifactId: string;
+    };
     expect(extractor.calls).toEqual([{ name: "invoice.pdf", contentType: "application/pdf" }]); // only the PDF, not the csv
     expect(ingest.attachmentArtifactIds).toHaveLength(2); // pdf (extracted) + csv (text, decoded directly)
     const pdfArtifact = slice.artifacts.get(ingest.attachmentArtifactIds[0] as string);
     expect(pdfArtifact).toMatchObject({ bytes: "extracted PDF text", derivedFrom: ingest.originalArtifactId, producer: "mail-ingest:workers-ai-toMarkdown" });
     const csvArtifact = slice.artifacts.get(ingest.attachmentArtifactIds[1] as string);
     expect(csvArtifact).toMatchObject({ bytes: "castka,mena\r\n12500,CZK", derivedFrom: ingest.originalArtifactId, producer: "mail-ingest:parseMimeMessage" });
+    // P0 fact-scope-multi-doc pass (docs/AUTONOMOUS-RUNTIME-V1.md część 2, 18.9.2026 external audit): two different
+    // SUCCEEDED attachments of the same mail get two genuinely distinct impulse.attachment entity ids (handler.ts's
+    // per-attachment newEntityId() mint) — the whole point of threading an entityId through at all is worthless if
+    // two attachments could collide on it.
+    const pdfEntry = ingest.attachments.find((a) => a.filename === "invoice.pdf");
+    const csvEntry = ingest.attachments.find((a) => a.filename === "note.csv");
+    expect(pdfEntry?.entityId).toMatch(ENTITY_ID_PATTERN);
+    expect(csvEntry?.entityId).toMatch(ENTITY_ID_PATTERN);
+    expect(pdfEntry?.entityId).not.toBe(csvEntry?.entityId);
   });
 
   it("one attachment failing extraction does not fail the message — the body still classifies, the other attachment is still derived", async () => {
@@ -331,7 +345,7 @@ describe("mail.ingest attachment splitting (owner, 17.9.2026: 'je jedno jestli j
     expect(instance.status).toBe("SUCCEEDED"); // best-effort-per-attachment: one failed attachment never fails the whole mail
     const ingest = instance.steps.find((s) => s.stepId === "ingest")?.result?.payload as {
       attachmentArtifactIds: string[];
-      attachments: { index: number; filename: string; contentType: string; status: string; artifactId?: string; errorCode?: string }[];
+      attachments: { index: number; filename: string; contentType: string; status: string; artifactId?: string; entityId?: string; errorCode?: string }[];
     };
     // attachmentArtifactIds: byte-for-byte unchanged — same one value (the csv), same order, as before this change.
     expect(ingest.attachmentArtifactIds).toHaveLength(1);
@@ -340,9 +354,13 @@ describe("mail.ingest attachment splitting (owner, 17.9.2026: 'je jedno jestli j
     const pdfEntry = ingest.attachments.find((a) => a.filename === "invoice.pdf");
     expect(pdfEntry).toMatchObject({ status: "FAILED", errorCode: "EXTRACTION_FAILED" });
     expect(pdfEntry?.artifactId).toBeUndefined();
+    // P0 fact-scope-multi-doc pass (docs/AUTONOMOUS-RUNTIME-V1.md część 2, 18.9.2026 external audit): a FAILED entry
+    // never carries an entityId either — mirrors artifactId's own "present iff SUCCEEDED" contract (output.schema.json).
+    expect(pdfEntry?.entityId).toBeUndefined();
     const csvEntry = ingest.attachments.find((a) => a.filename === "note.csv");
     expect(csvEntry).toMatchObject({ status: "SUCCEEDED" });
     expect(csvEntry?.artifactId).toBeTruthy();
+    expect(csvEntry?.entityId).toMatch(ENTITY_ID_PATTERN);
     // The FAILED entry's artifactId is absent, exactly as it is absent from attachmentArtifactIds — same fact, now named.
     expect(ingest.attachmentArtifactIds).not.toContain(pdfEntry?.artifactId);
     expect(ingest.attachmentArtifactIds).toEqual([csvEntry?.artifactId]);

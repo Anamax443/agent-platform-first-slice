@@ -83,6 +83,21 @@ describe("FACT-003 every produced key exists in the namespace", () => {
     expect(code(() => FactCatalog.build(ns([{ key: "a.b", kind: "artifact" }, { key: "a.b.verified", kind: "evidence", for: "a.b" }]), []))).toBe("EVIDENCE_TARGET");
     expect(code(() => FactCatalog.build(ns([{ key: "a.b", kind: "fact", resultVocabulary: ["PASS"] }]), []))).toBe("EVIDENCE_TARGET");
   });
+  it("an evidence entry's own 'scope' may legitimately differ from its 'for' target's scope (P0 fact-scope-multi-doc pass, docs/AUTONOMOUS-RUNTIME-V1.md część 2, 18.9.2026 external audit) — the structural assumption document.type.invoiceConfirmed's own rescoping relies on, pinned independently of contracts/facts.v1.json's actual content: build() only checks EVIDENCE_TARGET's kind (fact), never scope parity between an evidence entry and the fact it attests", () => {
+    const ATT_ENTITY: EntityDecl = { type: "doc.att", multiplicity: "many", identityFields: ["doc.att.sha256", "doc.att.name"] };
+    const namespace = ns(
+      [
+        { key: "doc.type", kind: "fact", authority: "derived" },
+        { key: "doc.att.sha256", kind: "fact", authority: "source", scope: "doc.att" },
+        { key: "doc.att.name", kind: "fact", authority: "source", scope: "doc.att" },
+        { key: "doc.type.confirmed", kind: "evidence", for: "doc.type", scope: "doc.att" },
+      ],
+      [ATT_ENTITY],
+    );
+    const catalog = FactCatalog.build(namespace, []);
+    expect(catalog.scopeOf("doc.type")).toBe(CASE_SCOPE);
+    expect(catalog.scopeOf("doc.type.confirmed")).toBe("doc.att");
+  });
 });
 
 describe("FACT-004 no component invents a fact, a capability or a kind", () => {
@@ -148,6 +163,12 @@ describe("FACT-005 a fact's scope must name a declared entity, or the reserved c
     expect(decl).toEqual({ type: "impulse.attachment", of: "impulse.raw", multiplicity: "many", identityFields: ["impulse.attachment.sha256", "impulse.attachment.name"] });
     expect(catalog.scopeOf("impulse.attachment.sha256")).toBe("impulse.attachment");
     expect(catalog.scopeOf("impulse.channel")).toBe(CASE_SCOPE);
+  });
+  it("P0 fact-scope-multi-doc pass (docs/AUTONOMOUS-RUNTIME-V1.md część 2, 18.9.2026 external audit): only document.type.invoiceConfirmed is rescoped to impulse.attachment — document.type and document.type.validated stay CASE_SCOPE, exactly as contracts/facts.v1.json's own entries for all three keys now document", () => {
+    const catalog = realCatalog();
+    expect(catalog.scopeOf("document.type.invoiceConfirmed")).toBe("impulse.attachment");
+    expect(catalog.scopeOf("document.type")).toBe(CASE_SCOPE);
+    expect(catalog.scopeOf("document.type.validated")).toBe(CASE_SCOPE);
   });
   it("a fact scoped to a declared entity builds; the reserved case scope needs no declaration at all", () => {
     expect(() => FactCatalog.build(ENTITY_NS, [])).not.toThrow();
