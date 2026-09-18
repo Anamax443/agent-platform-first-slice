@@ -28,9 +28,11 @@ import type { Artifact } from "../src/platform/artifacts.js";
 import { ArtifactStore } from "../src/platform/artifacts.js";
 import { Audit } from "../src/platform/audit.js";
 import { fanOutAttachments } from "../src/platform/attachment-fanout.js";
-import { FakeClock } from "../src/platform/clock.js";
+import { FakeClock, iso, plus } from "../src/platform/clock.js";
 import { MemoryEvidenceStore } from "../src/platform/evidence.js";
 import { newEntityId } from "../src/platform/fact-address.js";
+import { newId } from "../src/platform/ids.js";
+import type { IdempotencyStore } from "../src/platform/idempotency.js";
 import { Journal } from "../src/platform/journal.js";
 import { Orchestrator } from "../src/platform/orchestrator.js";
 import { plan } from "../src/platform/planner.js";
@@ -38,7 +40,8 @@ import { ReviewService } from "../src/platform/review.js";
 import { workflowDef } from "../src/platform/workflow.js";
 import { FACT_CATALOG } from "../deploy/cloudflare/apf-gateway/src/fact-catalog-bundle.js";
 import { CLASSIFY, wirePlatform, type Wiring } from "../deploy/cloudflare/apf-gateway/src/platform-wiring.js";
-import { CONTRACT_CZ, FAKE_SECRETS, INVOICE_CZ, LOCAL_FAKES, ORCHESTRATOR, TENANT_A } from "./harness/index.js";
+import { CONTRACT_CZ, FAKE_SECRETS, INVOICE_CZ, INVOICE_MAIL, LOCAL_FAKES, ORCHESTRATOR, TENANT_A, tmpDir } from "./harness/index.js";
+import { IDEMPOTENCY_DDL, openSql, TestIdempotencyStore } from "./harness/sqlite.js";
 import type { WorkersAiBinding } from "../src/adapters/workers-ai.js";
 import type { ResultEnvelope, MessageEnvelope } from "../src/platform/types.js";
 
@@ -49,7 +52,7 @@ import type { ResultEnvelope, MessageEnvelope } from "../src/platform/types.js";
  * LOCAL_FAKES's own installation profile (provider "fake" -> FakeLlmAdapter/KeywordClassifierAdapter, the same
  * adapters createSlice() uses), and `evidence` is a real EvidenceLedger over a real (in-memory) EvidenceStore.
  */
-function buildRealWiring() {
+function buildRealWiring(opts: { idempotency?: IdempotencyStore } = {}) {
   const clock = new FakeClock("2026-09-18T08:00:00Z");
   const artifacts = new ArtifactStore(clock);
   const audit = new Audit(clock);
@@ -72,10 +75,14 @@ function buildRealWiring() {
     registry: new FakeRegistryAdapter(),
     notWired,
     evidence: { store: new MemoryEvidenceStore(), buildHash: "test-build" },
+    // R1 (Reliability Gate, 2026-09-18): every existing call site in this file omits `idempotency` and keeps
+    // working exactly as before (WiringOptions.idempotency is optional, platform-wiring.ts's own doc comment) —
+    // only the new describe block below passes one, to prove wirePlatform()'s ingestHost actually honors it.
+    ...(opts.idempotency ? { idempotency: opts.idempotency } : {}),
   });
   const review = new ReviewService(clock, audit);
   const orchestratorFor = (def: ReturnType<typeof workflowDef>) => new Orchestrator({ workflow: def, transport: wiring.transport, journal, review, audit, clock, actorId: ORCHESTRATOR });
-  return { wiring, artifacts, audit, journal, orchestratorFor };
+  return { wiring, artifacts, audit, journal, orchestratorFor, clock };
 }
 
 describe("wirePlatform() (the LIVE composition) actually seals document.type.invoiceConfirmed evidence — Gap 2", () => {
@@ -231,5 +238,77 @@ describe("mailIntake() actually reaches fanOutAttachments() now (Gap 1) — sour
     expect(fanOutBody).toContain("FACT_CATALOG");
     // Commit 3: every attachment-classify/attachment-extract instance actually started gets grouped into the Case.
     expect(fanOutBody).toContain("this.growCaseWithFanout(");
+  });
+});
+
+describe("wirePlatform()'s ingestHost honors a passed-in IdempotencyStore across two independently-built Wiring objects (R1)", () => {
+  // R1 of the 2026-09-18 Reliability Gate audit: platform-wiring.ts's ingestHost previously never received an
+  // `idempotency:` option at all (the gap this whole change closes — see that file's own WiringOptions.idempotency
+  // doc comment and store.ts's `idempotency` DDL comment for the full citation trail). This is the one seam none
+  // of the describe() blocks above exercise: this file's own docstring says it drives wirePlatform() for real
+  // specifically because createSlice() never would, and mail.ingest's dedup is exactly the part of wirePlatform()
+  // this batch touches. Two independently-built `buildRealWiring()` results share nothing except the durable
+  // store passed to both — everything else (transport, artifacts, audit, journal) is fresh per wiring, simulating
+  // a Durable Object evicted and rebuilt between the two dispatches (index.ts's WorkflowInstance rebuilds its own
+  // `wiring()` return value from ctx.storage.sql-backed stores in exactly this shape).
+  function mailIngestCommand(clock: FakeClock, idempotencyKey: string): MessageEnvelope {
+    const now = clock.now();
+    return {
+      messageId: newId("msg"),
+      correlationId: newId("cor"),
+      type: "command",
+      capability: "mail.ingest",
+      capabilityVersion: "1",
+      schemaVersion: "1",
+      createdAt: iso(now),
+      notValidAfter: iso(plus(now, 600_000)),
+      idempotencyKey,
+      payload: { rawMail: INVOICE_MAIL, receivedFrom: "test-harness" },
+    };
+  }
+
+  it("a second, independently-built wiring recognizes the first wiring's reservation through the shared durable store, not a fresh in-memory Map", async () => {
+    const file = join(tmpDir(), "gw-idem.sqlite");
+    const { sql } = openSql(file);
+    sql.exec(IDEMPOTENCY_DDL);
+    const store = new TestIdempotencyStore(sql, new FakeClock("2026-09-18T08:00:00Z"));
+    const key = "mail-ingest-durability-key-1";
+
+    const one = buildRealWiring({ idempotency: store });
+    const first = await one.wiring.transport.dispatch(mailIngestCommand(one.clock, key), ORCHESTRATOR);
+    expect(first.status).toBe("SUCCEEDED");
+    expect(one.audit.byKind("duplicate")).toHaveLength(0);
+
+    // `one` is discarded entirely here — its transport/artifacts/audit/journal are never touched again, simulating
+    // an isolate eviction where only the durable idempotency table (ctx.storage.sql on the farm) survives.
+    const two = buildRealWiring({ idempotency: store });
+    const second = await two.wiring.transport.dispatch(mailIngestCommand(two.clock, key), ORCHESTRATOR);
+
+    expect(second.status).toBe("SUCCEEDED");
+    expect(second.payload).toEqual(first.payload);
+    // The new, independently-built wiring's OWN fresh Audit recorded a "duplicate" — it never ran mail.ingest's
+    // side effect again, because it read the reservation `one` made out of the shared durable store, not out of
+    // a Map that died with `one` (same assertion idiom IDM-REPLAY-001 uses for the in-memory case).
+    expect(two.audit.byKind("duplicate")).toHaveLength(1);
+    // The replayed outcome is the cached one from `one`'s run, not a second live execution: `two`'s own artifact
+    // store (fresh, never populated by `one`) never received the original artifact — mail.ingest's handler never
+    // actually ran a second time, it just replayed the durable record `one` wrote.
+    const originalArtifactId = (first.payload as { originalArtifactId?: string }).originalArtifactId;
+    expect(originalArtifactId).toBeTruthy();
+    expect(two.artifacts.get(originalArtifactId as string)).toBeUndefined();
+  });
+
+  it("without a passed-in idempotency store (every pre-existing call site's shape), two independently-built wirings do NOT dedup — the pre-existing behavior is unchanged", async () => {
+    const key = "mail-ingest-no-store-key-1";
+    const one = buildRealWiring();
+    const first = await one.wiring.transport.dispatch(mailIngestCommand(one.clock, key), ORCHESTRATOR);
+    expect(first.status).toBe("SUCCEEDED");
+
+    const two = buildRealWiring();
+    const second = await two.wiring.transport.dispatch(mailIngestCommand(two.clock, key), ORCHESTRATOR);
+    // `two` has its own fresh InMemoryIdempotencyStore (ExecutorHost's own default) — it never saw `one`'s
+    // reservation, so it ran mail.ingest again rather than replaying: no "duplicate" audit entry on `two`.
+    expect(second.status).toBe("SUCCEEDED");
+    expect(two.audit.byKind("duplicate")).toHaveLength(0);
   });
 });

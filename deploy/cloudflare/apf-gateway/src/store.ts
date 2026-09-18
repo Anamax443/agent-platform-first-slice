@@ -13,8 +13,10 @@ import { newId } from "../../../../src/platform/ids.js";
 import { EVIDENCE_MIRROR_DDL, SqliteEvidenceMirror, type AsyncSql } from "../../../../src/platform/evidence-mirror.js";
 import { EVIDENCE_DDL, SqliteEvidenceStore } from "../../../../src/platform/evidence-sqlite.js";
 import { R2_REF_DDL, SqliteR2RefCounter } from "../../../../src/platform/r2-refcount.js";
+import type { IdempotencyRecord, IdempotencyStore } from "../../../../src/platform/idempotency.js";
 import type { Instance, JournalStore } from "../../../../src/platform/journal.js";
 import type { ReviewTask, ReviewTaskStore } from "../../../../src/platform/review.js";
+import type { HandlerOutcome } from "../../../../src/platform/types.js";
 
 /**
  * Durable Žlab (docs/M0-FACT-CONTRACT-V1.md část D, D-2): the platform's SqliteEvidenceStore runs unchanged over
@@ -63,6 +65,25 @@ export const DDL = [
   // could never find the task that created it on a deployed Worker — there was no decision path at all. This table
   // is that missing durability; SqliteReviewTaskStore below is the only thing that reads/writes it.
   "CREATE TABLE IF NOT EXISTS review (review_task_id TEXT PRIMARY KEY, workflow_id TEXT NOT NULL, status TEXT NOT NULL, json TEXT NOT NULL)",
+  // R1 of the 2026-09-18 Reliability Gate audit (owner's second, deeper pass after the P0 semantic-primitive
+  // pass at 1d465dd — "než dáme Farmě větší autonomii, musí se nejdřív sama umět bezpečně probudit, zopakovat,
+  // usmířit neznámý výsledek..."): executor-host.ts:90 (`opts.idempotency ?? new InMemoryIdempotencyStore()`)
+  // meant every ExecutorHost this object builds — including the one behind mail.ingest — fell back to an
+  // in-memory Map that is lost on every restart/eviction of this very Durable Object, so a RESERVED reservation
+  // (a write intent in flight, not yet resolved) simply vanished if the object was evicted mid-attempt. This
+  // table is that missing durability, same role as `review` above: SqliteIdempotencyStore below is the only
+  // thing that reads/writes it. Shaped like apf-document-host/src/idempotency-ledger.ts's own `ledger` table
+  // (dedup_key/status/fingerprint/outcome_json/created_at) so the two stay recognizably the same design — one
+  // in-process (per Durable Object, keyed by orchestrator.ts:245's `${workflowId}:${stepId}:${strategy}:${n}`),
+  // the other cross-object (one IdempotencyLedger DO per dedup key) — rather than diverging for no reason.
+  // Deliberately NOT what this fixes: two independent deliveries of the same physical e-mail still mint two
+  // different workflowIds (index.ts's `startMailIntake()` calls `newId("wf")` before any dedup key exists), so
+  // no per-instance table, however durable, can see across that boundary — that is IdempotencyLedger's job
+  // (Approach B), a deliberately separate, out-of-scope gap tracked as the next Reliability Gate item, not
+  // built here (2026-09-18 judged patch plan: smallest change that closes THIS item's own stated gap — "loses
+  // dedup reservations on restart" — reusing ctx.storage.sql exactly as the tables above already do, no new
+  // Durable Object class, binding or migration on a Worker that is processing live mail right now).
+  "CREATE TABLE IF NOT EXISTS idempotency (dedup_key TEXT PRIMARY KEY, status TEXT NOT NULL, fingerprint TEXT NOT NULL, outcome_json TEXT, created_at TEXT NOT NULL)",
 ];
 
 /** Shared D1 trail: the same record shape, one row per audit record, insert-only. */
@@ -329,5 +350,57 @@ export class SqliteReviewTaskStore implements ReviewTaskStore {
 
   all(): ReviewTask[] {
     return this.sql.exec("SELECT json FROM review").toArray().map((r) => JSON.parse(r.json as string) as ReviewTask);
+  }
+}
+
+const rowToIdempotency = (r: Record<string, SqlStorageValue>): IdempotencyRecord => ({
+  status: r.status as "RESERVED" | "DONE",
+  fingerprint: r.fingerprint as string,
+  ...(r.outcome_json ? { outcome: JSON.parse(r.outcome_json as string) as HandlerOutcome } : {}),
+});
+
+/**
+ * Durable backing for ExecutorHost's dedup (R1, see the `idempotency` DDL comment above for the full citation
+ * trail). One row per dedup key, `INSERT`ed as RESERVED by `reserveOrGet()` and later `UPDATE`d to DONE by
+ * `resolve()` or removed by `release()` — the same three-state lifecycle InMemoryIdempotencyStore already has
+ * (src/platform/idempotency.ts), just durable across this object's own restart instead of living in a Map.
+ * Every method is declared `async` even though the body underneath is synchronous SQL (ctx.storage.sql, like
+ * every other Sqlite*Store in this file): `IdempotencyStore` is a Promise-typed interface, because it is also
+ * implemented by a `DurableIdempotencyStore`-shaped adapter in apf-document-host/apf-email-executor that calls
+ * across a DO stub (a genuine network hop) — JournalStore/CaseStore/ReviewTaskStore above have no such sibling
+ * and so stayed synchronous; this class's signature has to match the interface it implements, not its own body.
+ */
+export class SqliteIdempotencyStore implements IdempotencyStore {
+  constructor(
+    private readonly sql: SqlStorage,
+    private readonly clock: Clock,
+  ) {}
+
+  async peek(dedupKey: string): Promise<IdempotencyRecord | undefined> {
+    const row = this.sql.exec("SELECT * FROM idempotency WHERE dedup_key = ?", dedupKey).toArray()[0];
+    return row ? rowToIdempotency(row) : undefined;
+  }
+
+  async reserveOrGet(dedupKey: string, fingerprint: string): Promise<IdempotencyRecord | undefined> {
+    const existing = await this.peek(dedupKey);
+    if (existing) return existing;
+    // `created_at` is written but not yet read by anything (no TTL/expiry pass exists for a RESERVED row that is
+    // never resolved or released — flagged explicitly in the 2026-09-18 audit as a follow-up, not this change):
+    // kept now so that follow-up is a read/cleanup pass later, not a second schema migration on a live object.
+    this.sql.exec(
+      "INSERT INTO idempotency (dedup_key, status, fingerprint, outcome_json, created_at) VALUES (?, 'RESERVED', ?, NULL, ?)",
+      dedupKey,
+      fingerprint,
+      iso(this.clock.now()),
+    );
+    return undefined;
+  }
+
+  async resolve(dedupKey: string, outcome: HandlerOutcome): Promise<void> {
+    this.sql.exec("UPDATE idempotency SET status = 'DONE', outcome_json = ? WHERE dedup_key = ?", JSON.stringify(outcome), dedupKey);
+  }
+
+  async release(dedupKey: string): Promise<void> {
+    this.sql.exec("DELETE FROM idempotency WHERE dedup_key = ?", dedupKey);
   }
 }

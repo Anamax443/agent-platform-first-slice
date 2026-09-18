@@ -26,6 +26,7 @@ import { EvidenceLedger, type EvidenceStore } from "../../../../src/platform/evi
 import { EvidenceWriter } from "../../../../src/platform/evidence-writer.js";
 import { ExecutorHost } from "../../../../src/platform/executor-host.js";
 import { Gateway, IdentityProvider } from "../../../../src/platform/gateway.js";
+import type { IdempotencyStore } from "../../../../src/platform/idempotency.js";
 import { policyFor } from "../../../../src/platform/policy.js";
 import { capabilityNamesOf, catalogOf, type CapabilityRecord } from "../../../../src/platform/registry.js";
 import { Router } from "../../../../src/platform/router.js";
@@ -208,6 +209,13 @@ export interface WiringOptions {
    * the other. `buildHash` = the running deploy (GIT_SHA), stamped on every record (R5).
    */
   evidence?: { store: EvidenceStore; buildHash: string };
+  /** R1 (Reliability Gate, 2026-09-18): backs mail.ingest's ExecutorHost dedup durably across this object's own
+   * restart. Absent = ExecutorHost's own `opts.idempotency ?? new InMemoryIdempotencyStore()` fallback
+   * (executor-host.ts:90) — every existing wirePlatform() caller that omits it (tests included) keeps compiling
+   * and behaving exactly as before. Does NOT dedup two independent deliveries of the same e-mail (each mints its
+   * own workflowId before any dedup key exists, index.ts's `startMailIntake()`) — that is a separate, deliberately
+   * out-of-scope gap (see store.ts's `idempotency` DDL comment). */
+  idempotency?: IdempotencyStore;
 }
 
 export interface Wiring {
@@ -335,7 +343,10 @@ export function wirePlatform(o: WiringOptions): Wiring {
   const ingestCredentials = new CredentialResolver(credentialTable(o.installation, o.secrets, { [ingest.INGEST_HANDLER_ID]: [] }), o.audit);
   // No review-task store wired here (mail.ingest has approval.required:false today) — checkApproval()
   // still fails closed (APPROVAL_REQUIRED) if a future policy ever sets approval.required:true.
-  const ingestHost = new ExecutorHost({ hostId: ingest.descriptor.module, clock: o.clock, audit: o.audit, credentials: ingestCredentials, policyFor: policy });
+  // `idempotency: o.idempotency` (R1, 2026-09-18): previously never passed, so this host's dedup ran on
+  // ExecutorHost's own in-memory fallback and lost every RESERVED reservation across a restart of this object —
+  // see the WiringOptions.idempotency doc comment above and store.ts's `idempotency` DDL comment for the trail.
+  const ingestHost = new ExecutorHost({ hostId: ingest.descriptor.module, clock: o.clock, audit: o.audit, credentials: ingestCredentials, policyFor: policy, idempotency: o.idempotency });
   // Same extractor as document.extract (below, Podatelna's binary uploads) — one implementation of "binary ->
   // readable text" regardless of which channel handed the farm the attachment.
   ingestHost.register(ingest.createIngestHandler({ artifacts: o.artifacts, clock: o.clock, extractor: new WorkersAiExtractor(o.ai) }));
