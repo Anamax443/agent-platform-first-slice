@@ -2,7 +2,7 @@
 // "IČO does not exist" is a business result (found: false), not a technical error — same pattern as
 // document.classify's OTHER (SEVERKA docs/SEVERKA.md "## Připravované doménové COW").
 import { AresSubjectNotFound, AresUnavailable, type AresAdapter } from "../../adapters/ares.js";
-import { capabilityError, DependencyTimeout, iso, platformError, sha256, withTimeout } from "../../platform/api.js";
+import { CASE_SCOPE, capabilityError, DependencyTimeout, iso, platformError, sha256, withTimeout } from "../../platform/api.js";
 import type { Clock, EvidenceWriter, Handler, HandlerInput, HandlerOutcome, Provenance } from "../../platform/api.js";
 import descriptor from "./descriptor.json" with { type: "json" };
 import inputSchema from "./input.schema.json" with { type: "json" };
@@ -32,11 +32,14 @@ interface Input {
 export function createCompanyVerifier(deps: CompanyVerifierDeps): Handler {
   const failed = (error: ReturnType<typeof capabilityError>): HandlerOutcome => ({ status: "FAILED", error });
   const provenance: Provenance = { producerComponent: descriptor.module, producerVersion: descriptor.componentVersion };
-  // inputField "supplier.companyId" = the fact namespace key (contracts/facts.v1.json, M0 část A), also invoice.v1.s naming (NAVRHOVY-LIST-farma.md
+  // subject.key "supplier.companyId" = the fact namespace key (contracts/facts.v1.json, M0 část A), also invoice.v1.s naming (NAVRHOVY-LIST-farma.md
   // krok 8a), not the payload's local "ico" — the Žlab record names the business field being
-  // verified, not the wire-level parameter name.
+  // verified, not the wire-level parameter name. CASE_SCOPE, no entityId: a singleton fact per Case. reusePolicy
+  // is NOT set here — a cow never asserts its own reuse policy (evidence-writer.ts's WriterIdentity doc comment);
+  // this producer's writer is bound TENANT_WIDE at construction instead (platform-wiring.ts/slice.ts), since
+  // whether a company exists in ARES doesn't depend on which Case asked (docs/AUTONOMOUS-RUNTIME-V1.md część 2).
   const seal = (input: HandlerInput, ico: string, result: string) =>
-    deps.evidence?.write(input, { inputField: "supplier.companyId", inputValueHash: sha256(ico), result });
+    deps.evidence?.write(input, { subject: { key: "supplier.companyId", scope: CASE_SCOPE }, inputValueHash: sha256(ico), result });
 
   return async (input) => {
     const { message } = input;

@@ -76,6 +76,12 @@ export async function importEvidence(ledger: EvidenceLedger, mirror: EvidenceMir
   const alreadyPresent = !imported.includes(recordId);
 
   if (existingMarker) return { ok: true, original, marker: existingMarker, imported, alreadyPresent };
+  // subject copied verbatim from the original record — exact preservation, no reformatting/re-parsing of its
+  // textual inputField. This marker's own reusePolicy is left at append()'s default (CASE_ONLY): it documents
+  // "this workflow imported record X", an artifact of ONE case's own import, not itself meant to be reused by a
+  // different case. originCaseId is left unset — ImportTarget (this function's own `into` parameter) has no caseId
+  // today (out of scope for this task, same "not carried by HandlerInput/MessageEnvelope/TrustedContext yet"
+  // constraint docs/AUTONOMOUS-RUNTIME-V1.md część 2 documents elsewhere) — the safe default, not a gap.
   const marker = ledger.append({
     tenantId: into.tenantId,
     workflowId: into.workflowId,
@@ -83,7 +89,7 @@ export async function importEvidence(ledger: EvidenceLedger, mirror: EvidenceMir
     capabilityVersion: "1",
     buildHash: into.buildHash,
     authorityDomain: PLATFORM_AUTHORITY,
-    inputField: original.inputField,
+    subject: original.subject,
     inputValueHash: original.inputValueHash,
     result: IMPORT_RESULT,
     parentRefs: [original.recordId],

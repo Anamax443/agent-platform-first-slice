@@ -1,7 +1,7 @@
 // document.classify/1: AI capability. Untrusted document text goes in, one enum value with provenance comes out (F2).
 import type { LlmAdapter, TokenUsage } from "../../adapters/llm.js";
-import { capabilityError, DependencyTimeout, platformError, sha256, stripMimeAttachments, withTimeout } from "../../platform/api.js";
-import type { ArtifactReader, Clock, EvidenceWriter, FieldValue, Handler, HandlerInput, HandlerOutcome, Provenance } from "../../platform/api.js";
+import { CASE_SCOPE, capabilityError, DependencyTimeout, platformError, sha256, stripMimeAttachments, withTimeout } from "../../platform/api.js";
+import type { ArtifactReader, Clock, EvidenceWriter, FactAddress, FieldValue, Handler, HandlerInput, HandlerOutcome, Provenance } from "../../platform/api.js";
 import descriptor from "./descriptor.json" with { type: "json" };
 import inputSchema from "./input.schema.json" with { type: "json" };
 import outputSchema from "./output.schema.json" with { type: "json" };
@@ -43,6 +43,15 @@ interface Input {
   documentType?: string;
   /** Model key from the installation's list, chosen per document (form). Only meaningful for the "llm" strategy. */
   model?: string;
+  /**
+   * Present only for a fan-out sub-instance (attachment-classify.v1.json's "classify" step threads it through from
+   * src/platform/attachment-fanout.ts, which gets it from AttachmentFanoutInput) — the Case this classification
+   * belongs to, known at that point because fan-out only starts after createCaseForMailIntake() already ran
+   * (docs/AUTONOMOUS-RUNTIME-V1.md část 2). Absent for mail-intake.v3.json's own top-level "classify" step: that
+   * step runs INSIDE the same orchestrator.run() call createCaseForMailIntake() waits for, so no Case exists yet —
+   * seal() below then writes originCaseId undefined, the ADR's own documented, safe default.
+   */
+  caseId?: string;
 }
 
 const TAG = /<\/?untrusted>/gi;
@@ -76,12 +85,15 @@ export function createDocumentClassifier(deps: ClassifierDeps): Handler {
 
   // owner's Commit 1, 18.9.2026: seal document.type.invoiceConfirmed ONLY when value is literally "INVOICE" — every
   // other classified value (CONTRACT, OTHER) writes nothing, so invoice-extractor's new consumed evidence key
-  // (invoice-extractor/facts.json) is a real gate, not a cosmetic one. inputField names the FACT this attests
+  // (invoice-extractor/facts.json) is a real gate, not a cosmetic one. subject.key names the FACT this attests
   // (document.type), same convention as cz-company-verify's own seal() — never the evidence key, never the payload's
-  // local field name.
-  const seal = (input: HandlerInput, value: string): void => {
+  // local field name. CASE_SCOPE, no entityId: document.type is a per-Case singleton fact (fact-address.ts's own
+  // rules), never a "many" entity. caseId (present only for a fan-out sub-instance, see Input.caseId above) flows
+  // through as write()'s originCaseId option — never as a claim field a cow could set for itself.
+  const seal = (input: HandlerInput, value: string, caseId?: string): void => {
     if (value !== CLASSIFY_EVIDENCE_INVOICE_RESULT) return;
-    deps.evidence?.write(input, { inputField: CLASSIFY_EVIDENCE_INPUT_FIELD, inputValueHash: sha256(value), result: value });
+    const subject: FactAddress = { key: CLASSIFY_EVIDENCE_INPUT_FIELD, scope: CASE_SCOPE };
+    deps.evidence?.write(input, { subject, inputValueHash: sha256(value), result: value }, caseId ? { originCaseId: caseId } : undefined);
   };
 
   return async (input) => {
@@ -101,7 +113,7 @@ export function createDocumentClassifier(deps: ClassifierDeps): Handler {
         return failed(capabilityError("CORRECTION_INVALID", "VALIDATION", false, "human correction is missing or outside the documentType allowlist"));
       }
       const documentType: FieldValue<string> = { value: p.documentType, source: "human", confidence: 1, trustLevel: "human-corrected" };
-      seal(input, documentType.value);
+      seal(input, documentType.value, p.caseId);
       return { status: "SUCCEEDED", payload: { artifactId: art.artifactId, sha256: art.sha256, documentType }, provenance: base };
     }
 
@@ -149,7 +161,7 @@ export function createDocumentClassifier(deps: ClassifierDeps): Handler {
       confidence: strategy === "llm" ? 0.9 : 0.6,
       trustLevel: "untrusted-derived",
     };
-    seal(input, value);
+    seal(input, value, p.caseId);
     return {
       status: "SUCCEEDED",
       payload: { artifactId: art.artifactId, sha256: art.sha256, documentType },

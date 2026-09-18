@@ -204,7 +204,7 @@ export interface WiringOptions {
    * Durable Žlab (docs/M0-FACT-CONTRACT-V1.md část D, D-5). HANDOFF 152 deliberately left `evidence` out while the
    * Žlab was in-memory-only; D-2..D-4 made it durable, so cz.company.verify/cz.vat.verify now seal into the object's
    * SqliteEvidenceStore. Absent = no evidence is written (tests that don't care). The ledger signs with the same
-   * Ed25519 key as dispatch, domain-separated ("EVIDENCE:v2:", evidence.ts), so neither signature can stand in for
+   * Ed25519 key as dispatch, domain-separated ("EVIDENCE:v3:", evidence.ts), so neither signature can stand in for
    * the other. `buildHash` = the running deploy (GIT_SHA), stamped on every record (R5).
    */
   evidence?: { store: EvidenceStore; buildHash: string };
@@ -239,11 +239,15 @@ export function wirePlatform(o: WiringOptions): Wiring {
   // authority grant for it (M0 C-1: config/<installation>/authorities.json → domain stamped, fact scope enforced,
   // TTL capped). A producer without a grant writes "inferred" evidence — never a self-declared authority.
   const evidence = o.evidence ? new EvidenceLedger(o.clock, { keyId: o.keyId, privateKey, publicKey: createPublicKey(privateKey) }, o.evidence.store) : undefined;
-  const writerFor = (producerId: string): { evidence?: EvidenceWriter } => {
+  // reusePolicy (docs/AUTONOMOUS-RUNTIME-V1.md część 2): TENANT_WIDE for cz.company.verify/cz.vat.verify (identity/
+  // registry facts — a company's registration status doesn't depend on which Case asked, the ADR's own example),
+  // left unset (CASE_ONLY, EvidenceLedger.append()'s own default) for CLASSIFY — a decided document type is a fact
+  // of its own Case, never generically reusable. Bound here, at the writer's identity, never on a per-call claim.
+  const writerFor = (producerId: string, reusePolicy?: "CASE_ONLY" | "TENANT_WIDE"): { evidence?: EvidenceWriter } => {
     if (!evidence || !o.evidence) return {};
     const grant = o.installation.authorities.forProducer(producerId);
     const authority = grant ? { domain: grant.domain, facts: grant.facts, maxEvidenceTtlMs: grant.maxEvidenceTtlMs } : undefined;
-    return { evidence: new EvidenceWriter(evidence, { producerId, capabilityVersion: "1", buildHash: o.evidence.buildHash, ...(authority ? { authority } : {}) }, o.clock) };
+    return { evidence: new EvidenceWriter(evidence, { producerId, capabilityVersion: "1", buildHash: o.evidence.buildHash, ...(authority ? { authority } : {}), ...(reusePolicy ? { reusePolicy } : {}) }, o.clock) };
   };
   const router = new Router({ registry, clock: o.clock, audit: o.audit, lifecycle: o.installation.lifecycle });
   const policy = (capability: string) => policyFor(o.installation.policies, capability, "1");
@@ -303,7 +307,7 @@ export function wirePlatform(o: WiringOptions): Wiring {
           ares: o.ares ?? new FakeAresAdapter(),
           clock: o.clock,
           ...(o.aresTimeoutMs !== undefined ? { aresTimeoutMs: o.aresTimeoutMs } : {}),
-          ...writerFor(COMPANY_VERIFY),
+          ...writerFor(COMPANY_VERIFY, "TENANT_WIDE"),
         }),
       },
     ],
@@ -320,7 +324,7 @@ export function wirePlatform(o: WiringOptions): Wiring {
           mojeDane: o.mojeDane ?? new FakeMojeDaneAdapter(),
           clock: o.clock,
           ...(o.mojeDaneTimeoutMs !== undefined ? { mojeDaneTimeoutMs: o.mojeDaneTimeoutMs } : {}),
-          ...writerFor(VAT_VERIFY),
+          ...writerFor(VAT_VERIFY, "TENANT_WIDE"),
         }),
       },
     ],

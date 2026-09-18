@@ -106,7 +106,7 @@ describe("CASE-GROUP-001 a mail-intake instance plus its fanned-out attachment i
     const invoice = putArtifact(slice, INVOICE_CZ);
     const outcomes = await fanOutAttachments(
       { classifyOrchestrator: slice.orchestrators["attachment-classify"] as (typeof slice.orchestrators)[string], extractOrchestrator: slice.orchestrators["attachment-extract"] as (typeof slice.orchestrators)[string], catalog: realCatalog(), evidence: slice.evidence },
-      { tenantId: TENANT_A, attachmentArtifactIds: [invoice.artifactId] },
+      { tenantId: TENANT_A, caseId: c.caseId, attachmentArtifactIds: [invoice.artifactId] },
     );
     expect(outcomes).toHaveLength(1);
     expect(outcomes[0]?.classify.status).toBe("SUCCEEDED");
@@ -143,7 +143,7 @@ describe("CASE-GROUP-001 a mail-intake instance plus its fanned-out attachment i
     const invoice = putArtifact(slice, INVOICE_CZ);
     const outcomes = await fanOutAttachments(
       { classifyOrchestrator: slice.orchestrators["attachment-classify"] as (typeof slice.orchestrators)[string], extractOrchestrator: slice.orchestrators["attachment-extract"] as (typeof slice.orchestrators)[string], catalog: realCatalog(), evidence: slice.evidence },
-      { tenantId: TENANT_A, attachmentArtifactIds: [invoice.artifactId, "art-does-not-exist"] },
+      { tenantId: TENANT_A, caseId: c.caseId, attachmentArtifactIds: [invoice.artifactId, "art-does-not-exist"] },
     );
     expect(outcomes).toHaveLength(2);
     expect(outcomes[0]?.classify.status).toBe("SUCCEEDED");
@@ -177,7 +177,7 @@ describe("CASE-GROUP-001 a mail-intake instance plus its fanned-out attachment i
     const contract = putArtifact(slice, CONTRACT_CZ);
     const outcomes = await fanOutAttachments(
       { classifyOrchestrator: slice.orchestrators["attachment-classify"] as (typeof slice.orchestrators)[string], extractOrchestrator: slice.orchestrators["attachment-extract"] as (typeof slice.orchestrators)[string], catalog: realCatalog(), evidence: slice.evidence },
-      { tenantId: TENANT_A, attachmentArtifactIds: [invoice.artifactId, contract.artifactId] },
+      { tenantId: TENANT_A, caseId: c.caseId, attachmentArtifactIds: [invoice.artifactId, contract.artifactId] },
     );
     expect(outcomes).toHaveLength(2);
 

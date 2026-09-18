@@ -3,7 +3,7 @@
 // (found: false), not a technical error — same pattern as cz.company.verify's not-found and
 // document.classify's OTHER (SEVERKA docs/SEVERKA.md "## Připravované doménové COW").
 import { MojeDaneUnavailable, type MojeDaneAdapter } from "../../adapters/moje-dane.js";
-import { capabilityError, DependencyTimeout, iso, platformError, sha256, withTimeout } from "../../platform/api.js";
+import { CASE_SCOPE, capabilityError, DependencyTimeout, iso, platformError, sha256, withTimeout } from "../../platform/api.js";
 import type { Clock, EvidenceWriter, Handler, HandlerInput, HandlerOutcome, Provenance } from "../../platform/api.js";
 import descriptor from "./descriptor.json" with { type: "json" };
 import inputSchema from "./input.schema.json" with { type: "json" };
@@ -29,9 +29,11 @@ const RELIABILITY = new Set(["ANO", "NE", "NENALEZEN"]);
 export function createVatVerifier(deps: VatVerifierDeps): Handler {
   const failed = (error: ReturnType<typeof capabilityError>): HandlerOutcome => ({ status: "FAILED", error });
   const provenance: Provenance = { producerComponent: descriptor.module, producerVersion: descriptor.componentVersion };
-  // inputField "supplier.vatId" = the fact namespace key (contracts/facts.v1.json, M0 část A), also invoice.v1.s naming (NAVRHOVY-LIST-farma.md krok 8a).
+  // subject.key "supplier.vatId" = the fact namespace key (contracts/facts.v1.json, M0 část A), also invoice.v1.s naming (NAVRHOVY-LIST-farma.md krok 8a).
+  // CASE_SCOPE, no entityId. reusePolicy is bound TENANT_WIDE on this producer's writer at construction (platform-wiring.ts/
+  // slice.ts), not claimed here — same reasoning as cz-company-verify's own seal() comment.
   const seal = (input: HandlerInput, dic: string, result: string) =>
-    deps.evidence?.write(input, { inputField: "supplier.vatId", inputValueHash: sha256(dic), result });
+    deps.evidence?.write(input, { subject: { key: "supplier.vatId", scope: CASE_SCOPE }, inputValueHash: sha256(dic), result });
 
   return async (input) => {
     const { message } = input;

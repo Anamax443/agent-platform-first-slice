@@ -9,6 +9,7 @@ import { fromBase64Url, toBase64Url, utf8Bytes } from "../src/platform/bytes.js"
 import { canonicalize } from "../src/platform/canonical.js";
 import { FakeClock } from "../src/platform/clock.js";
 import { EVIDENCE_SCHEMA_VERSION, EvidenceLedger, evidenceSignedBytes, type Evidence, type EvidenceCandidate } from "../src/platform/evidence.js";
+import { CASE_SCOPE } from "../src/platform/fact-catalog.js";
 import { generateKeyPair } from "../src/platform/signing.js";
 
 const START = "2026-09-13T08:00:00Z";
@@ -22,18 +23,21 @@ function ledgerFixture() {
   return { clock, ledger, keyPair };
 }
 
-function candidate(overrides: Partial<EvidenceCandidate> = {}): EvidenceCandidate {
+/** `inputField` is a convenience for callers below — translated into `subject` (CASE_SCOPE, no entityId) so every
+ * existing override site keeps reading exactly as it did before EvidenceCandidate replaced inputField with subject. */
+function candidate(overrides: Partial<EvidenceCandidate> & { inputField?: string } = {}): EvidenceCandidate {
+  const { inputField, ...rest } = overrides;
   return {
     tenantId: TENANT_A,
     producerId: "cz.vat.verify",
     capabilityVersion: "1",
     buildHash: "build-abc123",
-    inputField: "bankAccount",
+    subject: { key: inputField ?? "bankAccount", scope: CASE_SCOPE },
     inputValueHash: "sha256-of-account-value",
     result: "PASS",
     parentRefs: [],
     parentHashes: [],
-    ...overrides,
+    ...rest,
   };
 }
 
@@ -92,7 +96,8 @@ describe("ZLAB-005 append-only: no update/delete surface exists on the class", (
   it("EvidenceLedger has no method that could mutate or remove a sealed record", () => {
     const methods = Object.getOwnPropertyNames(EvidenceLedger.prototype).filter((m) => m !== "constructor");
     // importSealed (M0 D-4) accepts only records this platform already sealed, verbatim — still no update/delete.
-    expect(methods.sort()).toEqual(["append", "forTenant", "get", "importSealed", "verify", "verifyLineage"]);
+    // forCase (docs/AUTONOMOUS-RUNTIME-V1.md część 2) is a read, same as forTenant/get — still no update/delete.
+    expect(methods.sort()).toEqual(["append", "forCase", "forTenant", "get", "importSealed", "verify", "verifyLineage"]);
     expect(methods.some((m) => /update|delete|remove|clear|set|edit|purge|truncate|overwrite/i.test(m))).toBe(false);
   });
 });
@@ -128,14 +133,51 @@ describe("ZLAB-007 Žlab is tenant-scoped: forTenant never returns another tenan
   });
 });
 
-// M0 část D, R4 (docs/M0-FACT-CONTRACT-V1.md): v2 record shape — the ledger owns schemaVersion, signs with a domain
-// prefix (Posudek 16 P1-12) and refuses v1 records instead of silently accepting them.
-describe("ZLAB-DUR-007 v2 evidence: ledger-owned schemaVersion, domain-separated signature, v1 refused", () => {
-  it("append() stamps schemaVersion 2 and signs EVIDENCE:v2:<recordHash>, never the bare hash", () => {
+// ZLAB-CASE family (docs/AUTONOMOUS-RUNTIME-V1.md część 2, ADR 18.9.2026): forCase() applies the CASE_ONLY-unless-
+// TENANT_WIDE filter — the primitive-level proof behind attachment-fanout.ts's classifiedAsInvoice() now reading
+// through forCase() instead of an unfiltered forTenant() scan.
+describe("ZLAB-CASE-001 forCase(): CASE_ONLY-unless-TENANT_WIDE filter", () => {
+  it("evidence sealed CASE_ONLY for case A is NOT returned by a case-scoped lookup for case B", () => {
+    const { ledger } = ledgerFixture();
+    const a = ledger.append(candidate({ originCaseId: "case-a" }));
+    expect(a.reusePolicy).toBe("CASE_ONLY"); // the default, not explicitly set above
+    expect(ledger.forCase(TENANT_A, "case-a").map((r) => r.recordId)).toEqual([a.recordId]);
+    expect(ledger.forCase(TENANT_A, "case-b")).toEqual([]);
+  });
+
+  it("evidence sealed reusePolicy TENANT_WIDE IS returned regardless of which case asks", () => {
+    const { ledger } = ledgerFixture();
+    const shared = ledger.append(candidate({ originCaseId: "case-a", reusePolicy: "TENANT_WIDE" }));
+    expect(ledger.forCase(TENANT_A, "case-a").map((r) => r.recordId)).toEqual([shared.recordId]);
+    expect(ledger.forCase(TENANT_A, "case-b").map((r) => r.recordId)).toEqual([shared.recordId]);
+    expect(ledger.forCase(TENANT_A, "case-c").map((r) => r.recordId)).toEqual([shared.recordId]);
+  });
+
+  it("evidence with no originCaseId at all (sealed before its Case existed) and the CASE_ONLY default is never returned by any case-scoped lookup — the ADR's safe default, not a gap", () => {
+    const { ledger } = ledgerFixture();
+    const unattributed = ledger.append(candidate());
+    expect(unattributed.originCaseId).toBeUndefined();
+    expect(unattributed.reusePolicy).toBe("CASE_ONLY");
+    expect(ledger.forCase(TENANT_A, "case-a")).toEqual([]);
+    expect(ledger.forCase(TENANT_A, "case-b")).toEqual([]);
+  });
+
+  it("forCase() never returns another tenant's records, same discipline as forTenant()", () => {
+    const { ledger } = ledgerFixture();
+    ledger.append(candidate({ tenantId: TENANT_B, originCaseId: "case-a", reusePolicy: "TENANT_WIDE" }));
+    expect(ledger.forCase(TENANT_A, "case-a")).toEqual([]);
+  });
+});
+
+// M0 část D, R4 (docs/M0-FACT-CONTRACT-V1.md) + docs/AUTONOMOUS-RUNTIME-V1.md część 2: v3 record shape — the ledger
+// owns schemaVersion, signs with a domain prefix (Posudek 16 P1-12) and refuses v1/v2 records instead of silently
+// accepting them.
+describe("ZLAB-DUR-007 v3 evidence: ledger-owned schemaVersion, domain-separated signature, v1/v2 refused", () => {
+  it("append() stamps schemaVersion 3 and signs EVIDENCE:v3:<recordHash>, never the bare hash", () => {
     const { ledger, keyPair } = ledgerFixture();
     const record = ledger.append(candidate());
     expect(record.schemaVersion).toBe(EVIDENCE_SCHEMA_VERSION);
-    expect(EVIDENCE_SCHEMA_VERSION).toBe("2");
+    expect(EVIDENCE_SCHEMA_VERSION).toBe("3");
     const sig = fromBase64Url(record.platformSignature);
     expect(verify(null, evidenceSignedBytes(record.recordHash), keyPair.publicKey, sig)).toBe(true);
     expect(verify(null, utf8Bytes(record.recordHash), keyPair.publicKey, sig)).toBe(false);
@@ -143,11 +185,27 @@ describe("ZLAB-DUR-007 v2 evidence: ledger-owned schemaVersion, domain-separated
 
   it("a v1-shaped record signed over the bare hash with the trusted key is refused, never silently accepted", () => {
     const { ledger, keyPair } = ledgerFixture();
-    const v1Unsigned = { ...candidate(), recordId: "evd-v1", observedAt: START, schemaVersion: "1" };
+    const v1Unsigned = { ...candidate(), inputField: "bankAccount", reusePolicy: "CASE_ONLY" as const, recordId: "evd-v1", observedAt: START, schemaVersion: "1" };
     const recordHash = sha256(canonicalize(v1Unsigned));
     const platformSignature = toBase64Url(sign(null, utf8Bytes(recordHash), keyPair.privateKey));
     const v1: Evidence = { ...v1Unsigned, recordHash, keyId: "platform-k1", platformSignature };
     const r = ledger.verify(v1);
+    expect(r.ok).toBe(false);
+    expect((r as { reason: string }).reason).toMatch(/schemaVersion/);
+  });
+
+  // Task 2 requirement (c): mirrors the v1-rejection test's shape exactly, one schema version later — a v2 record
+  // (inputField only, no subject/reusePolicy/originCaseId, signed "EVIDENCE:v2:<recordHash>") is refused the same
+  // fail-closed way, not silently accepted just because it happens to still verify structurally against v2's own
+  // domain-separated signature.
+  it("a v2-shaped record (pre-subject/reusePolicy, signed EVIDENCE:v2:<recordHash>) is refused, never silently accepted", () => {
+    const { ledger, keyPair } = ledgerFixture();
+    const { subject: _subject, reusePolicy: _reusePolicy, originCaseId: _originCaseId, ...v2Fields } = candidate();
+    const v2Unsigned = { ...v2Fields, inputField: "bankAccount", recordId: "evd-v2", observedAt: START, schemaVersion: "2" };
+    const recordHash = sha256(canonicalize(v2Unsigned));
+    const platformSignature = toBase64Url(sign(null, utf8Bytes(`EVIDENCE:v2:${recordHash}`), keyPair.privateKey));
+    const v2 = { ...v2Unsigned, recordHash, keyId: "platform-k1", platformSignature } as unknown as Evidence;
+    const r = ledger.verify(v2);
     expect(r.ok).toBe(false);
     expect((r as { reason: string }).reason).toMatch(/schemaVersion/);
   });

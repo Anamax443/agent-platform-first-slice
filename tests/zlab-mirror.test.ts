@@ -7,6 +7,7 @@ import { FakeClock } from "../src/platform/clock.js";
 import { EvidenceLedger, verifyEvidence, type Evidence, type EvidenceCandidate } from "../src/platform/evidence.js";
 import { EVIDENCE_MIRROR_DDL, mirrorEvidence, SQLITE_MIRROR_STATEMENTS, SqliteEvidenceMirror } from "../src/platform/evidence-mirror.js";
 import { EVIDENCE_DDL, SqliteEvidenceStore } from "../src/platform/evidence-sqlite.js";
+import { CASE_SCOPE } from "../src/platform/fact-catalog.js";
 import { generateKeyPair } from "../src/platform/signing.js";
 import { tmpDir } from "./harness/index.js";
 import { openAsyncSql, openSql } from "./harness/sqlite.js";
@@ -17,18 +18,19 @@ const TENANT_A = "tenant-a";
 const TENANT_B = "tenant-b";
 const ICO_HASH = "sha256-of-12345678";
 
-function candidate(overrides: Partial<EvidenceCandidate> = {}): EvidenceCandidate {
+function candidate(overrides: Partial<EvidenceCandidate> & { inputField?: string } = {}): EvidenceCandidate {
+  const { inputField, ...rest } = overrides;
   return {
     tenantId: TENANT_A,
     producerId: "cz.company.verify",
     capabilityVersion: "1",
     buildHash: "build-abc123",
-    inputField: "supplier.companyId",
+    subject: { key: inputField ?? "supplier.companyId", scope: CASE_SCOPE },
     inputValueHash: ICO_HASH,
     result: "ACTIVE",
     parentRefs: [],
     parentHashes: [],
-    ...overrides,
+    ...rest,
   };
 }
 

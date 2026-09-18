@@ -53,6 +53,17 @@ export interface AttachmentFanoutDeps {
 
 export interface AttachmentFanoutInput {
   tenantId: string;
+  /**
+   * The Case every attachment-classify/attachment-extract instance this call starts belongs to
+   * (docs/AUTONOMOUS-RUNTIME-V1.md část 2) — required, not optional: by the time a caller can legitimately invoke
+   * this driver at all (index.ts's fanOutAttachmentsIfAny(), which runs strictly after createCaseForMailIntake()
+   * already built the Case for this same mail-intake instance), the Case always already exists. Threaded through to
+   * the classify orchestrator's own start() input (flows to document.classify's handler via
+   * attachment-classify.v1.json's "caseId" step input) so document.classify's own sealed evidence carries
+   * originCaseId, and used directly by classifiedAsInvoice() below to read through EvidenceLedger.forCase() instead
+   * of an unfiltered tenant-wide scan.
+   */
+  caseId: string;
   /** mail.ingest's own attachmentArtifactIds[] payload field — unchanged by this commit. */
   attachmentArtifactIds: readonly string[];
   correlationId?: string;
@@ -130,10 +141,18 @@ export interface AttachmentFanoutOutcome {
  * only whether the Žlab record exists (a key/producer/result-vocabulary check), never the classification VALUE
  * itself (documentType.value): the same key-level, never-value discipline planner.ts's own output is held to
  * (PLAN-005 — no business value ever crosses this boundary).
+ *
+ * Reads through EvidenceLedger.forCase() (docs/AUTONOMOUS-RUNTIME-V1.md část 2), not a plain forTenant() scan —
+ * fixed 18.9.2026: this function used to scan every evidence record of the whole tenant, so a confirmed-INVOICE
+ * record sealed for a DIFFERENT Case's attachment (same tenant, coincidentally the same workflowId scheme) could in
+ * principle satisfy this check. forCase() only ever returns records whose originCaseId is this exact caseId (or
+ * that are explicitly reusePolicy TENANT_WIDE, which document.classify's own evidence never is) — the workflowId
+ * filter below stays on top of that, to pick out THIS specific attachment's own classify instance among the Case's
+ * possibly-several attachment-classify sub-instances.
  */
-function classifiedAsInvoice(evidence: EvidenceLedger, tenantId: string, classifyWorkflowId: string): boolean {
+function classifiedAsInvoice(evidence: EvidenceLedger, tenantId: string, caseId: string, classifyWorkflowId: string): boolean {
   return evidence
-    .forTenant(tenantId)
+    .forCase(tenantId, caseId)
     .some((e: Evidence) => e.workflowId === classifyWorkflowId && e.producerId === CLASSIFY_PRODUCER_ID && e.inputField === CLASSIFY_INPUT_FIELD && e.result === CLASSIFY_INVOICE_RESULT);
 }
 
@@ -147,7 +166,7 @@ export async function fanOutAttachments(deps: AttachmentFanoutDeps, input: Attac
   const out: AttachmentFanoutOutcome[] = [];
 
   for (const artifactId of input.attachmentArtifactIds) {
-    const classifyStart = deps.classifyOrchestrator.start({ tenantId: input.tenantId, artifactId }, input.correlationId);
+    const classifyStart = deps.classifyOrchestrator.start({ tenantId: input.tenantId, artifactId, caseId: input.caseId }, input.correlationId);
     const classify = await deps.classifyOrchestrator.run(classifyStart.workflowId);
 
     if (classify.status !== "SUCCEEDED") {
@@ -156,7 +175,7 @@ export async function fanOutAttachments(deps: AttachmentFanoutDeps, input: Attac
     }
 
     const available = [DOCUMENT_ORIGINAL_KEY];
-    if (classifiedAsInvoice(deps.evidence, input.tenantId, classify.workflowId)) available.push(INVOICE_CONFIRMED_EVIDENCE_KEY);
+    if (classifiedAsInvoice(deps.evidence, input.tenantId, input.caseId, classify.workflowId)) available.push(INVOICE_CONFIRMED_EVIDENCE_KEY);
 
     // The single most important line in this file: whether invoice.extract runs next comes from actually calling
     // plan() and inspecting its returned status/steps — never from a shortcut such as

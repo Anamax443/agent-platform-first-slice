@@ -4,6 +4,7 @@ import { fromBase64Url, toBase64Url, utf8Bytes } from "./bytes.js";
 import { canonicalize } from "./canonical.js";
 import type { Clock } from "./clock.js";
 import { iso } from "./clock.js";
+import { formatFactAddress, type FactAddress } from "./fact-address.js";
 import { newId } from "./ids.js";
 
 /**
@@ -19,6 +20,18 @@ import { newId } from "./ids.js";
 export interface Evidence {
   recordId: string;
   tenantId: string;
+  /**
+   * The Case this evidence was sealed within (docs/AUTONOMOUS-RUNTIME-V1.md část 2, ADR-1 18.9.2026) — VOLITELNÉ,
+   * not required: `createCaseForMailIntake()` builds the Case only AFTER `orchestrator.run()` returns, but the
+   * top-level mail-intake instance's own `document.classify` step calls `EvidenceWriter.write()` INSIDE that same
+   * `orchestrator.run()` call — so no Case exists yet at that exact moment for that one instance. It DOES exist by
+   * the time a fan-out sub-instance (attachment-classify/attachment-extract) runs, since those start after
+   * `createCaseForMailIntake()`. Populated wherever a Case is genuinely knowable at seal time (the DO layer passes
+   * it through as an optional per-call `write()` option — see evidence-writer.ts); left `undefined` otherwise. A
+   * Case-scoped reader (`EvidenceLedger.forCase()` below) must treat `undefined` as "not attributable to any Case,
+   * never returned by a Case-scoped lookup unless reusePolicy is TENANT_WIDE" — a safe default, not a bug.
+   */
+  originCaseId?: string;
   workflowId?: string;
   operationId?: string;
   /** Capability that produced this record, e.g. "cz.vat.verify". */
@@ -35,12 +48,31 @@ export interface Evidence {
    * signed content, so it can never be raised after sealing.
    */
   authorityDomain?: string;
-  /** Which field of which business object this record verifies, e.g. "bankAccount". */
+  /**
+   * The structured FactAddress this record attests (docs/AUTONOMOUS-RUNTIME-V1.md část 2) — fact-address.ts's
+   * `{key, scope, entityId?}`, set by the caller (EvidenceCandidate/EvidenceClaim) and never touched by the ledger.
+   */
+  subject: FactAddress;
+  /**
+   * Which field of which business object this record verifies, e.g. "bankAccount" — DERIVED, set by the ledger
+   * itself as `formatFactAddress(subject)` at write time (never a second source of truth, never caller-settable:
+   * EvidenceCandidate has no `inputField` of its own). Kept as a real, stored, queryable field on purpose — every
+   * existing reader (evidence-sqlite.ts's SQL index, evidence-mirror.ts's lookup, the aggregator's byField grouping)
+   * keeps working against the plain textual form unchanged; `subject` is for a reader that wants the structured form.
+   */
   inputField: string;
   /** Hash of the value being verified at the moment of verification (SEVERKA's `valueHash`). */
   inputValueHash: string;
   /** Capability-specific vocabulary (PASS/FAIL/NENALEZEN/...), kept as a string on purpose — the ledger doesn't judge outcomes. */
   result: string;
+  /**
+   * Cross-Case reuse (docs/AUTONOMOUS-RUNTIME-V1.md část 2, AR-5): CASE_ONLY (default) means only the Case named by
+   * `originCaseId` may treat this record as available evidence; TENANT_WIDE is an explicit opt-in ("does this
+   * company exist" — true independent of which Case is asking) that `EvidenceLedger.forCase()` also returns to
+   * every Case of the same tenant. Set once, on the EvidenceWriter's bound identity (never per-call on a claim a
+   * cow could set to TENANT_WIDE for itself — see evidence-writer.ts's WriterIdentity for why).
+   */
+  reusePolicy: "CASE_ONLY" | "TENANT_WIDE";
   /** Prior Žlab records this one was derived from or depends on (the "hashový graf" — SEVERKA `### Kontrola musí být svázaná...`). */
   parentRefs: string[];
   /** parentRefs[i]'s recordHash *at the time this record was written* — verifyLineage() catches drift if a parent is later found altered. */
@@ -56,7 +88,15 @@ export interface Evidence {
   platformSignature: string;
 }
 
-export type EvidenceCandidate = Omit<Evidence, "recordId" | "observedAt" | "schemaVersion" | "recordHash" | "keyId" | "platformSignature">;
+/**
+ * `inputField` is derived (append() computes it from `subject`, never accepted from a caller — see Evidence's own
+ * doc comment on `inputField`). `reusePolicy` is optional here and defaults to CASE_ONLY in append() when omitted —
+ * additive, so every existing candidate literal that never mentions reuse still gets the safe default without
+ * having to be touched.
+ */
+export type EvidenceCandidate = Omit<Evidence, "recordId" | "observedAt" | "schemaVersion" | "recordHash" | "keyId" | "platformSignature" | "inputField" | "reusePolicy"> & {
+  reusePolicy?: Evidence["reusePolicy"];
+};
 
 export type EvidenceVerification = { ok: true } | { ok: false; reason: string };
 
@@ -75,12 +115,18 @@ export interface EvidenceSigningKey {
 }
 
 /**
- * Evidence record schema this ledger writes and accepts (docs/M0-FACT-CONTRACT-V1.md část D, R4). v1 records
- * (bare-hash signature, no authorityDomain) are refused by verify() — never silently accepted.
+ * Evidence record schema this ledger writes and accepts (docs/M0-FACT-CONTRACT-V1.md část D, R4;
+ * docs/AUTONOMOUS-RUNTIME-V1.md část 2). v1 records (bare-hash signature, no authorityDomain) are refused by
+ * verify() — never silently accepted. v2 records (no originCaseId/subject/reusePolicy — `subject` did not exist,
+ * `inputField` was the only field) are refused the same way, same fail-closed discipline as the v1->v2 bump: a
+ * schema version bump means older records genuinely stop verifying, not "verify() gets looser to cope". Real,
+ * accepted operational cost of this particular bump (18.9.2026): farm-bass443 has real v2 Evidence records sealed
+ * live (133+ D1-mirrored records confirmed via /farm/zlab.json as of 18.9.2026) — those become unverifiable via
+ * verify() going forward, the same situation the v1->v2 bump already created once for v1 records.
  */
-export const EVIDENCE_SCHEMA_VERSION = "2";
+export const EVIDENCE_SCHEMA_VERSION = "3";
 /**
- * Domain separation (docs/POSUDKY.md Posudek 16 P1-12): the platform signs "EVIDENCE:v2:<recordHash>", never the
+ * Domain separation (docs/POSUDKY.md Posudek 16 P1-12): the platform signs "EVIDENCE:v3:<recordHash>", never the
  * bare hash, so an Evidence signature can never be replayed as a Konev (or any other) signature over the same bytes.
  */
 export const EVIDENCE_SIGNATURE_DOMAIN = `EVIDENCE:v${EVIDENCE_SCHEMA_VERSION}:`;
@@ -159,7 +205,9 @@ export class EvidenceLedger {
   append(candidate: EvidenceCandidate): Evidence {
     const recordId = newId("evd");
     const observedAt = iso(this.clock.now());
-    const unsigned = { ...candidate, recordId, observedAt, schemaVersion: EVIDENCE_SCHEMA_VERSION };
+    const inputField = formatFactAddress(candidate.subject);
+    const reusePolicy = candidate.reusePolicy ?? "CASE_ONLY";
+    const unsigned = { ...candidate, inputField, reusePolicy, recordId, observedAt, schemaVersion: EVIDENCE_SCHEMA_VERSION };
     const recordHash = sha256(canonicalize(unsigned));
     const platformSignature = toBase64Url(sign(null, evidenceSignedBytes(recordHash), this.signing.privateKey));
     const record: Evidence = Object.freeze({ ...unsigned, recordHash, keyId: this.signing.keyId, platformSignature });
@@ -193,6 +241,19 @@ export class EvidenceLedger {
   /** Tenant-scoped read (Žlab is tenant-scoped by design, SEVERKA `### Tři role, ne dvě`) — never returns another tenant's records. */
   forTenant(tenantId: string): Evidence[] {
     return this.store.forTenant(tenantId).map((r) => structuredClone(r));
+  }
+
+  /**
+   * Case-scoped read (docs/AUTONOMOUS-RUNTIME-V1.md část 2, AR-5) — the ONE place the CASE_ONLY-unless-TENANT_WIDE
+   * filter is applied. A reader that wants "evidence available to this Case" should call this instead of
+   * re-implementing the filter over forTenant() itself — attachment-fanout.ts's classifiedAsInvoice() used to do
+   * exactly that unfiltered scan before this method existed (fixed 18.9.2026, same commit that added this method).
+   * Evidence with no originCaseId (sealed before its Case existed — see Evidence.originCaseId's own doc comment for
+   * exactly when that happens) is returned here only if it is also reusePolicy TENANT_WIDE — the safe default from
+   * part 2 of the ADR, not a gap: an un-attributable CASE_ONLY record is simply never reusable by any Case.
+   */
+  forCase(tenantId: string, caseId: string): Evidence[] {
+    return this.forTenant(tenantId).filter((r) => r.originCaseId === caseId || r.reusePolicy === "TENANT_WIDE");
   }
 
   /**

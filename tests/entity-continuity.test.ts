@@ -8,6 +8,7 @@ import { EvidenceAggregator } from "../src/platform/aggregator.js";
 import { FakeClock } from "../src/platform/clock.js";
 import { computeEntityHash, entitySnapshotCandidate, reconcileEntities } from "../src/platform/entity-continuity.js";
 import { EvidenceLedger } from "../src/platform/evidence.js";
+import { CASE_SCOPE } from "../src/platform/fact-catalog.js";
 import { generateKeyPair } from "../src/platform/signing.js";
 
 const START = "2026-09-16T15:00:00Z";
@@ -109,7 +110,7 @@ describe("ENT-006 an entity snapshot participates in the existing lineage/not_bo
       producerId: "platform.review",
       capabilityVersion: "1",
       buildHash: "build-1",
-      inputField: `${type}.accountCode.approved@${entityId}`,
+      subject: { key: `${type}.accountCode.approved`, scope: CASE_SCOPE, entityId },
       inputValueHash: "hash-of-approved-account",
       result: "APPROVE",
       parentRefs: [snapshot.recordId],

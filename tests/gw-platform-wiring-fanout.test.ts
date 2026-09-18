@@ -137,7 +137,7 @@ describe("end-to-end through the REAL wirePlatform() + REAL FACT_CATALOG togethe
         catalog: FACT_CATALOG,
         evidence: wiring.evidence,
       },
-      { tenantId: TENANT_A, attachmentArtifactIds: [invoice.artifactId] },
+      { tenantId: TENANT_A, caseId: "case-e2e-1", attachmentArtifactIds: [invoice.artifactId] },
     );
 
     expect(outcomes).toHaveLength(1);
@@ -161,7 +161,7 @@ describe("end-to-end through the REAL wirePlatform() + REAL FACT_CATALOG togethe
         catalog: FACT_CATALOG,
         evidence: wiring.evidence,
       },
-      { tenantId: TENANT_A, attachmentArtifactIds: [contract.artifactId] },
+      { tenantId: TENANT_A, caseId: "case-e2e-2", attachmentArtifactIds: [contract.artifactId] },
     );
     expect(outcomes[0]?.classify.status).toBe("SUCCEEDED");
     expect(outcomes[0]?.plan?.status).toBe("CAPABILITY_GAP");

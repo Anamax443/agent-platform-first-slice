@@ -858,6 +858,24 @@ export class WorkflowInstance extends DurableObject<Env> {
       this.audit.append({ kind: "state", workflowId, tenantId, correlationId, capability: "attachment-fanout", details: { status: "SKIPPED", reason: "no evidence ledger wired for this installation" } });
       return;
     }
+    // Case-scoped evidence (docs/AUTONOMOUS-RUNTIME-V1.md część 2): this method only ever reaches here once
+    // `attachments.length > 0`, which requires mailIngestPayload() to have found a SUCCEEDED mail.ingest step —
+    // exactly the same condition createCaseForMailIntake() (called synchronously in mailIntake(), strictly before
+    // this background task starts) already required to build the Case. So byWorkflowId() below should always
+    // resolve; the undefined branch is a fail-closed, audited guard against that invariant somehow not holding
+    // (e.g. createCaseForMailIntake() itself failing after ingest succeeded), never a silent unscoped fallback.
+    const caseId = this.caseStore.byWorkflowId(workflowId)?.caseId;
+    if (!caseId) {
+      this.audit.append({
+        kind: "state",
+        workflowId,
+        tenantId,
+        correlationId,
+        capability: "attachment-fanout",
+        details: { status: "SKIPPED", reason: "no Case found for this mail-intake instance — fan-out needs a caseId for the case-scoped evidence filter" },
+      });
+      return;
+    }
     try {
       const outcomes = await fanOutAttachments(
         {
@@ -866,7 +884,7 @@ export class WorkflowInstance extends DurableObject<Env> {
           catalog: FACT_CATALOG,
           evidence: wiring.evidence,
         },
-        { tenantId, attachmentArtifactIds, correlationId },
+        { tenantId, caseId, attachmentArtifactIds, correlationId },
       );
       // Case wiring (Commit 3): group every attachment-classify/attachment-extract instance fanOutAttachments()
       // just started into the same Case createCaseForMailIntake() built for this mail-intake instance. Its own

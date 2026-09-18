@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { FakeClock } from "../src/platform/clock.js";
 import { EvidenceLedger, MemoryEvidenceStore, type Evidence, type EvidenceCandidate } from "../src/platform/evidence.js";
 import { EVIDENCE_DDL, SQLITE_EVIDENCE_STATEMENTS, SqliteEvidenceStore } from "../src/platform/evidence-sqlite.js";
+import { CASE_SCOPE } from "../src/platform/fact-catalog.js";
 import { generateKeyPair } from "../src/platform/signing.js";
 import { tmpDir } from "./harness/index.js";
 import { openSql } from "./harness/sqlite.js";
@@ -14,18 +15,19 @@ const START = "2026-09-15T08:00:00Z";
 const TENANT_A = "tenant-a";
 const TENANT_B = "tenant-b";
 
-function candidate(overrides: Partial<EvidenceCandidate> = {}): EvidenceCandidate {
+function candidate(overrides: Partial<EvidenceCandidate> & { inputField?: string } = {}): EvidenceCandidate {
+  const { inputField, ...rest } = overrides;
   return {
     tenantId: TENANT_A,
     producerId: "cz.company.verify",
     capabilityVersion: "1",
     buildHash: "build-abc123",
-    inputField: "supplier.companyId",
+    subject: { key: inputField ?? "supplier.companyId", scope: CASE_SCOPE },
     inputValueHash: "sha256-of-ico",
     result: "ACTIVE",
     parentRefs: [],
     parentHashes: [],
-    ...overrides,
+    ...rest,
   };
 }
 

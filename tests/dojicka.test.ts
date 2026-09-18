@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { AggregateFinding, EvidenceAggregator } from "../src/platform/aggregator.js";
 import { FakeClock, iso, plus, HOUR } from "../src/platform/clock.js";
 import { EvidenceLedger, type Evidence, type EvidenceCandidate } from "../src/platform/evidence.js";
+import { CASE_SCOPE } from "../src/platform/fact-catalog.js";
 import { generateKeyPair } from "../src/platform/signing.js";
 
 const START = "2026-09-13T08:00:00Z";
@@ -19,18 +20,19 @@ function fixture() {
   return { clock, ledger, aggregator };
 }
 
-function candidate(overrides: Partial<EvidenceCandidate> = {}): EvidenceCandidate {
+function candidate(overrides: Partial<EvidenceCandidate> & { inputField?: string } = {}): EvidenceCandidate {
+  const { inputField, ...rest } = overrides;
   return {
     tenantId: TENANT_A,
     producerId: "cz.vat.verify",
     capabilityVersion: "1",
     buildHash: "build-abc123",
-    inputField: "bankAccount",
+    subject: { key: inputField ?? "bankAccount", scope: CASE_SCOPE },
     inputValueHash: "hash-of-value",
     result: "PASS",
     parentRefs: [],
     parentHashes: [],
-    ...overrides,
+    ...rest,
   };
 }
 

@@ -7,7 +7,7 @@
 import { sha256 } from "./artifacts.js";
 import { canonicalize } from "./canonical.js";
 import type { EvidenceCandidate } from "./evidence.js";
-import type { EntityId } from "./fact-address.js";
+import type { EntityId, FactAddress } from "./fact-address.js";
 import { newEntityId } from "./fact-address.js";
 
 /**
@@ -65,12 +65,13 @@ export function reconcileEntities(newHashes: readonly string[], liveEntities: re
 
 /**
  * The EvidenceCandidate for a platform entity snapshot (M0 část B "Snapshot entity jako platformní záznam v
- * Žlabu" — no new mechanism, this is an ordinary Evidence record with a fixed shape). `inputField` is
- * `<type>@<entityId>` — deliberately NOT routed through fact-address.ts's parseFactAddress/formatFactAddress:
- * `type` here is an entity type name (fact-catalog.ts EntityDecl.type), not a dictionary fact key, so it is not
- * itself a FactCatalog entry and would fail FactAddress's UNKNOWN_KEY check. The textual shape matches on
- * purpose (same `key@entityId` grammar, journal/audit readers don't need a second parser) without claiming it
- * validates against the fact namespace.
+ * Žlabu" — no new mechanism, this is an ordinary Evidence record with a fixed shape). `subject` is built as
+ * `{ key: type, scope: type, entityId }` directly — deliberately NOT routed through fact-address.ts's
+ * parseFactAddress(): `type` here is an entity type name (fact-catalog.ts EntityDecl.type), not a dictionary fact
+ * key, so it is not itself a FactCatalog entry and would fail FactAddress's UNKNOWN_KEY check. formatFactAddress()
+ * over this raw subject still round-trips to the exact same `<type>@<entityId>` textual form the ledger derives
+ * into `inputField` (journal/audit readers don't need a second parser) without claiming it validates against the
+ * fact namespace.
  */
 export function entitySnapshotCandidate(input: {
   tenantId: string;
@@ -84,6 +85,7 @@ export function entitySnapshotCandidate(input: {
   parentRefs?: readonly string[];
   parentHashes?: readonly string[];
 }): EvidenceCandidate {
+  const subject: FactAddress = { key: input.type, scope: input.type, entityId: input.entityId };
   return {
     tenantId: input.tenantId,
     ...(input.workflowId !== undefined ? { workflowId: input.workflowId } : {}),
@@ -92,7 +94,7 @@ export function entitySnapshotCandidate(input: {
     capabilityVersion: "1",
     buildHash: input.buildHash,
     authorityDomain: "platform",
-    inputField: `${input.type}@${input.entityId}`,
+    subject,
     inputValueHash: input.entityHash,
     result: "OBSERVED",
     parentRefs: [...(input.parentRefs ?? [])],

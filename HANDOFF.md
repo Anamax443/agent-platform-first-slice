@@ -2,6 +2,59 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-18 (182) — `docs/AUTONOMOUS-RUNTIME-V1.md` část 2 implementována: Evidence gets `originCaseId`/`subject`/`reusePolicy`, schema v2→v3, `EvidenceLedger.forCase()`, `attachment-fanout.ts` case-scoped
+
+**Co se zapojuje:** přímo navazující krok po #181's ADR (`AUTONOMOUS-RUNTIME-V1.md`, část 6 krok 2) — Evidence
+gets `originCaseId?: string` (VOLITELNÉ — Case v okamžiku `document.classify`'s vlastního zapečetění v top-level
+mail-intake instanci ještě neexistuje, viz ADR část 2 pro přesné vysvětlení proč), `subject: FactAddress`
+(nahrazuje `inputField: string` jako strukturované pole; `inputField` **zůstal** jako ODVOZENÉ pole —
+`EvidenceLedger.append()` ho samo dopočítá `formatFactAddress(subject)`, žádný caller ho už nemůže nastavit —
+`evidence-sqlite.ts`/`evidence-mirror.ts`/`aggregator.ts` tak zůstaly beze změny), `reusePolicy: "CASE_ONLY" |
+"TENANT_WIDE"` (default `CASE_ONLY`, svázané na `EvidenceWriter`'s `WriterIdentity` při konstrukci — NE na
+`EvidenceClaim`, stejný princip jako `authorityDomain`: kráva si nemůže sama přiřadit vlastní reuse policy).
+
+**Schema bump 2→3** (`EVIDENCE_SCHEMA_VERSION`, `EVIDENCE_SIGNATURE_DOMAIN`), stejná fail-closed disciplína jako
+existující v1→v2 krok — `verifyEvidence()` teď odmítá i v2 záznamy (nový test mirroring shape existujícího
+v1-rejection testu), nikdy je tiše nepřijme. **Reálný provozní důsledek, řečeno rovnou:** farm-bass443 má dnes
+živé v2 Evidence záznamy zapečetěné (133+ D1-zrcadlených záznamů potvrzeno přes `/farm/zlab.json` k 18.9.2026) —
+po nasazení tohohle schématového kroku se stanou přes `verify()` neověřitelnými (stejná situace, jakou už jednou
+vytvořil v1→v2 krok). Tenhle krok **není nasazený** (žádný commit/push/deploy, jen lokální change set + testy),
+takže k tomuhle důsledku ještě nedošlo — ale nastane při příštím nasazení, ne až "možná".
+
+**`EvidenceLedger.forCase(tenantId, caseId)`** — nová jediná case-scoped čtecí cesta (CASE_ONLY-unless-
+TENANT_WIDE filtr aplikovaný přesně na jednom místě, ne přepisovaný per volající): `forTenant(tenantId).filter(r
+=> r.originCaseId === caseId || r.reusePolicy === "TENANT_WIDE")`. `EvidenceLedger` zůstává tenant-scoped storage
+(ADR část 2's "co se NEMĚNÍ") — `forCase()` je čistě čtecí projekce nad `forTenant()`, žádná nová DB tabulka/index.
+
+**`attachment-fanout.ts`'s `classifiedAsInvoice()`** přepnuto z nefiltrovaného `evidence.forTenant(tenantId)`
+scanu na `evidence.forCase(tenantId, caseId)` — `AttachmentFanoutInput` dostalo nové POVINNÉ pole `caseId:
+string` (ne volitelné: `fanOutAttachments()` je voláno jen z míst, kde Case už prokazatelně existuje —
+`index.ts`'s `fanOutAttachmentsIfAny()` běží striktně po `createCaseForMailIntake()` — vynutit to na typové úrovni
+bylo čistší než nechat volajícího tiše zapomenout). `caseId` teče do `document.classify`'s handleru přes nové
+volitelné pole capability-specifického payloadu (`caseId?` v `input.schema.json`, threaded skrz
+`attachment-classify.v1.json`'s step `inputs: {"caseId": "$input.caseId"}`) — NE přes `HandlerInput`/
+`MessageEnvelope`/`TrustedContext` (výslovně mimo rozsah tohohle kroku). Mail-intake.v3.json's vlastní top-level
+"classify" krok zůstal beze změny (žádný `caseId` — Case tam v tu chvíli ještě neexistuje, ADR's vlastní
+zdokumentovaná mezera).
+
+**`cz.company.verify`/`cz.vat.verify`: `reusePolicy: "TENANT_WIDE"`** (identity/registrová fakta — existence
+firmy/spolehlivost DIČ nezávisí na tom, který Case se ptá, ADR's vlastní příklad), svázané na
+`EvidenceWriter`'s identitě v `platform-wiring.ts`/`slice.ts`'s `writerFor()`/inline konstrukci. `document.classify`
+zůstalo beze změny reusePolicy (unset → default `CASE_ONLY`) — klasifikace TOHOHLE konkrétního dokumentu nikdy
+nemá smysl sdílet mimo svůj Case.
+
+**Testy:** 5 nových (`tests/zlab.test.ts`'s nový `ZLAB-CASE-001` blok, 4 testy — CASE_ONLY nesdílené mezi Cases,
+TENANT_WIDE sdílené napříč Cases, bez `originCaseId` nikdy nevrácené žádnému Case, `forCase()` tenant-scoped stejně
+jako `forTenant()` — plus 1 nový v2-rejection test mirroring existující v1-rejection test's tvar). Každý existující
+test, co stavěl `EvidenceCandidate`/`EvidenceClaim` napřímo (`inputField: "..."` doslovně), zůstal beze změny na
+úrovni volajícího místa — lokální `candidate()`/`CLAIM` fixture v každém souboru teď `inputField` overrides
+překládá na `subject: {key, scope: CASE_SCOPE}` interně (`formatFactAddress` s `entityId` undefined vrací přesně
+`key`, takže odvozený `inputField` na zapečetěném záznamu je bajt-identický jako předtím).
+
+**Výsledek:** `npm test` 680/680 (dřív 675/675, +5 nových testů), `npm run typecheck` čistě, `npm run farm:check`
+čistě (včetně `tsc -p deploy/cloudflare/tsconfig.json`). Jen lokální change set — **žádný commit, push ani deploy**
+(explicitně mimo rozsah téhle úlohy).
+
 ## 2026-09-18 (181) — Commit 3 (vlastníkovo "Case wiring"): `Case` živě zapojen do mail intake cesty, agregovaný `Case.status`, `SqliteCaseStore`, `GET /case/:id.json`
 
 **Co se zapojuje:** `src/platform/case.ts`'s `Case`/`NormalizedImpulse` (E-1, HANDOFF 175, testovaný primitiv) byl

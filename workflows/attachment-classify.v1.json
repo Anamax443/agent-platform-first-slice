@@ -12,7 +12,7 @@
       "capability": "document.classify",
       "capabilityVersion": "1",
       "sideEffects": "none",
-      "inputs": { "artifactId": "$input.artifactId", "strategy": "$strategy", "documentType": "$input.documentType", "model": "$input.model" },
+      "inputs": { "artifactId": "$input.artifactId", "strategy": "$strategy", "documentType": "$input.documentType", "model": "$input.model", "caseId": "$input.caseId" },
       "strategies": ["keyword", "llm"],
       "qualityBudget": 2,
       "technicalRetries": 2,

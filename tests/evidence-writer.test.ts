@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { FakeClock, iso } from "../src/platform/clock.js";
 import { EvidenceLedger } from "../src/platform/evidence.js";
 import { EvidenceWriter } from "../src/platform/evidence-writer.js";
+import { CASE_SCOPE } from "../src/platform/fact-catalog.js";
 import { generateKeyPair } from "../src/platform/signing.js";
 import type { HandlerInput, MessageEnvelope, TrustedContext } from "../src/platform/types.js";
 
@@ -54,7 +55,7 @@ function input(overrides: { message?: Partial<MessageEnvelope>; context?: Partia
 }
 
 const IDENTITY = { producerId: "cz.vat.verify", capabilityVersion: "1", buildHash: "build-vat-123" };
-const CLAIM = { inputField: "bankAccount", inputValueHash: "hash-account", result: "PASS" };
+const CLAIM = { subject: { key: "bankAccount", scope: CASE_SCOPE }, inputValueHash: "hash-account", result: "PASS" };
 
 describe("EW-001 write() binds tenantId/workflowId/operationId from the trusted HandlerInput, not from the claim", () => {
   it("evidence carries exactly the context's tenantId and the message's workflowId/messageId", () => {

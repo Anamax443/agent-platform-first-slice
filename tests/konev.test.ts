@@ -7,6 +7,7 @@ import { sha256 } from "../src/platform/artifacts.js";
 import { canonicalize } from "../src/platform/canonical.js";
 import { FakeClock } from "../src/platform/clock.js";
 import { EvidenceLedger, type Evidence, type EvidenceCandidate } from "../src/platform/evidence.js";
+import { CASE_SCOPE } from "../src/platform/fact-catalog.js";
 import { BusinessObjectSealer, type CertifiedBusinessObject } from "../src/platform/konev.js";
 import { generateKeyPair } from "../src/platform/signing.js";
 
@@ -37,18 +38,19 @@ function fixture() {
   return { clock, ledger, aggregator, sealer, signing };
 }
 
-function candidate(overrides: Partial<EvidenceCandidate> = {}): EvidenceCandidate {
+function candidate(overrides: Partial<EvidenceCandidate> & { inputField?: string } = {}): EvidenceCandidate {
+  const { inputField, ...rest } = overrides;
   return {
     tenantId: TENANT_A,
     producerId: "cz.vat.verify",
     capabilityVersion: "1",
     buildHash: "build-abc123",
-    inputField: "bankAccount",
+    subject: { key: inputField ?? "bankAccount", scope: CASE_SCOPE },
     inputValueHash: "hash-of-value",
     result: "PASS",
     parentRefs: [],
     parentHashes: [],
-    ...overrides,
+    ...rest,
   };
 }
 

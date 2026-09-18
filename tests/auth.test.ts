@@ -13,6 +13,7 @@ import { AuthorityError, AuthorityRegistry, parseIsoDuration } from "../src/plat
 import { FakeClock, iso, plus } from "../src/platform/clock.js";
 import { EvidenceLedger } from "../src/platform/evidence.js";
 import { EvidenceWriter, type WriterAuthority } from "../src/platform/evidence-writer.js";
+import { CASE_SCOPE } from "../src/platform/fact-catalog.js";
 import { LifecycleRegistry } from "../src/platform/lifecycle.js";
 import { generateKeyPair } from "../src/platform/signing.js";
 import type { HandlerInput, MessageEnvelope, TrustedContext } from "../src/platform/types.js";
@@ -58,7 +59,7 @@ function input(): HandlerInput {
 
 const IDENTITY = { producerId: "cz.company.verify", capabilityVersion: "1", buildHash: "build-1" };
 const GRANT: WriterAuthority = { domain: "cz.company.registry", facts: ["supplier.companyId", "supplier.officialName"], maxEvidenceTtlMs: 30 * DAY };
-const CLAIM = { inputField: "supplier.companyId", inputValueHash: "sha256-of-ico", result: "ACTIVE" };
+const CLAIM = { subject: { key: "supplier.companyId", scope: CASE_SCOPE }, inputValueHash: "sha256-of-ico", result: "ACTIVE" };
 const code = (fn: () => unknown): string => {
   try {
     fn();
@@ -103,14 +104,14 @@ describe("AUTH-003 a fact outside the grant's scope is refused and nothing is wr
   it("cz.company.registry may not attest supplier.vatId", () => {
     const { ledger, clock } = fixture();
     const writer = new EvidenceWriter(ledger, { ...IDENTITY, authority: GRANT }, clock);
-    expect(() => writer.write(input(), { ...CLAIM, inputField: "supplier.vatId" })).toThrow(/AUTHORITY_SCOPE/);
+    expect(() => writer.write(input(), { ...CLAIM, subject: { key: "supplier.vatId", scope: CASE_SCOPE } })).toThrow(/AUTHORITY_SCOPE/);
     expect(ledger.forTenant("tenant-a")).toEqual([]);
   });
 
   it("a platform-level grant (facts: \"*\") attests any fact", () => {
     const { ledger, clock } = fixture();
     const platform = new EvidenceWriter(ledger, { ...IDENTITY, producerId: "platform.entity", authority: { domain: "platform", facts: "*", maxEvidenceTtlMs: null } }, clock);
-    expect(platform.write(input(), { inputField: "invoice.line@ent-1", inputValueHash: "entity-hash", result: "OBSERVED" }).authorityDomain).toBe("platform");
+    expect(platform.write(input(), { subject: { key: "invoice.line", scope: "invoice.line", entityId: "ent-1" }, inputValueHash: "entity-hash", result: "OBSERVED" }).authorityDomain).toBe("platform");
   });
 });
 

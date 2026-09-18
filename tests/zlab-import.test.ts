@@ -13,6 +13,7 @@ import { EVIDENCE_SCHEMA_VERSION, EvidenceLedger, evidenceSignedBytes, type Evid
 import { IMPORT_PRODUCER, IMPORT_RESULT, importEvidence, PLATFORM_AUTHORITY } from "../src/platform/evidence-import.js";
 import { EVIDENCE_MIRROR_DDL, mirrorEvidence, SqliteEvidenceMirror } from "../src/platform/evidence-mirror.js";
 import { EVIDENCE_DDL, SqliteEvidenceStore } from "../src/platform/evidence-sqlite.js";
+import { CASE_SCOPE } from "../src/platform/fact-catalog.js";
 import { generateKeyPair } from "../src/platform/signing.js";
 import { tmpDir } from "./harness/index.js";
 import { openAsyncSql, openSql } from "./harness/sqlite.js";
@@ -24,19 +25,20 @@ const TENANT_B = "tenant-b";
 const KEY = generateKeyPair();
 const SIGNING = { keyId: "platform-k1", privateKey: KEY.privateKey, publicKey: KEY.publicKey };
 
-function candidate(overrides: Partial<EvidenceCandidate> = {}): EvidenceCandidate {
+function candidate(overrides: Partial<EvidenceCandidate> & { inputField?: string } = {}): EvidenceCandidate {
+  const { inputField, ...rest } = overrides;
   return {
     tenantId: TENANT_A,
     workflowId: "wf-1",
     producerId: "cz.company.verify",
     capabilityVersion: "1",
     buildHash: "build-case1",
-    inputField: "supplier.companyId",
+    subject: { key: inputField ?? "supplier.companyId", scope: CASE_SCOPE },
     inputValueHash: "sha256-of-12345678",
     result: "ACTIVE",
     parentRefs: [],
     parentHashes: [],
-    ...overrides,
+    ...rest,
   };
 }
 
@@ -139,7 +141,14 @@ describe("ZLAB-DUR-006 imported evidence verifies locally, ancestry included, af
   it("a different sealed record already holding the same id in the new case is an ID_CONFLICT, never an overwrite", async () => {
     const s = await scenario();
     // A validly signed record under case 2's own key with the *same* recordId but other content (sealed by hand).
-    const unsigned = { ...candidate({ result: "CEASED", workflowId: "wf-2" }), recordId: s.child.recordId, observedAt: START, schemaVersion: EVIDENCE_SCHEMA_VERSION };
+    const unsigned = {
+      ...candidate({ result: "CEASED", workflowId: "wf-2" }),
+      inputField: "supplier.companyId",
+      reusePolicy: "CASE_ONLY" as const,
+      recordId: s.child.recordId,
+      observedAt: START,
+      schemaVersion: EVIDENCE_SCHEMA_VERSION,
+    };
     const recordHash = sha256(canonicalize(unsigned));
     const twin: Evidence = { ...unsigned, recordHash, keyId: "platform-k1", platformSignature: toBase64Url(sign(null, evidenceSignedBytes(recordHash), KEY.privateKey)) };
     expect(s.case2.ledger.importSealed(twin)).toBe("IMPORTED");

@@ -8,7 +8,9 @@ export { stripMimeAttachments, parseMimeMessage } from "./mime.js";
 export type { Artifact, ArtifactReader, ArtifactWriter } from "./artifacts.js";
 export type { ReconcileResult, HostHandlerSpec } from "./executor-host.js";
 export type { CredentialAccess } from "./credentials.js";
-export { EvidenceWriter, type EvidenceClaim } from "./evidence-writer.js";
+export { EvidenceWriter, type EvidenceClaim, type EvidenceWriteOptions } from "./evidence-writer.js";
+export { CASE_SCOPE } from "./fact-catalog.js";
+export type { FactAddress } from "./fact-address.js";
 
 /** Race a dependency call against a deadline; timeouts become DEPENDENCY_TIMEOUT at the caller. */
 export async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {

@@ -17,10 +17,12 @@ function orchestratorOf(slice: Slice, name: string) {
   return o;
 }
 
+const CASE_A = "case-fanout-a";
+
 async function runFanout(slice: Slice, attachmentArtifactIds: string[]): Promise<AttachmentFanoutOutcome[]> {
   return fanOutAttachments(
     { classifyOrchestrator: orchestratorOf(slice, "attachment-classify"), extractOrchestrator: orchestratorOf(slice, "attachment-extract"), catalog: realCatalog(), evidence: slice.evidence },
-    { tenantId: TENANT_A, attachmentArtifactIds },
+    { tenantId: TENANT_A, caseId: CASE_A, attachmentArtifactIds },
   );
 }
 
