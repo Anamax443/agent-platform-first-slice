@@ -27,7 +27,10 @@ import { EvidenceWriter } from "../../../../src/platform/evidence-writer.js";
 import { ExecutorHost, type Reconciler } from "../../../../src/platform/executor-host.js";
 import { Gateway, IdentityProvider } from "../../../../src/platform/gateway.js";
 import type { IdempotencyStore } from "../../../../src/platform/idempotency.js";
+import type { JournalStore } from "../../../../src/platform/journal.js";
+import { Orchestrator, type OrchestratorOpts, type WorkflowDef } from "../../../../src/platform/orchestrator.js";
 import { policyFor } from "../../../../src/platform/policy.js";
+import type { ReviewService } from "../../../../src/platform/review.js";
 import { capabilityNamesOf, catalogOf, type CapabilityRecord } from "../../../../src/platform/registry.js";
 import { Router } from "../../../../src/platform/router.js";
 import { KeyRegistry, Signer } from "../../../../src/platform/signing.js";
@@ -479,4 +482,50 @@ export function wirePlatform(o: WiringOptions): Wiring {
     },
   };
   return { transport, signing, keyId: o.keyId, ...(evidence ? { evidence } : {}), reconcilers };
+}
+
+/**
+ * The pieces of an Orchestrator that do NOT come out of wirePlatform(): on the farm they are the Durable Object's
+ * own ctx.storage.sql-backed stores (index.ts's WorkflowInstance fields), in tests their in-memory twins. Named
+ * separately from Wiring because Wiring is rebuilt per request/alarm tick while these survive isolate eviction.
+ */
+export interface OrchestratorDurables {
+  journal: JournalStore;
+  review: ReviewService;
+  audit: AuditTrail;
+  clock: Clock;
+  /** The installation's orchestrator role actor id (profile.roles.orchestrator on the farm). */
+  actorId: string;
+}
+
+/**
+ * RG2-D follow-up (2026-09-18, adversarial review of 1362a8a): the ONE place the live composition assembles
+ * OrchestratorOpts from a Wiring. It used to be an inline object literal inside index.ts's private
+ * WorkflowInstance.orchestratorFor() — and index.ts imports "cloudflare:workers" at module scope, so no plain-Node
+ * vitest suite can load it. The review proved the consequence: deleting the `reconcilers` spread from index.ts left
+ * all 18 RG2-D tests green, because tests/gw-platform-wiring-fanout.test.ts's buildRealWiring() carried its own
+ * hand-written COPY of the literal. A copy is not coverage. Same remedy alarm-scheduler.ts/fanout-retry.ts already
+ * use for the same reason: the decision is a pure function here, index.ts calls it, the tests import it, and a
+ * source-level trap in the test file pins index.ts to calling it rather than re-inlining `new Orchestrator({...})`.
+ *
+ * Pure: builds a plain OrchestratorOpts and nothing else. `reconcilers` is spread conditionally (the same
+ * `...(x ? { x } : {})` idiom wirePlatform()'s return uses for `evidence`) so a Wiring without a map yields opts
+ * with NO `reconcilers` key, not an explicit `reconcilers: undefined` — observable, and pinned by the test.
+ */
+export function orchestratorOptsFor(def: WorkflowDef, wiring: Wiring, durable: OrchestratorDurables): OrchestratorOpts {
+  return {
+    workflow: def,
+    transport: wiring.transport,
+    journal: durable.journal,
+    review: durable.review,
+    audit: durable.audit,
+    clock: durable.clock,
+    actorId: durable.actorId,
+    ...(wiring.reconcilers ? { reconcilers: wiring.reconcilers } : {}),
+  };
+}
+
+/** `new Orchestrator(orchestratorOptsFor(...))` — what index.ts's orchestratorFor() and the test helper both call. */
+export function buildOrchestrator(def: WorkflowDef, wiring: Wiring, durable: OrchestratorDurables): Orchestrator {
+  return new Orchestrator(orchestratorOptsFor(def, wiring, durable));
 }

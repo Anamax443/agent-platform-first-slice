@@ -41,7 +41,7 @@ import { plan } from "../src/platform/planner.js";
 import { InMemoryReviewTaskStore, ReviewService } from "../src/platform/review.js";
 import { workflowDef } from "../src/platform/workflow.js";
 import { FACT_CATALOG } from "../deploy/cloudflare/apf-gateway/src/fact-catalog-bundle.js";
-import { CLASSIFY, COMPANY_VERIFY, VAT_VERIFY, wirePlatform, type Wiring } from "../deploy/cloudflare/apf-gateway/src/platform-wiring.js";
+import { buildOrchestrator, CLASSIFY, COMPANY_VERIFY, orchestratorOptsFor, VAT_VERIFY, wirePlatform, type Wiring } from "../deploy/cloudflare/apf-gateway/src/platform-wiring.js";
 import { INGEST_HANDLER_ID } from "../src/components/mail-ingest/handler.js";
 import { CONTRACT_CZ, FAKE_SECRETS, INVOICE_CZ, INVOICE_MAIL, LOCAL_FAKES, ORCHESTRATOR, TENANT_A, tmpDir } from "./harness/index.js";
 import { IDEMPOTENCY_DDL, openSql, TestIdempotencyStore } from "./harness/sqlite.js";
@@ -97,11 +97,13 @@ function buildRealWiring(opts: { idempotency?: IdempotencyStore; installation?: 
     ...(opts.idempotency ? { idempotency: opts.idempotency } : {}),
   });
   const review = new ReviewService(clock, audit, opts.durable?.reviewStore ?? new InMemoryReviewTaskStore());
-  // RG2-D (2026-09-18): mirrors index.ts's own orchestratorFor() exactly, `...(wiring.reconcilers ? { reconcilers:
-  // wiring.reconcilers } : {})` included — before RG2-D neither this helper nor index.ts passed `reconcilers` at
-  // all, which is the wiring half of the gap RG2-D closes (see Wiring.reconcilers's doc comment in platform-wiring.ts).
-  const orchestratorFor = (def: ReturnType<typeof workflowDef>) =>
-    new Orchestrator({ workflow: def, transport: wiring.transport, journal, review, audit, clock, actorId: ORCHESTRATOR, ...(wiring.reconcilers ? { reconcilers: wiring.reconcilers } : {}) });
+  // RG2-D follow-up (2026-09-18, adversarial review of 1362a8a): this used to be a hand-written COPY of index.ts's
+  // orchestratorFor() literal ("mirrors index.ts exactly"), and the review proved a copy is not coverage — deleting
+  // the `reconcilers` spread from index.ts alone left all 18 RG2-D tests green. Now it is the SAME function index.ts
+  // calls: platform-wiring.ts's buildOrchestrator(); only the Durable-Object-owned pieces differ (in-memory here,
+  // ctx.storage.sql on the farm). The "index.ts actually calls it" half is pinned by the source-level trap at the
+  // bottom of the RG2-D describe block below.
+  const orchestratorFor = (def: ReturnType<typeof workflowDef>) => buildOrchestrator(def, wiring, { journal, review, audit, clock, actorId: ORCHESTRATOR });
   return { wiring, artifacts, audit, journal, review, orchestratorFor, clock };
 }
 
@@ -417,9 +419,10 @@ describe("RG2-D: a mail.ingest step crashed mid-dispatch is no longer stuck fore
   // `reconcilers` at all, so even though alarm() -> recover() already flipped the step to UNKNOWN_OUTCOME every
   // tick, reconcile() found no reconciler for "mail.ingest" and went to review after ZERO attempts, never touching
   // ExecutorHost.reconcilerFor() (the only hook able to act on that row) and never even logging that a reconciler
-  // had been tried. This block drives the REAL composition — wirePlatform()'s own Wiring.reconcilers, spread into
-  // Orchestrator exactly as index.ts's orchestratorFor() does (buildRealWiring() above), the real ExecutorHost
-  // .reconcilerFor("mail.ingest"), the real mail-ingest handler's `reconcile` — not a hand-rolled stand-in.
+  // had been tried. This block drives the REAL composition — wirePlatform()'s own Wiring.reconcilers, assembled into
+  // Orchestrator by the SAME platform-wiring.ts buildOrchestrator() index.ts's orchestratorFor() calls
+  // (buildRealWiring() above), the real ExecutorHost.reconcilerFor("mail.ingest"), the real mail-ingest handler's
+  // `reconcile` — not a hand-rolled stand-in and (since the RG2-D follow-up) not a hand-written copy either.
   //
   // Only the workflow definition is trimmed: the REAL mail-intake ingest StepDef (sideEffects internal-write,
   // technicalRetries 2, reconciliationBudget unset -> orchestrator.ts's default 3), taken verbatim from
@@ -570,5 +573,50 @@ describe("RG2-D: a mail.ingest step crashed mid-dispatch is no longer stuck fore
     // The review task itself was always created (reconcile() with no reconciler still escalates) — the gap was
     // never "no task"; it was "the one reconciler that exists is never even consulted, and nothing says so".
     expect(after.review.open()[0]?.reasonCode).toBe("UNKNOWN_OUTCOME_UNRESOLVED");
+  });
+
+  // RG2-D follow-up (2026-09-18, three independent adversarial reviews of 1362a8a, same finding each): the one
+  // production line that delivered `reconcilers` to the farm's Orchestrator sat inside index.ts's private
+  // WorkflowInstance.orchestratorFor(), and no test could reach it — index.ts imports "cloudflare:workers" at
+  // module scope and cannot load under plain-Node vitest (same constraint the Gap 1 source-level trap above
+  // documents), while this file's buildRealWiring() carried its own hand-written copy of the literal. Reverting only
+  // that index.ts line left all 18 RG2-D tests green. The two checks below close that exactly:
+  //   1. the assembly is now platform-wiring.ts's pure orchestratorOptsFor() — pinned directly on its output, so a
+  //      dropped spread fails here AND fails (a)+(b)/(c) above (they run through the same function);
+  //   2. index.ts's orchestratorFor() must CALL buildOrchestrator() and index.ts must contain no `new Orchestrator(`
+  //      at all — so re-inlining the literal (which would silently re-open the copy-drift gap) is caught at source
+  //      level, honestly labelled as such rather than dressed up as a runtime test it cannot be.
+  it("orchestratorOptsFor() (the real assembly index.ts calls) passes Wiring.reconcilers through by identity, and passes NO `reconcilers` key when the Wiring has none", () => {
+    const real = buildRealWiring();
+    const def = ingestOnlyWorkflow();
+    const durable = { journal: real.journal, review: real.review, audit: real.audit, clock: real.clock, actorId: ORCHESTRATOR };
+
+    const withMap = orchestratorOptsFor(def, real.wiring, durable);
+    expect(real.wiring.reconcilers).toBeDefined();
+    expect(withMap.reconcilers).toBe(real.wiring.reconcilers);
+    expect(typeof withMap.reconcilers?.["mail.ingest"]).toBe("function");
+    expect(withMap).toMatchObject({ workflow: def, transport: real.wiring.transport, journal: real.journal, review: real.review, audit: real.audit, clock: real.clock, actorId: ORCHESTRATOR });
+
+    const { reconcilers: _dropped, ...wiringWithoutMap } = real.wiring;
+    const withoutMap = orchestratorOptsFor(def, wiringWithoutMap, durable);
+    expect("reconcilers" in withoutMap).toBe(false);
+    expect(withoutMap.reconcilers).toBeUndefined();
+  });
+
+  it("index.ts's WorkflowInstance.orchestratorFor() calls platform-wiring.ts's buildOrchestrator() and index.ts never builds an Orchestrator by hand — source-level wiring trap", () => {
+    const src = readFileSync(join(__dirname, "..", "deploy", "cloudflare", "apf-gateway", "src", "index.ts"), "utf8");
+    const start = src.indexOf("\n  private orchestratorFor(");
+    expect(start, "orchestratorFor() method not found in index.ts").toBeGreaterThan(-1);
+    const end = src.indexOf("\n  }\n", start + 1);
+    expect(end, "orchestratorFor() method body end not found").toBeGreaterThan(start);
+    const body = src.slice(start, end);
+    expect(body).toContain("return buildOrchestrator(def, wiring, {");
+    expect(body).toContain("journal: this.journal");
+    expect(body).toContain("review: new ReviewService(this.clock, this.audit, this.reviewStore)");
+    expect(body).toContain("actorId: installation.profile.roles.orchestrator");
+    // The import must be the real one from platform-wiring.ts, not a same-named local re-implementation.
+    expect(src).toMatch(/import \{[^}]*\bbuildOrchestrator\b[^}]*\} from "\.\/platform-wiring\.js";/);
+    // No hand-built Orchestrator anywhere in index.ts: every one on the farm goes through the tested assembly.
+    expect(src).not.toContain("new Orchestrator(");
   });
 });

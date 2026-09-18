@@ -25,7 +25,7 @@ import { platformError } from "../../../../src/platform/errors.js";
 import { newId } from "../../../../src/platform/ids.js";
 import { parseMimeMessage, sanitizeMimeFilename } from "../../../../src/platform/mime.js";
 import type { CapabilityRecord } from "../../../../src/platform/registry.js";
-import { isRunningStepStale, maxStepDeadlineMs, Orchestrator, type WorkflowDef } from "../../../../src/platform/orchestrator.js";
+import { isRunningStepStale, maxStepDeadlineMs, type Orchestrator, type WorkflowDef } from "../../../../src/platform/orchestrator.js";
 import { CertificationRegistry, deriveLifecycleStatus, type CertificationRecord, type LifecycleStatus } from "../../../../src/platform/certification.js";
 import { IdentityProvider } from "../../../../src/platform/gateway.js";
 import type { Instance, InstanceStatus } from "../../../../src/platform/journal.js";
@@ -59,7 +59,7 @@ import {
   type Wired,
 } from "./page.js";
 import { FACT_CATALOG } from "./fact-catalog-bundle.js";
-import { COW_WORKSHOP, describeModels, gatewayCatalog, modelAdapterFor, wirePlatform, type Wiring } from "./platform-wiring.js";
+import { buildOrchestrator, COW_WORKSHOP, describeModels, gatewayCatalog, modelAdapterFor, wirePlatform, type Wiring } from "./platform-wiring.js";
 import { runSelfTest, requiredTestsFor, selfTestCapabilityForTick, SELF_TEST_CAPABILITIES, SELF_TEST_WORKFLOW_ID } from "./self-test.js";
 import { newSession, sendMessage, type WorkshopSession } from "./workshop.js";
 import { D1_AUDIT_DDL, D1_EVIDENCE_DDL, D1_R2_REF_DDL, d1Sql, DDL, evidenceMirrorOf, evidenceStoreOf, r2RefCounterOf, SqliteArtifacts, SqliteAudit, SqliteCaseStore, SqliteDurableJobStore, SqliteFanoutJobStore, SqliteIdempotencyStore, SqliteJournal, SqliteReviewTaskStore } from "./store.js";
@@ -1479,20 +1479,24 @@ export class WorkflowInstance extends DurableObject<Env> {
    * always found `this.opts.reconcilers?.[capability]` undefined and went to human review after ZERO reconciliation
    * attempts, never touching the ExecutorHost.reconcilerFor() hook that is the only thing able to clear a stuck
    * RESERVED idempotency row (executor-host.ts). See platform-wiring.ts's Wiring.reconcilers doc comment for what
-   * the map holds today (mail.ingest only) and why. Spread conditionally (the same `...(x ? { x } : {})` idiom
-   * wirePlatform()'s own return uses for `evidence`) so a Wiring without a map passes nothing, not an explicit
-   * `reconcilers: undefined`.
+   * the map holds today (mail.ingest only) and why.
+   *
+   * RG2-D follow-up (same day, adversarial review): the assembly itself no longer lives here. The review showed that
+   * the `reconcilers` spread in this method was covered by NO test — index.ts cannot be loaded under plain-Node
+   * vitest ("cloudflare:workers" at module scope), and the integration test carried a hand-written copy of the
+   * literal, so deleting the spread here left every RG2-D test green. The literal now lives in platform-wiring.ts's
+   * exported, pure orchestratorOptsFor()/buildOrchestrator(), which THIS method and the test both call; a
+   * source-level trap in tests/gw-platform-wiring-fanout.test.ts pins this method to keep calling it (no hand-built
+   * Orchestrator constructor call may reappear anywhere in index.ts). Only the Durable-Object-owned pieces are
+   * supplied here.
    */
   private orchestratorFor(def: WorkflowDef, wiring: Wiring): Orchestrator {
-    return new Orchestrator({
-      workflow: def,
-      transport: wiring.transport,
+    return buildOrchestrator(def, wiring, {
       journal: this.journal,
       review: new ReviewService(this.clock, this.audit, this.reviewStore),
       audit: this.audit,
       clock: this.clock,
       actorId: installation.profile.roles.orchestrator,
-      ...(wiring.reconcilers ? { reconcilers: wiring.reconcilers } : {}),
     });
   }
 

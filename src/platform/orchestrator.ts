@@ -48,20 +48,25 @@ export type RunOutcome = "SUCCEEDED" | "FAILED" | "WAITING";
  * Deterministic orchestrator over a versioned workflow definition (FOUNDATION-core §2, §5).
  * Owns workflow state, not domain data. Every ending is explicit and journaled.
  */
+/**
+ * Everything one Orchestrator is built from. Exported (RG2-D follow-up, 2026-09-18) so the live composition's
+ * assembly of it — deploy/cloudflare/apf-gateway/src/platform-wiring.ts's orchestratorOptsFor() — can be a named,
+ * testable pure function instead of an inline object literal inside a Durable Object method no test can load.
+ */
+export interface OrchestratorOpts {
+  workflow: WorkflowDef;
+  /** In-process or HTTP: the orchestrator does not know and must not care (F3). */
+  transport: DispatchTransport;
+  journal: JournalStore;
+  review: ReviewService;
+  audit: AuditTrail;
+  clock: Clock;
+  actorId: string;
+  reconcilers?: Record<string, Reconciler>;
+}
+
 export class Orchestrator {
-  constructor(
-    private readonly opts: {
-      workflow: WorkflowDef;
-      /** In-process or HTTP: the orchestrator does not know and must not care (F3). */
-      transport: DispatchTransport;
-      journal: JournalStore;
-      review: ReviewService;
-      audit: AuditTrail;
-      clock: Clock;
-      actorId: string;
-      reconcilers?: Record<string, Reconciler>;
-    },
-  ) {}
+  constructor(private readonly opts: OrchestratorOpts) {}
 
   get workflow(): WorkflowDef {
     return this.opts.workflow;
