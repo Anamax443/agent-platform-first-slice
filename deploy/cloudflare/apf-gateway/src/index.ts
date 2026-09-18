@@ -25,7 +25,7 @@ import { platformError } from "../../../../src/platform/errors.js";
 import { newId } from "../../../../src/platform/ids.js";
 import { parseMimeMessage, sanitizeMimeFilename } from "../../../../src/platform/mime.js";
 import type { CapabilityRecord } from "../../../../src/platform/registry.js";
-import { Orchestrator, type WorkflowDef } from "../../../../src/platform/orchestrator.js";
+import { isRunningStepStale, maxStepDeadlineMs, Orchestrator, type WorkflowDef } from "../../../../src/platform/orchestrator.js";
 import { CertificationRegistry, deriveLifecycleStatus, type CertificationRecord, type LifecycleStatus } from "../../../../src/platform/certification.js";
 import { IdentityProvider } from "../../../../src/platform/gateway.js";
 import type { Instance, InstanceStatus } from "../../../../src/platform/journal.js";
@@ -62,7 +62,15 @@ import { FACT_CATALOG } from "./fact-catalog-bundle.js";
 import { COW_WORKSHOP, describeModels, gatewayCatalog, modelAdapterFor, wirePlatform, type Wiring } from "./platform-wiring.js";
 import { runSelfTest, requiredTestsFor, selfTestCapabilityForTick, SELF_TEST_CAPABILITIES, SELF_TEST_WORKFLOW_ID } from "./self-test.js";
 import { newSession, sendMessage, type WorkshopSession } from "./workshop.js";
-import { D1_AUDIT_DDL, D1_EVIDENCE_DDL, D1_R2_REF_DDL, d1Sql, DDL, evidenceMirrorOf, evidenceStoreOf, r2RefCounterOf, SqliteArtifacts, SqliteAudit, SqliteCaseStore, SqliteIdempotencyStore, SqliteJournal, SqliteReviewTaskStore } from "./store.js";
+import { D1_AUDIT_DDL, D1_EVIDENCE_DDL, D1_R2_REF_DDL, d1Sql, DDL, evidenceMirrorOf, evidenceStoreOf, r2RefCounterOf, SqliteArtifacts, SqliteAudit, SqliteCaseStore, SqliteFanoutJobStore, SqliteIdempotencyStore, SqliteJournal, SqliteReviewTaskStore } from "./store.js";
+// R2R3 integration (18.9.2026 owner spec — see fanout-retry.ts's/alarm-scheduler.ts's own file-level doc comments
+// for the full "why"): pure decision logic over the durable fanout_job row and the unified alarm scheduler, split
+// out so both stay loadable under plain-Node vitest (this file imports "cloudflare:workers" two lines up and
+// cannot be). fanoutNextWakeAt() itself is not called directly here any more — nextAlarmWakeMs() (alarm-
+// scheduler.ts) is the one place that folds it into the three-source Math.min(...), so index.ts only ever needs
+// its OWN two inputs (missingAttachments()/fanoutRetryDecision()) plus the combined result.
+import { fanoutRetryDecision, missingAttachments, type CaseMemberSummary, type FanoutJobRecord } from "./fanout-retry.js";
+import { nextAlarmWakeMs, runAlarmTick } from "./alarm-scheduler.js";
 import { registerDerived, type DerivedArtifactRegistration, type RegisterDerivedResult } from "./artifact-registration.js";
 import { createPrivateKey, createPublicKey } from "node:crypto";
 import { verifyEvidence, type Evidence } from "../../../../src/platform/evidence.js";
@@ -583,6 +591,52 @@ async function zlabStats(env: Env): Promise<ZlabStats> {
 }
 
 /** One Durable Object per workflow instance: its SQLite is the journal, the audit and the artifact store of that instance. */
+/**
+ * R2 (2026-09-18 reliability audit, "recover() exists but the live gateway never calls it"): the pessimistic
+ * pre-arm in intake()/mailIntake()/decideReview() below arms the backstop alarm BEFORE buildMessage()
+ * (src/platform/orchestrator.ts) has durably written the step's own precise `notValidAfter` — both happen inside
+ * the same synchronous call on the same isolate, so the real gap this margin covers is sub-millisecond. 60s is
+ * generous slack over that, and negligible against the 10–30 minute real workflow deadlines (workflows/mail-
+ * intake.v3.json:6/65, workflows/document-intake.v2.json:6): worst case, a crash in that impossibly narrow window
+ * before the precise write delays detection by at most this margin, not by the full workflow deadline.
+ */
+const STUCK_ALARM_SAFETY_MARGIN_MS = 60_000;
+
+/**
+ * Follow-up fix, R2R3 integration (adversarial review, 18.9.2026 — see this commit's own message): `recover()`'s
+ * cascade (src/platform/orchestrator.ts's `run()` loop, one real `transport.dispatch()` per remaining step) and
+ * `maybeRetryFanoutJob()`'s cascade (`fanOutAttachmentsIfAny()`, one real dispatch per attachment) each have no
+ * time budget of their own. Before this fix, alarm()'s deliberate recovery-then-fanout-then-reviews reordering
+ * (see alarm()'s own doc comment below) meant a slow cascade in either of the first two steps could delay — in
+ * the worst case, starve entirely, if the isolate's own CPU/wall-clock budget ran out first — the third step
+ * (`applyReviewExpiries()`) and even the `finally` block's `rearmAlarm()` from getting a turn in the SAME tick. A
+ * silently-skipped review-expiry check (not merely a delayed one) is exactly the WF-REV-003 regression this
+ * integration must not introduce; the pre-integration ordering never had this exposure because reviews ran
+ * first, unconditionally, before either cascade could run at all.
+ *
+ * withTimeout() (src/platform/api.ts) already races each individual dependency call further down in these same
+ * cascades against a budget WITHOUT cancelling the underlying operation — an accepted, already-shipped
+ * characteristic of this codebase (cz-vat-verify/cz-company-verify/document-classifier/document-validator's own
+ * handler.ts callers all rely on exactly this). This constant applies the identical discipline one layer up, at
+ * the whole-subsystem boundary runAlarmTick() (alarm-scheduler.ts) already isolates in its own try/catch: passed
+ * below as `runAlarmTick(..., { subsystemBudgetMs: ALARM_SUBSYSTEM_BUDGET_MS })`, it is runAlarmTick() itself
+ * (via its own internal `bounded()` helper) that races `recover`/`retryFanout` against this budget — kept there,
+ * not duplicated here per callback, so the SAME bound this doc comment describes is also the one
+ * tests/gw-alarm-scheduler.test.ts exercises directly against the real function alarm() calls. A hung recovery
+ * or fan-out cascade now always yields its turn within this budget, so fan-out/reviews/rearmAlarm still run in
+ * the same tick regardless of how long the abandoned cascade keeps executing in the background.
+ * Residual, deliberately-accepted risk (same class as maybeRetryFanoutJob()'s own "a previous pass cannot be
+ * ruled out with certainty" note above it): because Workers has no cheap way to truly cancel an in-flight
+ * `transport.dispatch()` short of threading an AbortSignal through every component's handler.ts contract (a much
+ * larger change than this integration's scope), the abandoned cascade's later SQLite writes can still land after
+ * fan-out/reviews have already run in the same tick. Those writes are scoped to state the timed-out subsystem
+ * itself owns (recover()'s own journal row, maybeRetryFanoutJob()'s own fanout_job row) and every store here is
+ * already designed to be read fresh and reconciled on the next tick (rearmAlarm() below never trusts a snapshot),
+ * so this is a bounded, self-healing residual risk, not a data-loss one — flagged for a human reviewer with real
+ * Workers AI latency numbers, same "explicit judgment call" status as FANOUT_RETRY_GRACE_MS below.
+ */
+const ALARM_SUBSYSTEM_BUDGET_MS = 20_000;
+
 export class WorkflowInstance extends DurableObject<Env> {
   private readonly clock = new SystemClock();
   private readonly journal: SqliteJournal;
@@ -599,6 +653,31 @@ export class WorkflowInstance extends DurableObject<Env> {
    * in-memory fallback, orchestrator.ts:245's key shape, what this deliberately does not fix). DO-local only,
    * same reasoning as `caseStore`/`journal` above: a reservation is scoped to the instance that made it. */
   private readonly idempotency: SqliteIdempotencyStore;
+  /** Durable outbox for the attachment fan-out background task (Reliability Gate R3, 18.9.2026 owner audit) — see
+   * fanout-retry.ts's file-level doc comment and store.ts's `fanout_job` DDL comment for the full "why". */
+  private readonly fanoutJobStore: SqliteFanoutJobStore;
+  /**
+   * How long a PENDING fanout_job row must sit untouched before an alarm tick is willing to retry it (R3). Chosen,
+   * not measured: this codebase has no live Workers AI latency data for a many-attachment mail's worst-case
+   * classify+extract time as of writing (18.9.2026) — too short risks a redundant concurrent retry racing a
+   * still-legitimately-running first attempt (see fanoutRetryDecision()'s own "wait" doc comment in
+   * fanout-retry.ts); too long delays recovery from a genuine crash/eviction. Explicit and testable on purpose so
+   * it can be retuned in one place once real latency data exists — flagged as an open item for a human reviewer
+   * with production Workers AI numbers, same as this item's own judged patch plan flagged it.
+   */
+  private static readonly FANOUT_RETRY_GRACE_MS = 5 * 60_000;
+  /** How many PENDING passes (the initial attempt plus alarm()-driven retries) a fan-out job gets before
+   * maybeRetryFanoutJob() gives up on it (R3) — same "explicit judgment call, not measured" status as
+   * FANOUT_RETRY_GRACE_MS above; a human reviewer should confirm or retune both before this reaches production. */
+  private static readonly FANOUT_MAX_ATTEMPTS = 5;
+  /** Same-isolate-only double-fire guard for maybeRetryFanoutJob() (R3) — NOT what protects against a genuine
+   * cross-eviction overlap (two different isolates both deciding "retry" for the same stale row): that protection
+   * is the durable attempts+updatedAt/grace-period check in fanoutRetryDecision() itself, which survives this
+   * boolean resetting to false on every fresh isolate. This is only here so one isolate's own alarm() tick and a
+   * concurrent request into fanOutAttachmentsIfAny() (there isn't one today — mailIntake() is the only other
+   * caller, and it only ever runs once per instance — but a future caller might add one) cannot both decide
+   * "retry" on top of each other in the same running object. */
+  private fanoutRetryInFlight = false;
   private wiringCache: Wiring | undefined;
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -611,6 +690,7 @@ export class WorkflowInstance extends DurableObject<Env> {
     this.evidenceStore = evidenceStoreOf(ctx.storage.sql);
     this.caseStore = new SqliteCaseStore(ctx.storage.sql);
     this.idempotency = new SqliteIdempotencyStore(ctx.storage.sql, this.clock);
+    this.fanoutJobStore = new SqliteFanoutJobStore(ctx.storage.sql);
   }
 
   /** Built on first use so that a broken wiring (missing secret) fails the intake with a message, not the object. */
@@ -637,6 +717,11 @@ export class WorkflowInstance extends DurableObject<Env> {
 
   async intake(input: IntakeInput): Promise<InstanceView> {
     if (this.journal.list().length > 0) throw new Error(`instance ${input.workflowId} already exists`);
+    // R2 (2026-09-18 reliability audit): a pessimistic backstop, armed before dispatch can even start, so a crash
+    // between here and orchestrator.run()'s own precise buildMessage() write (src/platform/orchestrator.ts) is
+    // still bounded — see rearmAlarm()'s doc comment below for why this is safe to layer on top of the existing
+    // review-deadline arming rather than a second, competing alarm mechanism (a DO has exactly one).
+    await this.rearmAlarm(this.clock.now().getTime() + maxStepDeadlineMs(workflowDef(input.workflow)) + STUCK_ALARM_SAFETY_MARGIN_MS);
     const wiring = this.wiring();
     const o = input.original;
     const original =
@@ -685,7 +770,7 @@ export class WorkflowInstance extends DurableObject<Env> {
     this.recordClassifyResult(input.workflowId, input.tenantId, inst.correlationId);
     this.ctx.waitUntil(this.copyOut());
     this.ctx.waitUntil(this.visualStampIfApplicable(original, input.workflowId));
-    await this.rearmReviewAlarm();
+    await this.rearmAlarm();
     return this.view() as InstanceView;
   }
 
@@ -695,6 +780,9 @@ export class WorkflowInstance extends DurableObject<Env> {
    */
   async mailIntake(input: MailIntakeInput): Promise<InstanceView> {
     if (this.journal.list().length > 0) throw new Error(`instance ${input.workflowId} already exists`);
+    // R2 (2026-09-18 reliability audit): same pessimistic backstop as intake() above, armed before this event-
+    // driven flow's own dispatch can start.
+    await this.rearmAlarm(this.clock.now().getTime() + maxStepDeadlineMs(workflowDef("mail-intake")) + STUCK_ALARM_SAFETY_MARGIN_MS);
     const wiring = this.wiring();
     const orchestrator = this.orchestratorFor(workflowDef("mail-intake"), wiring);
     const inst = orchestrator.start(
@@ -714,9 +802,32 @@ export class WorkflowInstance extends DurableObject<Env> {
     // Case is pure local SQLite work (no AI call, no remote host), so there is no reason to defer it to
     // ctx.waitUntil() and risk GET /case/:id.json 404ing for a window after mailIntake() already answered.
     this.createCaseForMailIntake(inst.workflowId, inst.tenantId);
+    // R3 (18.9.2026 owner audit): the durable outbox row is written HERE — synchronously, in the same critical
+    // section as createCaseForMailIntake()'s own synchronous SQLite write, BEFORE ctx.waitUntil() schedules the
+    // background fan-out task below — so that a crash between this line and the background task actually
+    // starting still leaves a PENDING row for a later alarm() tick to find and resume (RES-CRASH-001 discipline:
+    // durable before the next call, same rule store.ts's own DDL comments hold every other write in this object
+    // to). Only written when there is actually something to fan out — mailIngestPayload() here duplicates the
+    // same read fanOutAttachmentsIfAny() below will do a moment later (both need the same journal read; there is
+    // no cheaper way to know "will there be attachments" before that method runs), and if `attachments.length` is
+    // 0 there, fanOutAttachmentsIfAny() itself returns immediately with nothing to retry — no job row needed.
+    const fanoutIngest = this.mailIngestPayload(inst.workflowId);
+    if ((fanoutIngest?.attachments.length ?? 0) > 0) {
+      const fanoutCaseId = this.caseStore.byWorkflowId(inst.workflowId)?.caseId;
+      // fanoutCaseId should always resolve here — createCaseForMailIntake() just ran unconditionally above and
+      // requires nothing beyond what mailIngestPayload() itself already required to be non-empty. Guarded rather
+      // than asserted (matches fanOutAttachmentsIfAny()'s own "fail-closed, audited guard against an invariant
+      // somehow not holding" discipline a few methods down): no caseId means no durable outbox row can be
+      // written (case_id is NOT NULL), and fanOutAttachmentsIfAny() itself will hit its own no-Case SKIPPED
+      // branch and audit the same condition a moment later — nothing is silently lost by skipping the write here.
+      if (fanoutCaseId) {
+        const now = iso(this.clock.now());
+        this.fanoutJobStore.set({ workflowId: inst.workflowId, caseId: fanoutCaseId, status: "PENDING", attempts: 0, startedAt: now, updatedAt: now });
+      }
+    }
     this.ctx.waitUntil(this.copyOut());
     this.ctx.waitUntil(this.fanOutAttachmentsIfAny(inst.workflowId, inst.tenantId, inst.correlationId, wiring));
-    await this.rearmReviewAlarm();
+    await this.rearmAlarm();
     return this.view() as InstanceView;
   }
 
@@ -874,9 +985,24 @@ export class WorkflowInstance extends DurableObject<Env> {
    * same "a background failure must stay legible" discipline visualStampIfApplicable() already applies with its own
    * try/catch + console.error, with an audit record added on top because this failure is a live orchestration
    * decision (whether invoice.extract ran at all for this mail's attachments), not a cosmetic side effect. Also
-   * re-arms the review alarm afterwards: attachment-classify/attachment-extract can create their own review tasks
+   * re-arms the alarm afterwards: attachment-classify/attachment-extract can create their own review tasks
    * (onFailed: BUSINESS/VALIDATION -> review in their WorkflowDefs) after the mail-intake instance's own
-   * rearmReviewAlarm() call already ran.
+   * rearmAlarm() call already ran (renamed from rearmReviewAlarm() by R2, further folded into the R2R3-integrated
+   * three-source scheduler — alarm-scheduler.ts's nextAlarmWakeMs() — same call site, wider meaning).
+   *
+   * R3 (Reliability Gate, owner's second audit, 18.9.2026 — see fanout-retry.ts's file-level doc comment for the
+   * full "why"): this method used to call fanOutAttachments() ONCE with the whole attachment list, with no
+   * durable record that it had even started and no per-attachment isolation — one thrown exception (from, say,
+   * the SECOND of three attachments) meant growCaseWithFanout() never ran at all for that pass, silently
+   * orphaning the FIRST attachment's already-finished classify instance from the Case even though its own AI call
+   * had genuinely succeeded. Rewritten so that (a) `this.fanoutJobStore` (store.ts) durably records which
+   * attachments are still outstanding before/after each pass, letting alarm()'s own maybeRetryFanoutJob() resume
+   * exactly the unfinished subset after an eviction instead of re-running already-done attachments (re-running a
+   * done one would re-trigger a real Workers AI call, not a cheap no-op — ids.ts's newId() confirmed live,
+   * non-deterministic, gives a retry no idempotency key of its own to lean on), and (b) each attachment now runs
+   * fanOutAttachments() as its own single-element call inside its own try/catch, with growCaseWithFanout() called
+   * immediately after each one succeeds — so a later attachment's exception can no longer erase an earlier
+   * attachment's already-real Case membership.
    */
   private async fanOutAttachmentsIfAny(workflowId: string, tenantId: string, correlationId: string, wiring: Wiring): Promise<void> {
     const ingest = this.mailIngestPayload(workflowId);
@@ -895,7 +1021,12 @@ export class WorkflowInstance extends DurableObject<Env> {
     if (!wiring.evidence) {
       // WiringOptions.evidence absent (no durable Žlab for this installation) — fan-out has no evidence to plan()
       // against and would only ever see CAPABILITY_GAP; skipping is honest, not a silent no-op (still audited).
+      // R3: also closes out the durable outbox row, if one exists — no evidence ledger is a standing
+      // installation-level condition a retry cannot fix, so there is nothing to gain from leaving it PENDING for
+      // the alarm to keep waking up on (markFanoutJobDone() is a no-op when no row was ever written).
       this.audit.append({ kind: "state", workflowId, tenantId, correlationId, capability: "attachment-fanout", details: { status: "SKIPPED", reason: "no evidence ledger wired for this installation" } });
+      this.markFanoutJobDone(workflowId, "no evidence ledger wired for this installation");
+      await this.rearmAlarm();
       return;
     }
     // Case-scoped evidence (docs/AUTONOMOUS-RUNTIME-V1.md część 2): this method only ever reaches here once
@@ -914,27 +1045,76 @@ export class WorkflowInstance extends DurableObject<Env> {
         capability: "attachment-fanout",
         details: { status: "SKIPPED", reason: "no Case found for this mail-intake instance — fan-out needs a caseId for the case-scoped evidence filter" },
       });
+      // R3: same reasoning as the no-evidence branch above — this invariant violation is not something a retry
+      // fixes, and mailIntake()'s own job-row write already required a resolvable caseId, so in practice no row
+      // exists to close here; markFanoutJobDone() stays a safe no-op if one somehow does.
+      this.markFanoutJobDone(workflowId, "no Case found for this mail-intake instance");
+      await this.rearmAlarm();
       return;
     }
+    const job = this.fanoutJobStore.get(workflowId);
+    const now = iso(this.clock.now());
     try {
-      const outcomes = await fanOutAttachments(
-        {
-          classifyOrchestrator: this.orchestratorFor(workflowDef("attachment-classify"), wiring),
-          extractOrchestrator: this.orchestratorFor(workflowDef("attachment-extract"), wiring),
-          catalog: FACT_CATALOG,
-          evidence: wiring.evidence,
-        },
-        { tenantId, caseId, attachments: fanoutAttachments, correlationId },
-      );
-      // Case wiring (Commit 3): group every attachment-classify/attachment-extract instance fanOutAttachments()
-      // just started into the same Case createCaseForMailIntake() built for this mail-intake instance. Its own
-      // failure must never corrupt or skip the fan-out audit summary right below — this method's real job — so
-      // it gets its own try/catch, not the outer one.
-      try {
-        this.growCaseWithFanout(workflowId, outcomes);
-      } catch (e) {
-        console.error(`[apf-gateway] case growth failed workflowId=${workflowId}: ${e instanceof Error ? e.message : String(e)}`);
+      // R3: only the attachments NOT already represented in the Case as a finished attachment-classify member —
+      // on a fresh (non-retry) pass this is every attachment (the Case has no classify members yet), on a RETRY
+      // pass (maybeRetryFanoutJob() below) this is exactly the subset an earlier, interrupted pass never got to.
+      // Built from this object's own journal/caseStore (never from `attempted`'s own artifactIds blindly trusted)
+      // so a mid-batch eviction that DID manage to add a member to the Case before dying is correctly skipped on
+      // resume — missingAttachments() itself is pure and separately unit-tested (fanout-retry.ts,
+      // tests/gw-fanout-retry.test.ts).
+      const already: CaseMemberSummary[] = (this.caseStore.get(caseId)?.instances ?? [])
+        .map((wid) => this.journal.get(wid))
+        .filter((i): i is Instance => i !== undefined)
+        .map((i) => ({ workflow: i.workflow, artifactId: typeof i.input.artifactId === "string" ? (i.input.artifactId as string) : undefined }));
+      const toAttempt = missingAttachments(already, fanoutAttachments);
+
+      // One fanOutAttachments() call PER ATTACHMENT, each in its own try/catch (R3's actual fix for the
+      // batch-orphaning bug described in this method's own doc comment above): growCaseWithFanout() runs
+      // immediately after each success, so a later attachment's exception can never erase an earlier attachment's
+      // already-real Case membership the way one shared try/catch around the whole batch used to.
+      const outcomes: AttachmentFanoutOutcome[] = [];
+      let firstError: string | undefined;
+      for (const attachment of toAttempt) {
+        try {
+          const [outcome] = await fanOutAttachments(
+            {
+              classifyOrchestrator: this.orchestratorFor(workflowDef("attachment-classify"), wiring),
+              extractOrchestrator: this.orchestratorFor(workflowDef("attachment-extract"), wiring),
+              catalog: FACT_CATALOG,
+              evidence: wiring.evidence,
+            },
+            { tenantId, caseId, attachments: [attachment], correlationId },
+          );
+          if (outcome) {
+            outcomes.push(outcome);
+            // Case wiring (Commit 3): group this attachment's own classify/extract instance into the same Case
+            // createCaseForMailIntake() built for this mail-intake instance. Its own failure must never stop the
+            // rest of this loop or corrupt the fan-out audit summary below — this method's real job — so it gets
+            // its own try/catch, not the outer one (same discipline the pre-R3 version already held, now applied
+            // per-attachment instead of once for the whole batch).
+            try {
+              this.growCaseWithFanout(workflowId, [outcome]);
+            } catch (e) {
+              console.error(`[apf-gateway] case fan-out growth failed workflowId=${workflowId} artifactId=${attachment.artifactId}: ${e instanceof Error ? e.message : String(e)}`);
+            }
+          }
+        } catch (e) {
+          const message = String((e as Error)?.message ?? e).slice(0, 500);
+          firstError ??= message;
+          console.error(`[apf-gateway] attachment fan-out failed workflowId=${workflowId} artifactId=${attachment.artifactId}: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
+        }
       }
+
+      // R3: the audit summary reports honestly on just THIS pass's own work (`attemptedThisPass`, the subset of
+      // the original `attachments` this pass actually tried), not the full original list — so a retry pass that
+      // only had two attachments left to try does not re-claim credit for (or re-blame itself for) the one
+      // attachment a previous pass already finished. `attempt` is purely additive on top of
+      // summarizeFanoutOutcomes()'s own existing FanoutSummary shape (attachment-fanout.ts) — zero change to its
+      // signature/contract, so tests/attachment-fanout.test.ts and tests/gw-platform-wiring-fanout.test.ts stay
+      // untouched by this pass.
+      const attemptedIds = new Set(toAttempt.map((a) => a.artifactId));
+      const attemptedThisPass = attachments.filter((a) => a.status === "SUCCEEDED" && typeof a.artifactId === "string" && attemptedIds.has(a.artifactId));
+      const attemptNumber = (job?.attempts ?? 0) + 1;
       // Aggregate status is a genuine summary, not an optimistic default: SUCCEEDED only when every attachment
       // ingested AND every classify step succeeded — a mail where 2 of 3 attachments classified fine and 1
       // genuinely failed reports PARTIAL, not an unqualified SUCCEEDED (owner, 18.9.2026, after live external
@@ -946,20 +1126,128 @@ export class WorkflowInstance extends DurableObject<Env> {
         tenantId,
         correlationId,
         capability: "attachment-fanout",
-        details: { ...summarizeFanoutOutcomes(attachments, outcomes) },
+        details: { ...summarizeFanoutOutcomes(attemptedThisPass, outcomes), attempt: attemptNumber },
       });
+
+      // R3's own durable bookkeeping: PENDING (with attempts incremented and lastError set) when at least one
+      // attachment threw this pass — maybeRetryFanoutJob() (below) is what actually retries it on a later alarm
+      // tick, after its own grace period. DONE otherwise — covers both "everything this pass attempted
+      // succeeded" and "there was nothing left to attempt" (toAttempt.length === 0, e.g. a retry pass confirming
+      // a prior pass had in fact already finished everything). Always writes a row even if one never existed
+      // (job undefined) on the failure branch — self-healing for an instance whose PENDING row predates this
+      // fix, or the rare case mailIntake()'s own guard above chose not to write one.
+      if (firstError) {
+        this.fanoutJobStore.set({ workflowId, caseId, status: "PENDING", attempts: attemptNumber, startedAt: job?.startedAt ?? now, updatedAt: now, lastError: firstError });
+      } else if (job) {
+        this.fanoutJobStore.set({ ...job, status: "DONE", updatedAt: now });
+      }
     } catch (e) {
+      // Fail-safe outer guard (this batch's own explicit requirement for every wake/background-path change): an
+      // unexpected error OUTSIDE the per-attachment loop (e.g. caseStore/journal access itself throwing) must
+      // still leave a legible audit trail and a durable PENDING row for the next alarm tick, exactly like a
+      // per-attachment failure does — never let a bug here escape as an invisible unhandled rejection the way a
+      // bare ctx.waitUntil() failure normally would (this method's own top doc comment explains why that
+      // distinction matters).
       console.error(`[apf-gateway] attachment fan-out failed workflowId=${workflowId}: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
+      const message = String((e as Error)?.message ?? e).slice(0, 500);
       this.audit.append({
         kind: "state",
         workflowId,
         tenantId,
         correlationId,
         capability: "attachment-fanout",
-        details: { status: "FAILED", reason: String((e as Error)?.message ?? e).slice(0, 500) },
+        details: { status: "FAILED", reason: message },
       });
+      this.fanoutJobStore.set({ workflowId, caseId, status: "PENDING", attempts: (job?.attempts ?? 0) + 1, startedAt: job?.startedAt ?? now, updatedAt: now, lastError: message });
     }
-    await this.rearmReviewAlarm();
+    await this.rearmAlarm();
+  }
+
+  /**
+   * Closes a fanout_job row as DONE without touching `attempts` — used by fanOutAttachmentsIfAny()'s own
+   * fail-closed SKIPPED branches above (no evidence ledger wired; no Case found), where the underlying condition
+   * is a standing installation/invariant issue a retry cannot fix on its own, so there is nothing to gain from
+   * leaving the row PENDING for the alarm to keep waking up on. A no-op when no row exists — both callers may run
+   * before mailIntake() ever had a caseId to write one with, or after a previous pass already closed it out.
+   */
+  private markFanoutJobDone(workflowId: string, reason?: string): void {
+    const job = this.fanoutJobStore.get(workflowId);
+    if (!job) return;
+    this.fanoutJobStore.set({ ...job, status: "DONE", updatedAt: iso(this.clock.now()), ...(reason ? { lastError: reason } : {}) });
+  }
+
+  /**
+   * R3 (Reliability Gate, owner's second audit, 18.9.2026): called from alarm() on every tick (via the R2R3
+   * integration's runAlarmTick(), alarm-scheduler.ts — its own isolated "fanout" step), this is the actual
+   * "safely wake up and repeat" half of the owner's own stated requirement ("musí se nejdřív sama umět bezpečně
+   * probudit, zopakovat..."). Reads the durable fanout_job row for this object's own mail-intake instance and
+   * decides, via the pure fanoutRetryDecision() (fanout-retry.ts), whether there is unfinished fan-out work worth
+   * resuming.
+   *
+   * Deliberately fail-safe, not fail-loud-and-blocking on top of ITS OWN internal try/catch below: the R2R3
+   * integration's alarm() wraps this call in its own isolated try/catch too (every subsystem gets its own
+   * boundary, not "trust that one already has one internally") — belt and suspenders is intentional here, not
+   * redundant, because this method is also reachable from fanOutAttachmentsIfAny()'s own retry path with its own
+   * failure modes. The fanoutJobStore.get() read below runs in its own try/catch, and ANY error there — a
+   * corrupt row, an unexpected throw — is caught, logged, and the method returns normally.
+   */
+  private async maybeRetryFanoutJob(inst: Instance, wiring: Wiring): Promise<void> {
+    if (this.fanoutRetryInFlight) return;
+    let job: FanoutJobRecord | undefined;
+    try {
+      job = this.fanoutJobStore.get(inst.workflowId);
+    } catch (e) {
+      console.error(`[apf-gateway] fanout job read failed workflowId=${inst.workflowId}: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
+    const decision = fanoutRetryDecision(job, this.clock.now().getTime(), { graceMs: WorkflowInstance.FANOUT_RETRY_GRACE_MS, maxAttempts: WorkflowInstance.FANOUT_MAX_ATTEMPTS });
+    if (decision === "none" || decision === "wait") return;
+    if (decision === "give-up") {
+      // job is guaranteed defined here: fanoutRetryDecision() only ever returns "give-up" for a PENDING (hence
+      // present) row — the `if (!job)` guard below is TypeScript narrowing, not a real runtime path.
+      if (!job) return;
+      try {
+        // Deliberately still a 2-state schema, not a dedicated DEAD status (fanout-retry.ts's FanoutJobRecord doc
+        // comment has the full reasoning) — this ONE audited FAILED record plus `lastError` on the row IS the
+        // operator-visible answer to "odhalit stagnaci" (detect stagnation) for a job that has exhausted its
+        // retries: a permanently-stuck fan-out is discoverable via the audit trail and this row's own lastError
+        // text, not silently invisible. Transitions PENDING -> DONE exactly once, so this branch never re-fires
+        // on a later, unrelated alarm tick for the same job.
+        this.fanoutJobStore.set({ ...job, status: "DONE", updatedAt: iso(this.clock.now()), lastError: `gave up after ${job.attempts} attempts` });
+        this.audit.append({
+          kind: "state",
+          workflowId: inst.workflowId,
+          tenantId: inst.tenantId,
+          correlationId: inst.correlationId,
+          capability: "attachment-fanout",
+          details: { status: "FAILED", reason: "attachment fan-out retry cap reached — some attachments may be permanently missing from this Case", attempts: job.attempts },
+        });
+      } catch (e) {
+        console.error(`[apf-gateway] fanout give-up bookkeeping failed workflowId=${inst.workflowId}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      return;
+    }
+    // decision === "retry": stale enough (past FANOUT_RETRY_GRACE_MS) that whatever pass last touched this row
+    // has had long enough to either finish or genuinely be gone. fanOutAttachmentsIfAny() itself recomputes
+    // `missingAttachments()` from the Case's own current members, so this call is safe to make even though a
+    // previous, still-technically-running pass in a different isolate cannot be ruled out with certainty — the
+    // accepted, bounded (attempts-capped) residual risk this item's own patch plan flagged, not a solved one.
+    this.fanoutRetryInFlight = true;
+    try {
+      this.audit.append({
+        kind: "state",
+        workflowId: inst.workflowId,
+        tenantId: inst.tenantId,
+        correlationId: inst.correlationId,
+        capability: "attachment-fanout",
+        details: { status: "RETRY", attempt: (job?.attempts ?? 0) + 1 },
+      });
+      await this.fanOutAttachmentsIfAny(inst.workflowId, inst.tenantId, inst.correlationId, wiring);
+    } catch (e) {
+      console.error(`[apf-gateway] fanout retry failed workflowId=${inst.workflowId}: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
+    } finally {
+      this.fanoutRetryInFlight = false;
+    }
   }
 
   /**
@@ -1183,26 +1471,135 @@ export class WorkflowInstance extends DurableObject<Env> {
    * `scheduled()` cron can't do it: there is no directory of "every WorkflowInstance currently WAITING(REVIEW)",
    * each one is its own Durable Object. So each instance arms its own alarm for its own open review's deadline
    * instead — no new registry, no change to the frozen contracts.
+   *
+   * R2R3 integration (owner's explicit merge spec, 2026-09-18 — see this commit's own message): renamed from
+   * rearmReviewAlarm() by R2 (2026-09-18, folding in the stuck-RUNNING-step deadline alongside review deadlines —
+   * a Durable Object gets exactly one pending alarm, setAlarm() always replaces it, confirmed against the
+   * durable-objects skill, so the earliest deadline this object cares about of ANY kind has to be armed here or
+   * an earlier one starves a later one), now folding in R3's fan-out retry time too — a third, independent source
+   * feeding the SAME Math.min(...), not a third, competing setAlarm() caller.
+   *
+   * `pessimisticDeadlineMs`, when given (from intake()/mailIntake()/decideReview() above, BEFORE buildMessage()
+   * has durably written the step's own precise notValidAfter), is a one-off upper bound for the call that is
+   * about to start dispatch; when omitted (the no-arg call every other call site already makes, alarm() included),
+   * the current instance's own RUNNING step's already-durable notValidAfter (or, if dispatch hasn't reached
+   * buildMessage() yet for some other reason, its workflow's deadlineMs from startedAt) is used instead — the
+   * same precise value isRunningStepStale() (orchestrator.ts) gates recover() on, so the alarm this object wakes
+   * up on and the check that runs when it does agree on the same clock.
+   *
+   * Critically, EVERY value fed into nextAlarmWakeMs() (alarm-scheduler.ts) below is read FRESH on every call —
+   * this.reviewStore.all(), this.journal.list()[0] and this.fanoutJobStore.get() are never a value captured
+   * earlier in alarm()'s own body, they are read again right here. This is what makes the four race scenarios
+   * this integration was explicitly asked to hold (see alarm()'s own doc comment) correct almost for free: a
+   * deadline that only became true partway through THIS SAME tick — recovery converting a stale step into a
+   * fresh WAITING(REVIEW) task, a fan-out retry that just ran and moved its own row's updatedAt forward — is
+   * already reflected in the alarm armed at the end of the very tick that created it, because rearmAlarm() never
+   * trusts a snapshot from before that happened.
    */
-  private async rearmReviewAlarm(): Promise<void> {
-    const openDeadlines = this.reviewStore.all().filter((t) => t.status === "OPEN").map((t) => Date.parse(t.expiresAt));
-    if (openDeadlines.length === 0) {
+  private async rearmAlarm(pessimisticDeadlineMs?: number): Promise<void> {
+    const openReviewDeadlinesMs = this.reviewStore.all().filter((t) => t.status === "OPEN").map((t) => Date.parse(t.expiresAt));
+    let stuckStepDeadlineMs: number | undefined = pessimisticDeadlineMs;
+    if (stuckStepDeadlineMs === undefined) {
+      const inst = this.journal.list()[0];
+      const step = inst?.status === "RUNNING" ? inst.steps.find((s) => s.status === "RUNNING") : undefined;
+      if (inst && step) {
+        stuckStepDeadlineMs = step.message?.notValidAfter ? Date.parse(step.message.notValidAfter) : Date.parse(step.startedAt) + workflowDef(inst.workflow).deadlineMs;
+      }
+    }
+    const workflowId = this.journal.list()[0]?.workflowId;
+    const fanoutJob = workflowId ? this.fanoutJobStore.get(workflowId) : undefined;
+    const wake = nextAlarmWakeMs(
+      { openReviewDeadlinesMs, stuckStepDeadlineMs, fanoutJob },
+      { fanoutGraceMs: WorkflowInstance.FANOUT_RETRY_GRACE_MS, fanoutMaxAttempts: WorkflowInstance.FANOUT_MAX_ATTEMPTS },
+    );
+    if (wake === undefined) {
       await this.ctx.storage.deleteAlarm();
       return;
     }
-    await this.ctx.storage.setAlarm(Math.min(...openDeadlines));
+    await this.ctx.storage.setAlarm(wake);
   }
 
-  /** Fires at the earliest open review's deadline (armed by rearmReviewAlarm()). ESCALATE keeps the instance waiting
-   * on a new task with a later deadline, so the alarm re-arms itself for that one too. */
+  /**
+   * Fires at the earliest deadline rearmAlarm() knows about, of any of the three kinds it folds together — an
+   * open review's expiry, a stuck-RUNNING-step's own notValidAfter, or a due fan-out retry. ESCALATE keeps the
+   * instance waiting on a new task with a later deadline, so the alarm re-arms itself for that one too.
+   *
+   * R2R3 integration (owner's explicit spec, 2026-09-18 — this commit combines branches r2-automatic-recovery
+   * @ 1162773 and r3-durable-outbox-fanout @ 7ea5d6e, which independently modified this same method for
+   * different, both-legitimate reasons): FOUR separate steps, each in its own try/catch (runAlarmTick(),
+   * alarm-scheduler.ts) — never one shared try/catch around all three subsystems — so that one subsystem's
+   * failure can never prevent another from getting its own chance this same tick:
+   *   1. recover stuck workflow state (R2)
+   *   2. process a due durable fan-out job (R3)
+   *   3. process review/deadline transitions (the existing, live WF-REV-003 path)
+   *   4. persist/audit outcomes (copyOut())
+   * and rearmAlarm() (above) runs unconditionally afterwards, in a `finally`, reading fresh durable state rather
+   * than anything captured earlier in this same call.
+   *
+   * Deliberately REORDERED from R2's own original choice, which ran applyReviewExpiries() FIRST and
+   * unconditionally, ahead of the stuck-step recovery check it added. The owner's own reasoning for this change
+   * (2026-09-18): "nejdřív obnovit konzistentní stav execution enginu a až potom nad ním spouštět další práci"
+   * [first restore the execution engine's own consistent state, only then run further work on top of it] —
+   * recovery converts a stuck RUNNING step into a terminal/WAITING outcome, which is exactly the kind of state a
+   * later review-expiry pass or fan-out retry could otherwise be reasoning about while it is still wrong. Safety
+   * is preserved not by running reviews first (R2's original argument) but by giving reviews — and recovery, and
+   * fan-out — their OWN isolated try/catch: a recovery or fan-out failure can still never prevent reviews from
+   * running, the property R2's original ordering was actually protecting.
+   *
+   * Follow-up fix (adversarial review, 18.9.2026, same day): an isolated try/catch alone only protects against
+   * recovery/fan-out THROWING — it does nothing if either just runs long (both cascade through real, unbudgeted
+   * `transport.dispatch()` calls), which could still starve reviews/rearmAlarm of their own turn this same tick,
+   * or in the worst case let the isolate's own CPU/wall-clock budget run out before reviews ever got one. The
+   * `runAlarmTick(...)` call below now also passes `{ subsystemBudgetMs: ALARM_SUBSYSTEM_BUDGET_MS }` (see that
+   * constant's own doc comment above): runAlarmTick() races `recover`/`retryFanout` against it internally, so a
+   * timeout becomes a DependencyTimeout, caught exactly like any other subsystem failure, and this doc comment's
+   * own claim ("a recovery or fan-out failure can still never prevent reviews from running") now holds for a
+   * HUNG subsystem too, not only a thrown one.
+   */
   async alarm(): Promise<void> {
     const inst = this.journal.list()[0];
     if (!inst) return;
     const wiring = this.wiring();
     const orchestrator = this.orchestratorFor(workflowDef(inst.workflow), wiring);
-    orchestrator.applyReviewExpiries();
-    this.ctx.waitUntil(this.copyOut());
-    await this.rearmReviewAlarm();
+    const recordSubsystemFailure = (subsystem: "recovery" | "fanout" | "reviews", err: unknown) => {
+      const reason =
+        subsystem === "recovery"
+          ? "alarm-triggered recover() failed"
+          : subsystem === "fanout"
+          ? "alarm-triggered fan-out retry failed"
+          : "alarm-triggered review-expiry check failed";
+      this.audit.append({
+        kind: "reconciliation",
+        workflowId: inst.workflowId,
+        correlationId: inst.correlationId,
+        tenantId: inst.tenantId,
+        details: { reason, error: err instanceof Error ? err.message : String(err) },
+      });
+    };
+    try {
+      await runAlarmTick({
+        recover: async () => {
+          // Re-read rather than reuse the outer `inst`: applyReviewExpiries() (step 3) has not run yet at this
+          // point, but this same discipline (re-reading before acting, not trusting a value from before this
+          // subsystem's own turn) is what R2's original code already did here, and is what keeps this step
+          // correct regardless of what order these three subsystems end up running in.
+          const current = this.journal.list()[0];
+          if (current?.status === "RUNNING" && isRunningStepStale(current, workflowDef(current.workflow), this.clock.now())) {
+            await orchestrator.recover();
+          }
+        },
+        retryFanout: async () => {
+          await this.maybeRetryFanoutJob(inst, wiring);
+        },
+        applyReviewExpiries: async () => {
+          orchestrator.applyReviewExpiries();
+        },
+        onFailure: recordSubsystemFailure,
+      }, { subsystemBudgetMs: ALARM_SUBSYSTEM_BUDGET_MS });
+    } finally {
+      this.ctx.waitUntil(this.copyOut());
+      await this.rearmAlarm();
+    }
   }
 
   /**
@@ -1214,6 +1611,10 @@ export class WorkflowInstance extends DurableObject<Env> {
   async decideReview(reviewTaskId: string, decision: Decision, actorId: string, correctedType?: string): Promise<Instance> {
     const inst = this.journal.list()[0];
     if (!inst) throw new Error("no instance in this object");
+    // R2 (2026-09-18 reliability audit): same pessimistic backstop as intake()/mailIntake() — resumeAfterReview()
+    // below dispatches the next step, so this instance is about to go RUNNING again before its own precise
+    // notValidAfter is written.
+    await this.rearmAlarm(this.clock.now().getTime() + maxStepDeadlineMs(workflowDef(inst.workflow)) + STUCK_ALARM_SAFETY_MARGIN_MS);
     const task = this.reviewStore.get(reviewTaskId);
     if (!task) throw new Error(`review task ${reviewTaskId} not found`);
     // Authorization must come from the actor's own identity (tenant + granted scopes), never from
@@ -1246,7 +1647,7 @@ export class WorkflowInstance extends DurableObject<Env> {
     this.ctx.waitUntil(this.copyOut());
     const original = this.artifacts.list().find((a) => !a.derivedFrom);
     if (original) this.ctx.waitUntil(this.visualStampIfApplicable(original, inst.workflowId));
-    await this.rearmReviewAlarm();
+    await this.rearmAlarm();
     return updated;
   }
 

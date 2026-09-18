@@ -6,7 +6,8 @@ import { FakeDmsAdapter } from "../src/adapters/dms.js";
 import { FakeRegistryAdapter } from "../src/adapters/registry.js";
 import { ArtifactStore } from "../src/platform/artifacts.js";
 import { FakeClock } from "../src/platform/clock.js";
-import type { Instance } from "../src/platform/journal.js";
+import type { Instance, StepRecord } from "../src/platform/journal.js";
+import { isRunningStepStale, maxStepDeadlineMs, type WorkflowDef } from "../src/platform/orchestrator.js";
 import { InMemoryReviewTaskStore } from "../src/platform/review.js";
 import { createSlice, DEFAULT_CLOCK_START, INVOICE_CZ, NEWSLETTER, putArtifact, runIntake, TENANT_A, tmpDir } from "./harness/index.js";
 
@@ -119,5 +120,132 @@ describe("RES-DEP-001 unavailable dependency", () => {
     expect(registry.calls).toBe(3);
     expect(slice.dms.stampCalls).toBe(0);
     expect(slice.audit.byKind("state").at(-1)?.details).toMatchObject({ status: "FAILED", step: "validate", code: "DEPENDENCY_UNAVAILABLE" });
+  });
+});
+
+/**
+ * R2 (2026-09-18 reliability audit, "recover() exists but the live gateway never calls it"): recover() (RES-CRASH-001
+ * above) is safe to call from a fresh process boot with nothing else concurrently running — its only tested callers
+ * so far — but not safe to call unconditionally from a live, always-on Durable Object's alarm(), where a RUNNING step
+ * can be genuinely, legitimately still mid-dispatch. isRunningStepStale()/maxStepDeadlineMs() (src/platform/
+ * orchestrator.ts) are the pure staleness gate deploy/cloudflare/apf-gateway/src/index.ts's alarm() now checks before
+ * ever calling recover() outside a boot/test context; these are exactly the pure-function tests that stand in for a
+ * DO/miniflare harness (deploy/cloudflare/apf-gateway has no test suite today — see the R2 patch-plan write-up for why
+ * the wiring itself is left to a manual smoke test instead of a new harness this batch).
+ */
+describe("R2 recovery staleness gate (isRunningStepStale / maxStepDeadlineMs)", () => {
+  // Deliberately not one of the real workflows/*.json files: a literal fixture here means this suite can't start
+  // silently passing or failing because someone edited an unrelated real workflow's deadlineMs.
+  const WORKFLOW: WorkflowDef = {
+    workflow: "r2-fixture-wf",
+    workflowVersion: "1",
+    conformanceTier: "semantic",
+    deadlineMs: 1_800_000, // 30 min, same order of magnitude as the real workflows (mail-intake.v3.json:6)
+    operatorRole: "document.operator",
+    supervisorRole: "document.supervisor",
+    steps: [{ id: "classify", capability: "document.classify", capabilityVersion: "1", sideEffects: "none", inputs: {} }],
+  };
+  const WORKFLOW_STEP_DEF = WORKFLOW.steps[0]!;
+
+  function runningStep(overrides: Partial<StepRecord> = {}): StepRecord {
+    return {
+      stepId: "classify",
+      capability: "document.classify",
+      capabilityVersion: "1",
+      sideEffects: "none",
+      executionId: "exe-r2",
+      attempt: 1,
+      logicalAttempt: 1,
+      strategyIndex: 0,
+      strategy: "llm",
+      idempotencyKey: "wf-r2:classify:llm:1",
+      status: "RUNNING",
+      startedAt: DEFAULT_CLOCK_START,
+      ...overrides,
+    };
+  }
+
+  function instanceWith(steps: StepRecord[]): Instance {
+    return {
+      workflowId: "wf-r2",
+      workflow: "r2-fixture-wf",
+      workflowVersion: "1",
+      correlationId: "corr-r2",
+      tenantId: TENANT_A,
+      actorId: "svc-test",
+      status: "RUNNING",
+      currentStep: 0,
+      input: {},
+      steps,
+      published: { status: "RUNNING" },
+      createdAt: DEFAULT_CLOCK_START,
+      updatedAt: DEFAULT_CLOCK_START,
+    };
+  }
+
+  it("no RUNNING step (only SUCCEEDED/WAITING) -> false", () => {
+    const inst = instanceWith([runningStep({ status: "SUCCEEDED" }), runningStep({ stepId: "validate", status: "WAITING" })]);
+    expect(isRunningStepStale(inst, WORKFLOW, new Date(DEFAULT_CLOCK_START))).toBe(false);
+  });
+
+  it("RUNNING step whose message.notValidAfter has not yet elapsed -> false, and elapsed -> true (off-by-one at the boundary)", () => {
+    const notValidAfter = "2026-09-06T08:30:00Z"; // DEFAULT_CLOCK_START + 30min
+    const inst = instanceWith([
+      runningStep({
+        message: {
+          messageId: "msg-1",
+          correlationId: "corr-r2",
+          workflowId: "wf-r2",
+          stepId: "classify",
+          type: "command",
+          capability: "document.classify",
+          capabilityVersion: "1",
+          schemaVersion: "1",
+          idempotencyKey: "wf-r2:classify:llm:1",
+          createdAt: DEFAULT_CLOCK_START,
+          notValidAfter,
+          payload: {},
+        },
+      }),
+    ]);
+    const boundaryMs = Date.parse(notValidAfter);
+    // one millisecond before the deadline: still legitimately RUNNING, must not be recoverable
+    expect(isRunningStepStale(inst, WORKFLOW, new Date(boundaryMs - 1))).toBe(false);
+    // exactly at the deadline: now stale, recover() may act on it (this is the property alarm() gates on)
+    expect(isRunningStepStale(inst, WORKFLOW, new Date(boundaryMs))).toBe(true);
+    // comfortably after: still stale
+    expect(isRunningStepStale(inst, WORKFLOW, new Date(boundaryMs + 60_000))).toBe(true);
+  });
+
+  it("RUNNING step with no message (message.notValidAfter absent) falls back to startedAt + step/workflow deadlineMs", () => {
+    // Same shape as RES-CRASH-001's "a crash in a read-only step is simply rerun after restart" fixture above
+    // (tests/res.test.ts:58-71): a RUNNING step recorded with no `message` at all — buildMessage() never ran for
+    // it, so there is no durable notValidAfter to read, only startedAt + the workflow's own deadline policy.
+    const inst = instanceWith([runningStep()]); // no `message` override -> field is simply absent
+    const fallbackMs = Date.parse(DEFAULT_CLOCK_START) + WORKFLOW.deadlineMs; // no step-level deadlineMs override in WORKFLOW
+    expect(isRunningStepStale(inst, WORKFLOW, new Date(fallbackMs - 1))).toBe(false);
+    expect(isRunningStepStale(inst, WORKFLOW, new Date(fallbackMs))).toBe(true);
+  });
+
+  it("maxStepDeadlineMs: workflow deadline when no step overrides it", () => {
+    expect(maxStepDeadlineMs(WORKFLOW)).toBe(1_800_000);
+  });
+
+  it("maxStepDeadlineMs: the larger of the two when a step override exceeds the workflow deadline", () => {
+    const wf: WorkflowDef = {
+      ...WORKFLOW,
+      deadlineMs: 1_800_000,
+      steps: [{ ...WORKFLOW_STEP_DEF, deadlineMs: 3_600_000 }],
+    };
+    expect(maxStepDeadlineMs(wf)).toBe(3_600_000);
+  });
+
+  it("maxStepDeadlineMs: the workflow deadline when it is larger than every step override", () => {
+    const wf: WorkflowDef = {
+      ...WORKFLOW,
+      deadlineMs: 1_800_000,
+      steps: [{ ...WORKFLOW_STEP_DEF, deadlineMs: 600_000 }],
+    };
+    expect(maxStepDeadlineMs(wf)).toBe(1_800_000);
   });
 });

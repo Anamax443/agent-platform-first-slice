@@ -471,3 +471,37 @@ export class Orchestrator {
     this.opts.journal.put(inst);
   }
 }
+
+/**
+ * R2 (2026-09-18 reliability audit, "recover() exists but the live gateway never calls it"): recover() itself
+ * (above) has no staleness check and unconditionally treats any RUNNING step as crash-recoverable — correct for
+ * its only current callers (a fresh process boot with nothing else running, tests/res.test.ts), but not safe to
+ * call from a live, always-on Durable Object, where a periodic alarm can observe a step that is genuinely,
+ * legitimately still mid-dispatch in the same object (Workers DOs interleave concurrent calls across await
+ * boundaries). This is the staleness gate the deploy layer (deploy/cloudflare/apf-gateway/src/index.ts, alarm())
+ * checks before ever calling recover() outside a test/reboot context, reusing notValidAfter — already durably set
+ * on every RUNNING step by buildMessage() above — instead of inventing a new field. Exported (rather than kept
+ * private to index.ts) so it is unit-testable the same way recover() itself is tested here, without a Durable
+ * Object/miniflare harness (deploy/cloudflare/apf-gateway has no test suite today).
+ */
+export function isRunningStepStale(inst: Instance, workflow: WorkflowDef, now: Date): boolean {
+  const step = inst.steps.find((s) => s.status === "RUNNING");
+  if (!step) return false;
+  const notValidAfterMs = step.message?.notValidAfter
+    ? Date.parse(step.message.notValidAfter)
+    : Date.parse(step.startedAt) + (workflow.steps.find((s) => s.id === step.stepId)?.deadlineMs ?? workflow.deadlineMs);
+  return now.getTime() >= notValidAfterMs;
+}
+
+/**
+ * Pessimistic upper bound on how long any step of this workflow could still be legitimately RUNNING before its
+ * own notValidAfter is durably written (buildMessage() above runs synchronously before the first dispatch, so in
+ * the crash-free case this window is sub-millisecond) — used by deploy/cloudflare/apf-gateway/src/index.ts to arm
+ * a backstop alarm BEFORE that write can happen, so a crash before it is still bounded. workflow.deadlineMs is
+ * normally already the largest deadline (every StepDef.deadlineMs override in workflows/*.json today is smaller,
+ * e.g. mail-intake.v3.json's step override 600000ms against its own 1800000ms workflow deadline), but this takes
+ * the max explicitly rather than assuming it, so it stays correct if that ever changes.
+ */
+export function maxStepDeadlineMs(workflow: WorkflowDef): number {
+  return Math.max(workflow.deadlineMs, ...workflow.steps.map((s) => s.deadlineMs ?? 0));
+}
