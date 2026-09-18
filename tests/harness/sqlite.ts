@@ -6,6 +6,7 @@ import type { AsyncSql } from "../../src/platform/evidence-mirror.js";
 import type { SqlExec } from "../../src/platform/evidence-sqlite.js";
 import type { IdempotencyRecord, IdempotencyStore } from "../../src/platform/idempotency.js";
 import type { HandlerOutcome } from "../../src/platform/types.js";
+import type { DurableJobRecord } from "../../src/platform/durable-job.js";
 
 // node:sqlite prints one ExperimentalWarning per process; it would otherwise land as noise in every test run.
 const originalEmitWarning = process.emitWarning.bind(process);
@@ -108,5 +109,53 @@ export class TestIdempotencyStore implements IdempotencyStore {
 
   async release(dedupKey: string): Promise<void> {
     this.sql.exec("DELETE FROM idempotency WHERE dedup_key = ?", dedupKey);
+  }
+}
+
+/**
+ * RG2-A (Reliability Gate, 2026-09-18): the same "durable_job" table deploy/cloudflare/apf-gateway/src/store.ts's
+ * SqliteDurableJobStore creates and reads — kept as a literal string constant here (not imported from store.ts) for
+ * the identical reason IDEMPOTENCY_DDL above is: store.ts's classes are typed against the ambient
+ * SqlStorage/D1Database Workers globals, which resolve only under deploy/cloudflare/tsconfig.json, not the root
+ * tsconfig tests/**\/*.ts are checked under.
+ */
+export const DURABLE_JOB_DDL =
+  "CREATE TABLE IF NOT EXISTS durable_job (workflow_id TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, started_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_error TEXT, PRIMARY KEY (workflow_id, kind))";
+
+/**
+ * Test-only, real-SQL (node:sqlite) mirror of SqliteDurableJobStore's two methods, same table, same statements —
+ * see DURABLE_JOB_DDL's own comment above for why this cannot just import the real class. Used to prove the
+ * copyout job's PENDING row is real persisted SQL state, not JS object state: a fresh instance of this class,
+ * wrapping the SAME underlying node:sqlite handle (simulating a Durable Object waking up in a new isolate after
+ * eviction/restart), must see exactly what a previous instance last wrote.
+ */
+export class TestDurableJobStore {
+  constructor(private readonly sql: NodeSql) {}
+
+  get(workflowId: string, kind: string): DurableJobRecord | undefined {
+    const row = this.sql.exec("SELECT * FROM durable_job WHERE workflow_id = ? AND kind = ?", workflowId, kind).toArray()[0];
+    if (!row) return undefined;
+    return {
+      workflowId: row.workflow_id as string,
+      kind: row.kind as string,
+      status: row.status as DurableJobRecord["status"],
+      attempts: row.attempts as number,
+      startedAt: row.started_at as string,
+      updatedAt: row.updated_at as string,
+      ...(row.last_error ? { lastError: row.last_error as string } : {}),
+    };
+  }
+
+  set(job: DurableJobRecord): void {
+    this.sql.exec(
+      "INSERT OR REPLACE INTO durable_job (workflow_id, kind, status, attempts, started_at, updated_at, last_error) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      job.workflowId,
+      job.kind,
+      job.status,
+      job.attempts,
+      job.startedAt,
+      job.updatedAt,
+      job.lastError ?? null,
+    );
   }
 }

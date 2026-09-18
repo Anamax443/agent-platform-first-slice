@@ -3,8 +3,11 @@
 // tests/gw-fanout-retry.test.ts) and copyOut()'s new durable job (index.ts) now delegate to, so this arithmetic is
 // tested exactly once rather than twice. Style mirrors tests/gw-fanout-retry.test.ts's own fanoutRetryDecision()
 // tests, minus the give-up branch this file's own type (JobRetryDecision) has no room for.
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { jobNextWakeAt, jobRetryDecision, nextCopyoutJobRecord, type DurableJobRecord, type JobStaleness } from "../src/platform/durable-job.js";
+import { tmpDir } from "./harness/index.js";
+import { openSql, DURABLE_JOB_DDL, TestDurableJobStore } from "./harness/sqlite.js";
 
 const NOW = Date.parse("2026-09-18T12:00:00.000Z");
 const GRACE_MS = 60_000;
@@ -184,5 +187,83 @@ describe("nextCopyoutJobRecord — the copyout job's own give-up decision (never
       outstandingWork: false,
     });
     expect(result?.startedAt).toBe("2020-01-01T00:00:00.000Z");
+  });
+});
+
+/**
+ * Owner's own pre-merge condition (RG2-A, 2026-09-18): "copyout PENDING → new runtime/alarm tick → job still found
+ * → retry → DONE only after complete success" — a persistence test, not just a decision-function test. Every test
+ * above calls nextCopyoutJobRecord() directly against a plain object; none of them prove the PENDING row a real
+ * alarm tick would write is still there for the NEXT tick to find after this object's own SQLite handle goes away
+ * and a fresh one opens over the same file (the same "Durable Object evicted, isolate restarts, alarm() fires
+ * again" scenario copyOut()'s own doc comment is about). Uses TestDurableJobStore (tests/harness/sqlite.ts), the
+ * same real-node:sqlite-mirror-of-the-real-class pattern tests/harness/sqlite.ts's own TestIdempotencyStore
+ * already uses for SqliteIdempotencyStore, since store.ts itself cannot be imported under the root tsconfig tests
+ * run under (see that file's own comment).
+ */
+describe("nextCopyoutJobRecord + SqliteDurableJobStore — survives a restart: PENDING is found again, retried, and only reaches DONE after real success", () => {
+  it("tick 1 fails (D1 outage) -> PENDING persisted; a FRESH store instance over the same file still finds it; tick 2 still fails -> still PENDING, attempts incremented; a THIRD fresh instance finds it; tick 3 finally succeeds -> DONE, and a FOURTH fresh instance confirms it", () => {
+    const file = join(tmpDir(), "durable-job.sqlite");
+    const t1 = "2026-09-18T12:00:00.000Z";
+    const t2 = "2026-09-18T12:01:00.000Z";
+    const t3 = "2026-09-18T12:02:00.000Z";
+
+    // Tick 1: this instance's copyOut() pass throws before any ref claim can even run (e.g. ensureD1R2Ref() itself
+    // hitting a D1 outage — finding 3 from the adversarial review). No existing row yet.
+    const open1 = openSql(file);
+    open1.sql.exec(DURABLE_JOB_DDL);
+    const store1 = new TestDurableJobStore(open1.sql);
+    expect(store1.get("wf-restart", "copyout")).toBeUndefined();
+    const job1 = nextCopyoutJobRecord(store1.get("wf-restart", "copyout"), "wf-restart", "copyout", t1, {
+      anyRefClaimFailed: false,
+      passFailed: true,
+      passFailedError: "D1 unreachable",
+      outstandingWork: false,
+    });
+    expect(job1?.status).toBe("PENDING");
+    store1.set(job1 as DurableJobRecord);
+    open1.close(); // this "isolate" goes away entirely — nothing kept in JS memory carries state forward
+
+    // "New runtime / alarm tick": a fresh store instance, over the same underlying file, must still find the row —
+    // this is the actual persistence claim, not just the pure decision function's own math.
+    const open2 = openSql(file);
+    const store2 = new TestDurableJobStore(open2.sql);
+    const found2 = store2.get("wf-restart", "copyout");
+    expect(found2).toMatchObject({ status: "PENDING", attempts: 1, lastError: "copyOut pass failed: D1 unreachable" });
+
+    // Tick 2: still failing (D1 still down). Job stays PENDING, attempts climbs — genuine retry, not a fresh row.
+    const job2 = nextCopyoutJobRecord(found2, "wf-restart", "copyout", t2, {
+      anyRefClaimFailed: false,
+      passFailed: true,
+      passFailedError: "D1 unreachable",
+      outstandingWork: false,
+    });
+    expect(job2?.status).toBe("PENDING");
+    expect(job2?.attempts).toBe(2);
+    store2.set(job2 as DurableJobRecord);
+    open2.close();
+
+    // Another fresh instance finds the still-PENDING, now-twice-attempted row.
+    const open3 = openSql(file);
+    const store3 = new TestDurableJobStore(open3.sql);
+    const found3 = store3.get("wf-restart", "copyout");
+    expect(found3).toMatchObject({ status: "PENDING", attempts: 2 });
+
+    // Tick 3: D1 recovers, the pass fully succeeds (no ref-claim failure, no pass failure, nothing outstanding) ->
+    // only NOW does the job reach DONE.
+    const job3 = nextCopyoutJobRecord(found3, "wf-restart", "copyout", t3, {
+      anyRefClaimFailed: false,
+      passFailed: false,
+      outstandingWork: false,
+    });
+    expect(job3?.status).toBe("DONE");
+    store3.set(job3 as DurableJobRecord);
+    open3.close();
+
+    // A fourth, completely fresh instance confirms DONE is real persisted state, not an artifact of reusing store3.
+    const open4 = openSql(file);
+    const store4 = new TestDurableJobStore(open4.sql);
+    expect(store4.get("wf-restart", "copyout")).toMatchObject({ status: "DONE", attempts: 2 });
+    open4.close();
   });
 });
