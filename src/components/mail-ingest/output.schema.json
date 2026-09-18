@@ -21,6 +21,7 @@
           "contentType": { "type": "string", "minLength": 1 },
           "status": { "type": "string", "enum": ["SUCCEEDED", "FAILED"] },
           "artifactId": { "type": "string", "minLength": 1, "maxLength": 128, "description": "Present iff status is SUCCEEDED." },
+          "entityId": { "type": "string", "minLength": 1, "maxLength": 128, "description": "Present iff status is SUCCEEDED — this attachment's own impulse.attachment entity id (fact-address.ts's newEntityId()), minted once per attachment at ingest time so document.classify's per-attachment evidence (docs/AUTONOMOUS-RUNTIME-V1.md część 2, this change) can be addressed distinctly within one Case." },
           "errorCode": {
             "type": "string",
             "enum": ["EXTRACTION_UNAVAILABLE", "EXTRACTION_FAILED", "EXTRACTION_EMPTY", "STORAGE_FULL", "UNEXPECTED_ERROR"],

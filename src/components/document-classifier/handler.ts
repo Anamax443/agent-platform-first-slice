@@ -1,6 +1,6 @@
 // document.classify/1: AI capability. Untrusted document text goes in, one enum value with provenance comes out (F2).
 import type { LlmAdapter, TokenUsage } from "../../adapters/llm.js";
-import { CASE_SCOPE, capabilityError, DependencyTimeout, platformError, sha256, stripMimeAttachments, withTimeout } from "../../platform/api.js";
+import { capabilityError, DependencyTimeout, platformError, sha256, stripMimeAttachments, withTimeout } from "../../platform/api.js";
 import type { ArtifactReader, Clock, EvidenceWriter, FactAddress, FieldValue, Handler, HandlerInput, HandlerOutcome, Provenance } from "../../platform/api.js";
 import descriptor from "./descriptor.json" with { type: "json" };
 import inputSchema from "./input.schema.json" with { type: "json" };
@@ -21,6 +21,13 @@ export const CLASSIFY_EVIDENCE_INPUT_FIELD = "document.type";
 /** The only result value ever sealed under CLASSIFY_EVIDENCE_INPUT_FIELD by this producer — seal() below refuses
  * every other classification result on purpose (contracts/facts.v1.json's document.type.invoiceConfirmed entry). */
 export const CLASSIFY_EVIDENCE_INVOICE_RESULT = "INVOICE";
+/** P0 fact-scope-multi-doc pass (docs/AUTONOMOUS-RUNTIME-V1.md část 2, 18.9.2026 external audit): the "many" entity
+ * document.type.invoiceConfirmed's evidence subject is now scoped to (contracts/facts.v1.json's own entities[0]
+ * declaration, M0-FACT-CONTRACT-V1.md část A krůček 1) — re-declared as a local literal rather than importing
+ * FactCatalog.entityOf()'s return value here (this handler never loads a FactCatalog, same as before this change;
+ * ARCH-DEP-001 already keeps this file's other evidence-identity constants above as local literals for the same
+ * "component never re-derives from platform state it doesn't hold" reasoning). */
+const IMPULSE_ATTACHMENT_SCOPE = "impulse.attachment";
 
 export interface ClassifierDeps {
   artifacts: ArtifactReader;
@@ -52,6 +59,15 @@ interface Input {
    * seal() below then writes originCaseId undefined, the ADR's own documented, safe default.
    */
   caseId?: string;
+  /**
+   * Present only for a fan-out sub-instance (attachment-classify.v1.json's "classify" step threads it through from
+   * src/platform/attachment-fanout.ts, which gets it from AttachmentFanoutInput.attachments[].entityId) — this
+   * attachment's own impulse.attachment entity id, minted once by mail.ingest's handler.ts (newEntityId()) at ingest
+   * time (P0 fact-scope-multi-doc pass, docs/AUTONOMOUS-RUNTIME-V1.md část 2, 18.9.2026 external audit). Absent for
+   * mail-intake.v3.json's own top-level "classify" step, same as caseId above — seal() below then skips sealing
+   * entirely for that call, see its own doc comment for why that is a correctness improvement, not a regression.
+   */
+  attachmentEntityId?: string;
 }
 
 const TAG = /<\/?untrusted>/gi;
@@ -87,12 +103,26 @@ export function createDocumentClassifier(deps: ClassifierDeps): Handler {
   // other classified value (CONTRACT, OTHER) writes nothing, so invoice-extractor's new consumed evidence key
   // (invoice-extractor/facts.json) is a real gate, not a cosmetic one. subject.key names the FACT this attests
   // (document.type), same convention as cz-company-verify's own seal() — never the evidence key, never the payload's
-  // local field name. CASE_SCOPE, no entityId: document.type is a per-Case singleton fact (fact-address.ts's own
-  // rules), never a "many" entity. caseId (present only for a fan-out sub-instance, see Input.caseId above) flows
-  // through as write()'s originCaseId option — never as a claim field a cow could set for itself.
-  const seal = (input: HandlerInput, value: string, caseId?: string): void => {
+  // local field name.
+  //
+  // P0 fact-scope-multi-doc pass (docs/AUTONOMOUS-RUNTIME-V1.md část 2, 18.9.2026 external audit): this evidence key
+  // is no longer CASE_SCOPE (contrast document.type/document.type.validated, which stay CASE_SCOPE — see their own
+  // entries in contracts/facts.v1.json for why) — it is scoped to the "many" entity impulse.attachment, addressed by
+  // attachmentEntityId, because the ADR's own acceptance scenario C (część 8: a mail with a contract + an invoice +
+  // an ordinary photo — already more than one document per Case) needs THIS specific attachment's confirmed-INVOICE
+  // evidence to be independently addressable, not one CASE_SCOPE record indistinguishable from another attachment's.
+  // attachmentEntityId absent (the mail-intake.v3.json top-level classify step, which classifies the whole combined
+  // mail text, not one attachment) means there is no impulse.attachment entity to scope this evidence to — seal()
+  // now skips entirely in that case rather than writing a CASE_SCOPE record, which is a correctness improvement, not
+  // a behavior regression: contracts/facts.v1.json's own entry for this key already documents that no module's
+  // facts.json ever declared consuming/producing it outside the fan-out path (invoice-extractor/facts.json only
+  // gates on it via the attachment-classify.v1.json sub-instance), so that top-level call's own evidence was already
+  // unread by anything live before this change. caseId (present only for a fan-out sub-instance, see Input.caseId
+  // above) still flows through as write()'s originCaseId option — never as a claim field a cow could set for itself.
+  const seal = (input: HandlerInput, value: string, caseId?: string, attachmentEntityId?: string): void => {
     if (value !== CLASSIFY_EVIDENCE_INVOICE_RESULT) return;
-    const subject: FactAddress = { key: CLASSIFY_EVIDENCE_INPUT_FIELD, scope: CASE_SCOPE };
+    if (attachmentEntityId === undefined) return;
+    const subject: FactAddress = { key: CLASSIFY_EVIDENCE_INPUT_FIELD, scope: IMPULSE_ATTACHMENT_SCOPE, entityId: attachmentEntityId };
     deps.evidence?.write(input, { subject, inputValueHash: sha256(value), result: value }, caseId ? { originCaseId: caseId } : undefined);
   };
 
@@ -113,7 +143,7 @@ export function createDocumentClassifier(deps: ClassifierDeps): Handler {
         return failed(capabilityError("CORRECTION_INVALID", "VALIDATION", false, "human correction is missing or outside the documentType allowlist"));
       }
       const documentType: FieldValue<string> = { value: p.documentType, source: "human", confidence: 1, trustLevel: "human-corrected" };
-      seal(input, documentType.value, p.caseId);
+      seal(input, documentType.value, p.caseId, p.attachmentEntityId);
       return { status: "SUCCEEDED", payload: { artifactId: art.artifactId, sha256: art.sha256, documentType }, provenance: base };
     }
 
@@ -161,7 +191,7 @@ export function createDocumentClassifier(deps: ClassifierDeps): Handler {
       confidence: strategy === "llm" ? 0.9 : 0.6,
       trustLevel: "untrusted-derived",
     };
-    seal(input, value, p.caseId);
+    seal(input, value, p.caseId, p.attachmentEntityId);
     return {
       status: "SUCCEEDED",
       payload: { artifactId: art.artifactId, sha256: art.sha256, documentType },

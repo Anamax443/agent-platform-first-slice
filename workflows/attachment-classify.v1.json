@@ -1,5 +1,5 @@
 {
-  "$comment": "Minimal one-step workflow (owner's Commit 1, M0-FACT-CONTRACT-V1.md část C, 18.9.2026): classify a single already-ingested attachment artifact in isolation, so the platform/gateway fan-out driver (src/platform/attachment-fanout.ts) can run document.classify once per mail attachment and decide — from THAT instance's own sealed evidence, never a hardcoded conditional — whether invoice.extract is next. Reuses document.classify's exact step shape from mail-intake.v3.json's classify step; input is the attachment's own artifactId (mail-ingest's attachmentArtifactIds[]), not mail-intake's combined ingest step output. Do NOT fold this into mail-intake.v1/v2/v3.json: those stay untouched, this is a separate, narrower flow the driver starts once per attachment, never the mail itself.",
+  "$comment": "Minimal one-step workflow (owner's Commit 1, M0-FACT-CONTRACT-V1.md část C, 18.9.2026): classify a single already-ingested attachment artifact in isolation, so the platform/gateway fan-out driver (src/platform/attachment-fanout.ts) can run document.classify once per mail attachment and decide — from THAT instance's own sealed evidence, never a hardcoded conditional — whether invoice.extract is next. Reuses document.classify's exact step shape from mail-intake.v3.json's classify step; input is the attachment's own artifactId (mail-ingest's attachmentArtifactIds[]), not mail-intake's combined ingest step output. Do NOT fold this into mail-intake.v1/v2/v3.json: those stay untouched, this is a separate, narrower flow the driver starts once per attachment, never the mail itself. P0 fact-scope-multi-doc pass (docs/AUTONOMOUS-RUNTIME-V1.md část 2, 18.9.2026 external audit): the classify step's inputs gained attachmentEntityId, mirroring caseId's own threading, so document.classify can seal document.type.invoiceConfirmed scoped to this specific attachment's impulse.attachment entity id (mail.ingest's newEntityId() mint) instead of the platform disambiguating by workflowId.",
   "workflow": "attachment-classify",
   "workflowVersion": "1",
   "conformanceTier": "semantic",
@@ -12,7 +12,7 @@
       "capability": "document.classify",
       "capabilityVersion": "1",
       "sideEffects": "none",
-      "inputs": { "artifactId": "$input.artifactId", "strategy": "$strategy", "documentType": "$input.documentType", "model": "$input.model", "caseId": "$input.caseId" },
+      "inputs": { "artifactId": "$input.artifactId", "strategy": "$strategy", "documentType": "$input.documentType", "model": "$input.model", "caseId": "$input.caseId", "attachmentEntityId": "$input.attachmentEntityId" },
       "strategies": ["keyword", "llm"],
       "qualityBudget": 2,
       "technicalRetries": 2,

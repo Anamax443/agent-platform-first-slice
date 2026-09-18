@@ -13,6 +13,7 @@
 import { describe, expect, it } from "vitest";
 import { addInstance, aggregateCaseStatus, CaseError, MemoryCaseStore, newCase, type NormalizedImpulse } from "../src/platform/case.js";
 import { fanOutAttachments } from "../src/platform/attachment-fanout.js";
+import { newEntityId } from "../src/platform/fact-address.js";
 import type { InstanceStatus } from "../src/platform/journal.js";
 import { realCatalog } from "./harness/facts.js";
 import { CONTRACT_CZ, createSlice, INVOICE_CZ, INVOICE_MAIL, putArtifact, runMailIntake, TENANT_A } from "./harness/index.js";
@@ -106,7 +107,7 @@ describe("CASE-GROUP-001 a mail-intake instance plus its fanned-out attachment i
     const invoice = putArtifact(slice, INVOICE_CZ);
     const outcomes = await fanOutAttachments(
       { classifyOrchestrator: slice.orchestrators["attachment-classify"] as (typeof slice.orchestrators)[string], extractOrchestrator: slice.orchestrators["attachment-extract"] as (typeof slice.orchestrators)[string], catalog: realCatalog(), evidence: slice.evidence },
-      { tenantId: TENANT_A, caseId: c.caseId, attachmentArtifactIds: [invoice.artifactId] },
+      { tenantId: TENANT_A, caseId: c.caseId, attachments: [{ artifactId: invoice.artifactId, entityId: newEntityId() }] },
     );
     expect(outcomes).toHaveLength(1);
     expect(outcomes[0]?.classify.status).toBe("SUCCEEDED");
@@ -143,7 +144,7 @@ describe("CASE-GROUP-001 a mail-intake instance plus its fanned-out attachment i
     const invoice = putArtifact(slice, INVOICE_CZ);
     const outcomes = await fanOutAttachments(
       { classifyOrchestrator: slice.orchestrators["attachment-classify"] as (typeof slice.orchestrators)[string], extractOrchestrator: slice.orchestrators["attachment-extract"] as (typeof slice.orchestrators)[string], catalog: realCatalog(), evidence: slice.evidence },
-      { tenantId: TENANT_A, caseId: c.caseId, attachmentArtifactIds: [invoice.artifactId, "art-does-not-exist"] },
+      { tenantId: TENANT_A, caseId: c.caseId, attachments: [{ artifactId: invoice.artifactId, entityId: newEntityId() }, { artifactId: "art-does-not-exist", entityId: newEntityId() }] },
     );
     expect(outcomes).toHaveLength(2);
     expect(outcomes[0]?.classify.status).toBe("SUCCEEDED");
@@ -177,7 +178,7 @@ describe("CASE-GROUP-001 a mail-intake instance plus its fanned-out attachment i
     const contract = putArtifact(slice, CONTRACT_CZ);
     const outcomes = await fanOutAttachments(
       { classifyOrchestrator: slice.orchestrators["attachment-classify"] as (typeof slice.orchestrators)[string], extractOrchestrator: slice.orchestrators["attachment-extract"] as (typeof slice.orchestrators)[string], catalog: realCatalog(), evidence: slice.evidence },
-      { tenantId: TENANT_A, caseId: c.caseId, attachmentArtifactIds: [invoice.artifactId, contract.artifactId] },
+      { tenantId: TENANT_A, caseId: c.caseId, attachments: [{ artifactId: invoice.artifactId, entityId: newEntityId() }, { artifactId: contract.artifactId, entityId: newEntityId() }] },
     );
     expect(outcomes).toHaveLength(2);
 

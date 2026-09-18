@@ -6,8 +6,8 @@
 // path already does via the SAME DocumentExtractor (adapters/extract.ts) for anything binary. document.classify
 // downstream never learns any of this happened — it keeps reading whatever artifact `$steps.ingest.payload
 // .artifactId` points to, exactly as it always has, for every channel.
-import { capabilityError, parseMimeMessage, StorageFull } from "../../platform/api.js";
-import type { ArtifactWriter, Clock, FieldValue, HandlerOutcome, HostHandlerSpec } from "../../platform/api.js";
+import { capabilityError, newEntityId, parseMimeMessage, StorageFull } from "../../platform/api.js";
+import type { ArtifactWriter, Clock, EntityId, FieldValue, HandlerOutcome, HostHandlerSpec } from "../../platform/api.js";
 import type { DocumentExtractor, ExtractResult } from "../../adapters/extract.js";
 import descriptor from "./descriptor.json" with { type: "json" };
 import inputSchema from "./input.schema.json" with { type: "json" };
@@ -36,7 +36,7 @@ export interface IngestDeps {
 type ExtractErrorCode = Extract<ExtractResult, { ok: false }>["code"];
 export type AttachmentErrorCode = ExtractErrorCode | "STORAGE_FULL" | "UNEXPECTED_ERROR";
 export type AttachmentOutcome =
-  | { index: number; filename: string; contentType: string; status: "SUCCEEDED"; artifactId: string }
+  | { index: number; filename: string; contentType: string; status: "SUCCEEDED"; artifactId: string; entityId: EntityId }
   | { index: number; filename: string; contentType: string; status: "FAILED"; errorCode: AttachmentErrorCode };
 
 /** Deterministic header parse: first blank line ends the headers; only From and Subject are read, everything stays data. */
@@ -96,19 +96,30 @@ export function createIngestHandler(deps: IngestDeps): HostHandlerSpec {
       const attachmentTexts: { name: string; text: string }[] = [];
       for (const a of parsed.attachments) {
         const name = a.filename ?? `attachment-${a.index}`;
+        // P0 fact-scope-multi-doc pass (docs/AUTONOMOUS-RUNTIME-V1.md część 2, 18.9.2026 external audit): a fresh,
+        // opaque impulse.attachment entity id, minted once per attachment regardless of which branch below actually
+        // stores it — so document.classify's later evidence (document.type.invoiceConfirmed) can be addressed by
+        // FactAddress (key+scope+entityId) instead of Evidence.workflowId (attachment-fanout.ts's own old, coincidental
+        // keying). Deliberately NOT a content-hash identity: this id is never reconciled against a prior extraction
+        // (entity-continuity.ts's reconcileEntities()/computeEntityHash() are not called anywhere in this change, and
+        // entity-continuity.ts's own doc comment already says "No live producer calls this yet") — no re-ingest/
+        // re-extraction concept exists for a mail attachment today, so a fresh id every time this handler runs is
+        // correct, not a shortcut. impulse.attachment.sha256/.name (this entity's declared identityFields,
+        // contracts/facts.v1.json) stay unproduced by this handler on purpose, same reasoning.
+        const entityId: EntityId = newEntityId();
         try {
           if (isTextish(a.contentType)) {
             const text = new TextDecoder().decode(a.bytes);
             const artifactId = deps.artifacts.derive(stored.artifactId, text, "mail-ingest:parseMimeMessage").artifactId;
             attachmentTexts.push({ name, text });
-            attachments.push({ index: a.index, filename: name, contentType: a.contentType, status: "SUCCEEDED", artifactId });
+            attachments.push({ index: a.index, filename: name, contentType: a.contentType, status: "SUCCEEDED", artifactId, entityId });
             continue;
           }
           const extracted = await deps.extractor.extract({ name, bytes: a.bytes, contentType: a.contentType });
           if (extracted.ok) {
             const artifactId = deps.artifacts.derive(stored.artifactId, extracted.text, "mail-ingest:workers-ai-toMarkdown").artifactId;
             attachmentTexts.push({ name, text: extracted.text });
-            attachments.push({ index: a.index, filename: name, contentType: a.contentType, status: "SUCCEEDED", artifactId });
+            attachments.push({ index: a.index, filename: name, contentType: a.contentType, status: "SUCCEEDED", artifactId, entityId });
           } else {
             attachments.push({ index: a.index, filename: name, contentType: a.contentType, status: "FAILED", errorCode: extracted.code });
           }

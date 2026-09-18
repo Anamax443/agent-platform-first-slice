@@ -30,6 +30,7 @@ import { Audit } from "../src/platform/audit.js";
 import { fanOutAttachments } from "../src/platform/attachment-fanout.js";
 import { FakeClock } from "../src/platform/clock.js";
 import { MemoryEvidenceStore } from "../src/platform/evidence.js";
+import { newEntityId } from "../src/platform/fact-address.js";
 import { Journal } from "../src/platform/journal.js";
 import { Orchestrator } from "../src/platform/orchestrator.js";
 import { plan } from "../src/platform/planner.js";
@@ -83,8 +84,13 @@ describe("wirePlatform() (the LIVE composition) actually seals document.type.inv
     if (!wiring.evidence) throw new Error("test setup: evidence ledger missing");
     const artifact: Artifact = artifacts.put({ tenantId: TENANT_A, bytes: INVOICE_CZ, receivedFrom: "test-harness" });
 
+    // P0 fact-scope-multi-doc pass (docs/AUTONOMOUS-RUNTIME-V1.md część 2, 18.9.2026 external audit): document.classify's
+    // seal() now skips sealing entirely when no attachmentEntityId flows through (see handler.ts's own doc comment on
+    // seal() for why) — this test drives the "attachment-classify" workflow directly, bypassing fanOutAttachments()'s
+    // own entityId threading, so it must supply one itself, exactly as attachment-classify.v1.json's real caller does.
+    const attachmentEntityId = newEntityId();
     const classifyOrchestrator = orchestratorFor(workflowDef("attachment-classify"));
-    const started = classifyOrchestrator.start({ tenantId: TENANT_A, artifactId: artifact.artifactId });
+    const started = classifyOrchestrator.start({ tenantId: TENANT_A, artifactId: artifact.artifactId, attachmentEntityId });
     const instance = await classifyOrchestrator.run(started.workflowId);
 
     expect(instance.status).toBe("SUCCEEDED");
@@ -94,7 +100,8 @@ describe("wirePlatform() (the LIVE composition) actually seals document.type.inv
     // This is exactly what Gap 2 broke: without `...writerFor(CLASSIFY)` in platform-wiring.ts, this list is
     // empty — the handler ran, classified INVOICE, and produced a correct payload, but never wrote to the Žlab.
     const sealed = wiring.evidence.forTenant(TENANT_A).find((e) => e.workflowId === instance.workflowId && e.producerId === CLASSIFY);
-    expect(sealed).toMatchObject({ inputField: "document.type", result: "INVOICE" });
+    expect(sealed).toMatchObject({ inputField: `document.type@${attachmentEntityId}`, result: "INVOICE" });
+    expect(sealed?.subject).toEqual({ key: "document.type", scope: "impulse.attachment", entityId: attachmentEntityId });
   });
 
   it("a CONTRACT classification through the same real wiring seals nothing (the evidence gate is asymmetric on purpose)", async () => {
@@ -137,7 +144,7 @@ describe("end-to-end through the REAL wirePlatform() + REAL FACT_CATALOG togethe
         catalog: FACT_CATALOG,
         evidence: wiring.evidence,
       },
-      { tenantId: TENANT_A, caseId: "case-e2e-1", attachmentArtifactIds: [invoice.artifactId] },
+      { tenantId: TENANT_A, caseId: "case-e2e-1", attachments: [{ artifactId: invoice.artifactId, entityId: newEntityId() }] },
     );
 
     expect(outcomes).toHaveLength(1);
@@ -161,7 +168,7 @@ describe("end-to-end through the REAL wirePlatform() + REAL FACT_CATALOG togethe
         catalog: FACT_CATALOG,
         evidence: wiring.evidence,
       },
-      { tenantId: TENANT_A, caseId: "case-e2e-2", attachmentArtifactIds: [contract.artifactId] },
+      { tenantId: TENANT_A, caseId: "case-e2e-2", attachments: [{ artifactId: contract.artifactId, entityId: newEntityId() }] },
     );
     expect(outcomes[0]?.classify.status).toBe("SUCCEEDED");
     expect(outcomes[0]?.plan?.status).toBe("CAPABILITY_GAP");

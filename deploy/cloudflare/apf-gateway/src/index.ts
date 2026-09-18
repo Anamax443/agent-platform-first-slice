@@ -864,9 +864,18 @@ export class WorkflowInstance extends DurableObject<Env> {
    */
   private async fanOutAttachmentsIfAny(workflowId: string, tenantId: string, correlationId: string, wiring: Wiring): Promise<void> {
     const ingest = this.mailIngestPayload(workflowId);
-    const attachmentArtifactIds = ingest?.attachmentArtifactIds ?? [];
     const attachments = ingest?.attachments ?? [];
     if (attachments.length === 0) return;
+    // P0 fact-scope-multi-doc pass (docs/AUTONOMOUS-RUNTIME-V1.md część 2, 18.9.2026 external audit): fanOutAttachments()
+    // now takes {artifactId, entityId} pairs (AttachmentFanoutInput.attachments), not the old flat attachmentArtifactIds[]
+    // string list — entityId is mail.ingest's own newEntityId() mint (handler.ts), present iff status is SUCCEEDED
+    // (output.schema.json), so this filter+map mirrors the same "SUCCEEDED, has an artifactId" narrowing
+    // attachmentArtifactIds itself used to apply, plus the new entityId. A distinct local name on purpose (not reusing
+    // `attachmentArtifactIds`, and not shadowing `attachments` above, which summarizeFanoutOutcomes() below still needs
+    // in its original, unfiltered shape): this file already has its own unrelated `attachments` local for that call.
+    const fanoutAttachments = attachments
+      .filter((a): a is MailIngestAttachmentOutcome & { status: "SUCCEEDED"; artifactId: string; entityId: string } => a.status === "SUCCEEDED" && typeof a.artifactId === "string" && typeof a.entityId === "string")
+      .map((a) => ({ artifactId: a.artifactId, entityId: a.entityId }));
     if (!wiring.evidence) {
       // WiringOptions.evidence absent (no durable Žlab for this installation) — fan-out has no evidence to plan()
       // against and would only ever see CAPABILITY_GAP; skipping is honest, not a silent no-op (still audited).
@@ -899,7 +908,7 @@ export class WorkflowInstance extends DurableObject<Env> {
           catalog: FACT_CATALOG,
           evidence: wiring.evidence,
         },
-        { tenantId, caseId, attachmentArtifactIds, correlationId },
+        { tenantId, caseId, attachments: fanoutAttachments, correlationId },
       );
       // Case wiring (Commit 3): group every attachment-classify/attachment-extract instance fanOutAttachments()
       // just started into the same Case createCaseForMailIntake() built for this mail-intake instance. Its own
