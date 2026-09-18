@@ -21,6 +21,7 @@
 //     structural property of this function, not a convention index.ts has to keep re-proving by hand.
 import type { FanoutJobRecord } from "./fanout-retry.js";
 import { fanoutNextWakeAt } from "./fanout-retry.js";
+import { jobNextWakeAt, type JobStaleness } from "../../../../src/platform/durable-job.js";
 import { withTimeout } from "../../../../src/platform/api.js";
 
 export interface AlarmSchedulerState {
@@ -34,17 +35,28 @@ export interface AlarmSchedulerState {
   /** This instance's own durable fanout_job row, if one exists — R3's contribution. Passed through unchanged to
    * fanoutNextWakeAt() (fanout-retry.ts) rather than re-deriving its own wake-time logic here a second time. */
   fanoutJob?: FanoutJobRecord;
+  /** This instance's own durable copyout-job row (RG2-A, 2026-09-18, kind "copyout" — store.ts's `durable_job`
+   * table), if one exists. Generalizes the same "keep the alarm armed for outstanding background durability work"
+   * idea R3's fanoutJob above already established, via the shared, cap-less jobNextWakeAt() (durable-job.ts):
+   * unlike fanoutJob, a PENDING copyout job never expires into "give up", so this field alone is what stops
+   * rearmAlarm() from deleting the alarm out from under an instance whose last-ever copyOut() hit a D1 failure
+   * (Reliability Gate C5 — see index.ts's copyOut() doc comment for the exact P0 this closes). */
+  copyoutJob?: JobStaleness;
 }
 
 export interface AlarmSchedulerOpts {
   fanoutGraceMs: number;
   fanoutMaxAttempts: number;
+  /** Grace period between alarm-driven retries of a PENDING copyout job (RG2-A) — same backoff-pacing role as
+   * fanoutGraceMs above, so an instance stuck on copyOut() failures does not hammer D1/R2 every single tick. */
+  copyoutGraceMs: number;
 }
 
 /**
- * nextWake = min(nearestReviewDeadline, nearestStuckStepDeadline, nearestFanoutRetryAt) — the owner's own spec,
- * 2026-09-18, verbatim. Returns undefined when none of the three sources has anything pending at all, which is
- * the caller's own cue to delete rather than arm the alarm (index.ts's rearmAlarm()).
+ * nextWake = min(nearestReviewDeadline, nearestStuckStepDeadline, nearestFanoutRetryAt, nearestCopyoutRetryAt) —
+ * the owner's own spec, 2026-09-18, verbatim, plus RG2-A's copyoutJob term folded in the same way fanoutJob
+ * already was (same day, later finding). Returns undefined when none of the four sources has anything pending at
+ * all, which is the caller's own cue to delete rather than arm the alarm (index.ts's rearmAlarm()).
  *
  * The critical property this integration depends on — proven by construction, not by any hidden state in this
  * function — is that it is PURE and holds no memory of a previous call: index.ts's rearmAlarm() must call this
@@ -60,6 +72,8 @@ export function nextAlarmWakeMs(state: AlarmSchedulerState, opts: AlarmScheduler
   if (state.stuckStepDeadlineMs !== undefined) candidates.push(state.stuckStepDeadlineMs);
   const fanoutWakeAt = fanoutNextWakeAt(state.fanoutJob, { graceMs: opts.fanoutGraceMs, maxAttempts: opts.fanoutMaxAttempts });
   if (fanoutWakeAt !== undefined) candidates.push(fanoutWakeAt);
+  const copyoutWakeAt = jobNextWakeAt(state.copyoutJob, { graceMs: opts.copyoutGraceMs });
+  if (copyoutWakeAt !== undefined) candidates.push(copyoutWakeAt);
   return candidates.length === 0 ? undefined : Math.min(...candidates);
 }
 

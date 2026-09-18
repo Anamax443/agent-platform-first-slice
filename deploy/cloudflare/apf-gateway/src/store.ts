@@ -18,6 +18,7 @@ import type { Instance, JournalStore } from "../../../../src/platform/journal.js
 import type { ReviewTask, ReviewTaskStore } from "../../../../src/platform/review.js";
 import type { HandlerOutcome } from "../../../../src/platform/types.js";
 import type { FanoutJobRecord } from "./fanout-retry.js";
+import type { DurableJobRecord } from "../../../../src/platform/durable-job.js";
 
 /**
  * Durable Žlab (docs/M0-FACT-CONTRACT-V1.md část D, D-2): the platform's SqliteEvidenceStore runs unchanged over
@@ -94,6 +95,19 @@ export const DDL = [
   // other status column in this DDL array (instance/case_record/review above) — validated at the TS layer only
   // (fanout-retry.ts's FanoutJobRecord["status"] union), same discipline this file already holds throughout.
   "CREATE TABLE IF NOT EXISTS fanout_job (workflow_id TEXT PRIMARY KEY, case_id TEXT NOT NULL, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, started_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_error TEXT)",
+  // Reliability Gate RG2-A (2026-09-18, following the same day's R0-R4 audit): the general durable job/outbox
+  // primitive src/platform/durable-job.ts's own header describes — first (and, as of this change, only) consumer
+  // is copyOut()'s own durability row (index.ts), tracking whether an instance still has outstanding copyOut work
+  // (an uncopied artifact, an unmirrored audit/evidence record, or an artifact whose r2_ref claim hasn't durably
+  // landed yet) across a restart/eviction, closing the gap where a D1 failure on an instance's LAST-EVER copyOut()
+  // call left its r2_ref claim unregistered forever with no future alarm tick to retry it on. PK is
+  // `(workflow_id, kind)`, not bare `workflow_id` like `fanout_job` above — deliberately multi-kind-ready (a
+  // future mirror/notification/dependency-retry job could share this table under a different `kind`), even though
+  // `kind` is only ever `"copyout"` today; see durable-job.ts's own header for why this is NOT the same
+  // generalization fanout_job itself was deliberately kept out of. No CHECK constraint on `status`, matching every
+  // other status column in this file (instance/case_record/review/fanout_job above) — validated at the TS layer
+  // only (DurableJobRecord["status"] union, same discipline throughout.
+  "CREATE TABLE IF NOT EXISTS durable_job (workflow_id TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, started_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_error TEXT, PRIMARY KEY (workflow_id, kind))",
 ];
 
 /** Shared D1 trail: the same record shape, one row per audit record, insert-only. */
@@ -445,6 +459,43 @@ export class SqliteFanoutJobStore {
       "INSERT OR REPLACE INTO fanout_job (workflow_id, case_id, status, attempts, started_at, updated_at, last_error) VALUES (?, ?, ?, ?, ?, ?, ?)",
       job.workflowId,
       job.caseId,
+      job.status,
+      job.attempts,
+      job.startedAt,
+      job.updatedAt,
+      job.lastError ?? null,
+    );
+  }
+}
+
+/**
+ * Durable backing for the RG2-A generic job table (`durable_job` DDL comment above), same shape/placement
+ * convention as SqliteFanoutJobStore just above, keyed by `(workflow_id, kind)` instead of bare `workflow_id` —
+ * the one structural difference the multi-kind-ready PK requires. `get()`'s null -> undefined handling for
+ * `last_error` matches SqliteFanoutJobStore's own convention.
+ */
+export class SqliteDurableJobStore {
+  constructor(private readonly sql: SqlStorage) {}
+
+  get(workflowId: string, kind: string): DurableJobRecord | undefined {
+    const row = this.sql.exec("SELECT * FROM durable_job WHERE workflow_id = ? AND kind = ?", workflowId, kind).toArray()[0];
+    if (!row) return undefined;
+    return {
+      workflowId: row.workflow_id as string,
+      kind: row.kind as string,
+      status: row.status as DurableJobRecord["status"],
+      attempts: row.attempts as number,
+      startedAt: row.started_at as string,
+      updatedAt: row.updated_at as string,
+      ...(row.last_error ? { lastError: row.last_error as string } : {}),
+    };
+  }
+
+  set(job: DurableJobRecord): void {
+    this.sql.exec(
+      "INSERT OR REPLACE INTO durable_job (workflow_id, kind, status, attempts, started_at, updated_at, last_error) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      job.workflowId,
+      job.kind,
       job.status,
       job.attempts,
       job.startedAt,
