@@ -258,19 +258,45 @@ export interface Wiring {
   reconcilers?: Record<string, Reconciler>;
 }
 
+/**
+ * The gateway's signing key, fail-closed: a PKCS8 PEM secret when given (throws on an unparsable one), an
+ * ephemeral key only for an installation without an API host, an error otherwise. Was inline in wirePlatform()
+ * until RG2-E (2026-09-18) needed the same rule from the plain fetch handler (/ready, index.ts) — extracted rather
+ * than copied so the probe and the real wiring cannot drift apart.
+ */
+export function signingKeyFor(profile: Installation["profile"], signingKeyPem: string | undefined): { privateKey: KeyObject; signing: Wiring["signing"] } {
+  if (signingKeyPem) return { privateKey: createPrivateKey(signingKeyPem), signing: "secret" };
+  if (profile.channels.apiHost === null) return { privateKey: generateKeyPairSync("ed25519").privateKey, signing: "ephemeral" };
+  throw new Error("GATEWAY_SIGNING_KEY is missing and this installation has an API host (fail-closed)");
+}
+
+/**
+ * RG2-E (2026-09-18): the construction-time throw points of wirePlatform() that do NOT depend on a Durable Object,
+ * for /ready's "wiring/config constructs" probe (index.ts). The real wirePlatform() cannot be called from the plain
+ * fetch handler without side effects on its meaning: it needs the object's own ctx.storage.sql-backed stores
+ * (WiringOptions.artifacts/audit/idempotency — SqliteArtifacts/SqliteAudit/SqliteIdempotencyStore in index.ts's
+ * WorkflowInstance.wiring()), and substituting in-memory stand-ins for those from production code would be exactly
+ * the "silently substitutes a fake" shape RG2-C closed (the idempotency gate below the `o.idempotency` check would
+ * then be probing the stand-in, not the farm). So this checks, with the SAME functions wirePlatform() calls (not a
+ * re-implementation): the signing key (signingKeyFor above), the default model of every model-backed gateway
+ * capability resolving to an available credential (modelTable — what buildAdapters()/buildExtractAdapters() throw
+ * on), and mail.ingest's credential entry (credentialTable — what the ingestHost's CredentialResolver throws on).
+ * Not covered, by design: the durable-idempotency gate (index.ts always passes a real SqliteIdempotencyStore; the
+ * gate only ever fires for a caller that omits it) and the per-capability Router/policy registration (validated
+ * at import by assembleInstallation()'s policyRefs cross-check, fail-closed before the Worker can even answer).
+ * Returns what a caller may want to report; throws with wirePlatform()'s own messages otherwise.
+ */
+export function checkWiringPreconditions(o: { installation: Installation; secrets: SecretsSource; signingKeyPem: string | undefined }): { signing: Wiring["signing"]; models: Record<string, string> } {
+  const { signing } = signingKeyFor(o.installation.profile, o.signingKeyPem);
+  const models: Record<string, string> = {};
+  for (const capability of [CLASSIFY, EXTRACT]) models[capability] = modelTable(o.installation, o.secrets, capability).default;
+  credentialTable(o.installation, o.secrets, { [ingest.INGEST_HANDLER_ID]: [] });
+  return { signing, models };
+}
+
 export function wirePlatform(o: WiringOptions): Wiring {
   const profile = o.installation.profile;
-  let privateKey: KeyObject;
-  let signing: Wiring["signing"];
-  if (o.signingKeyPem) {
-    privateKey = createPrivateKey(o.signingKeyPem);
-    signing = "secret";
-  } else if (profile.channels.apiHost === null) {
-    privateKey = generateKeyPairSync("ed25519").privateKey;
-    signing = "ephemeral";
-  } else {
-    throw new Error("GATEWAY_SIGNING_KEY is missing and this installation has an API host (fail-closed)");
-  }
+  const { privateKey, signing } = signingKeyFor(profile, o.signingKeyPem);
   const registry = new KeyRegistry();
   registry.add({ keyId: o.keyId, publicKey: createPublicKey(privateKey), validFrom: iso(new Date(0)) });
   const gateway = new Gateway({ identities: new IdentityProvider(profile.identities), signer: new Signer(o.keyId, privateKey), clock: o.clock });

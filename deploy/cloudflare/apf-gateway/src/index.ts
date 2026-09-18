@@ -59,7 +59,11 @@ import {
   type Wired,
 } from "./page.js";
 import { FACT_CATALOG } from "./fact-catalog-bundle.js";
-import { buildOrchestrator, COW_WORKSHOP, describeModels, gatewayCatalog, modelAdapterFor, wirePlatform, type Wiring } from "./platform-wiring.js";
+import { buildOrchestrator, checkWiringPreconditions, COW_WORKSHOP, describeModels, gatewayCatalog, modelAdapterFor, wirePlatform, type Wiring } from "./platform-wiring.js";
+// RG2-E (2026-09-18): /live, /ready, /health/details — every decision is a pure function in readiness.ts (same
+// "index.ts cannot load under vitest" reason as alarm-scheduler.ts/fanout-retry.ts); this file only supplies the
+// I/O thunks (readinessProbes()/remoteHostProbes() below) and the three thin routes in fetch().
+import { assessReadiness, boundedRead, buildHealthDetails, missingBindings, runProbes, summarizeSelfTest, summarizeWatchdog, type ProbeSpec } from "./readiness.js";
 import { runSelfTest, requiredTestsFor, selfTestCapabilityForTick, SELF_TEST_CAPABILITIES, SELF_TEST_WORKFLOW_ID } from "./self-test.js";
 import { newSession, sendMessage, type WorkshopSession } from "./workshop.js";
 import { D1_AUDIT_DDL, D1_EVIDENCE_DDL, D1_R2_REF_DDL, d1Sql, DDL, evidenceMirrorOf, evidenceStoreOf, r2RefCounterOf, SqliteArtifacts, SqliteAudit, SqliteCaseStore, SqliteDurableJobStore, SqliteFanoutJobStore, SqliteIdempotencyStore, SqliteJournal, SqliteReviewTaskStore } from "./store.js";
@@ -203,6 +207,108 @@ const capabilitiesOf = async (fetcher: Fetcher, origin: string): Promise<{ ok: b
     return { ok: false, capabilities: [] };
   }
 };
+
+/** Fixed-row idiom (same as self-test-state/certification-state below): /ready's D1 write probe replaces ONE row
+ * with this id, so a polled /ready never grows the audit table. */
+const READINESS_PROBE_AUDIT_ID = "readiness-probe";
+/** R2 key /ready head()s — never written by anything; head() of an absent key answers null (reachable) and only
+ * an unreachable bucket throws, so the probe is side-effect free. */
+const READINESS_PROBE_R2_KEY = "readiness-probe";
+/** Per-probe budgets (RG2-E): every probe runs concurrently (readiness.ts runProbes), so /ready's wall-clock is
+ * bounded by the single slowest budget — 2 s — never their sum. Chosen, not measured: D1/R2 answer in tens of ms
+ * when healthy, and a load balancer polling /ready needs an answer well under its own typical 5–10 s timeout. */
+const READINESS_PROBE_TIMEOUT_MS = 2_000;
+const REMOTE_HOST_PROBE_TIMEOUT_MS = 1_500;
+/** Bindings a new Case cannot be accepted without — presence only, no call on any of them (readiness.ts
+ * missingBindings). IMAGES/ARGOS_MAIL are deliberately absent: neither is on the intake path. */
+const READINESS_REQUIRED_BINDINGS = ["AUDIT", "ARTIFACTS", "WORKFLOW", "AI", "DOCUMENT_HOST", "EMAIL_EXECUTOR", "MAIL_INGEST", "FAKES"] as const;
+
+/**
+ * /ready's REQUIRED probes (RG2-E) — "can I SAFELY accept a NEW Case right now?": the four things intake()/
+ * mailIntake() touch synchronously before a Case exists (bindings, the object's D1 audit mirror, the R2 artifact
+ * store, and the wiring that must construct inside the object). The kill switch is folded in by
+ * assessReadiness() itself. Each thunk is one cheap call; readiness.ts bounds and catches every one of them.
+ *
+ * Remote hosts (DOCUMENT_HOST/EMAIL_EXECUTOR/MAIL_INGEST/FAKES) are NOT here on purpose — see remoteHostProbes().
+ */
+function readinessProbes(env: Env): ProbeSpec[] {
+  return [
+    {
+      name: "bindings",
+      required: true,
+      timeoutMs: READINESS_PROBE_TIMEOUT_MS,
+      run: () => {
+        const missing = missingBindings(env as unknown as Record<string, unknown>, READINESS_REQUIRED_BINDINGS);
+        if (missing.length > 0) throw new Error(`missing bindings: ${missing.join(", ")}`);
+      },
+    },
+    {
+      // Read + write: `SELECT 1` proves the database answers, the fixed-row INSERT OR REPLACE proves it accepts
+      // writes (a read-only or quota-exhausted D1 would fail exactly the write copyOut() needs). Same idiom and
+      // column list as recordSelfTestSummary() below; the json is an AuditRecord-shaped object so the Deník
+      // renders it like any other row (toAuditLogRow). One row, replaced in place — no growth however often polled.
+      name: "d1-audit",
+      required: true,
+      timeoutMs: READINESS_PROBE_TIMEOUT_MS,
+      run: async () => {
+        await ensureD1Audit(env.AUDIT);
+        await env.AUDIT.prepare("SELECT 1").first();
+        const at = iso(new Date());
+        await env.AUDIT.prepare("INSERT OR REPLACE INTO audit (audit_id, at, kind, correlation_id, workflow_id, tenant_id, actor_id, capability, json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+          .bind(READINESS_PROBE_AUDIT_ID, at, "readiness-probe", null, null, null, "readiness", null, JSON.stringify({ kind: "readiness-probe", at, actorId: "readiness", details: { gitSha: env.GIT_SHA } }))
+          .run();
+      },
+    },
+    {
+      name: "r2-artifacts",
+      required: true,
+      timeoutMs: READINESS_PROBE_TIMEOUT_MS,
+      run: () => env.ARTIFACTS.head(READINESS_PROBE_R2_KEY),
+    },
+    {
+      // The DO-independent construction-time preconditions of wirePlatform() (platform-wiring.ts
+      // checkWiringPreconditions — its doc comment says exactly which throw points it covers and why the real
+      // wirePlatform() is not called from here: it needs this object's own ctx.storage.sql stores). Same inputs
+      // WorkflowInstance.wiring() passes: the bundled installation, secretsOf(env), env.GATEWAY_SIGNING_KEY.
+      name: "wiring-config",
+      required: true,
+      timeoutMs: READINESS_PROBE_TIMEOUT_MS,
+      run: () => checkWiringPreconditions({ installation, secrets: secretsOf(env), signingKeyPem: env.GATEWAY_SIGNING_KEY }),
+    },
+  ];
+}
+
+/**
+ * Best-effort, bounded GET of each bound Worker's own /health — reported by /health/details only, NEVER a /ready
+ * blocker. A new Case can be safely accepted while a remote host is down: every dispatch to it goes through the
+ * orchestrator's durable journal and, since RG2-A..D, a failed/unknown dispatch is retried from the object's own
+ * alarm() (R2 recover(), R3/RG2-A durable jobs) or escalated to a human review task (RG2-D) — it is never lost.
+ * Refusing intake because apf-document-host is momentarily unreachable would turn a self-healing delay into a
+ * client-visible outage. Non-required, so assessReadiness() lists them without letting them flip `ready`.
+ */
+function remoteHostProbes(env: Env): ProbeSpec[] {
+  const probe = (name: string, fetcher: Fetcher | undefined, origin: string): ProbeSpec => ({
+    name,
+    required: false,
+    timeoutMs: REMOTE_HOST_PROBE_TIMEOUT_MS,
+    run: async () => {
+      if (!fetcher) throw new Error("binding missing");
+      const r = await fetcher.fetch(`${origin}/health`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    },
+  });
+  return [
+    probe("apf-document-host", env.DOCUMENT_HOST, "https://apf-document-host.internal"),
+    probe("apf-email-executor", env.EMAIL_EXECUTOR, "https://apf-email-executor.internal"),
+    probe("apf-mail-ingest", env.MAIL_INGEST, "https://apf-mail-ingest.internal"),
+    probe("apf-fakes", env.FAKES, FAKES_ORIGIN),
+  ];
+}
+
+/** /ready's answer (RG2-E): every required probe concurrently, assessed by readiness.ts. Never throws. */
+async function readinessReport(env: Env) {
+  return assessReadiness(await runProbes(readinessProbes(env)), { killSwitch: env.KILL_SWITCH === "true", gitSha: env.GIT_SHA, installation: INSTALLATION });
+}
 
 /** Merged across runs — owner's request 2026-09-09 ("nevím, jestli jsou zdravé, jen je zelené OK" / "kde
  * jsou slibované testy kraviček?" / "ale já chci vidět kontroly a i si je být schopen individuálně
@@ -2461,6 +2567,10 @@ async function buildFarmModel(env: Env, instanceLimit: number, instanceWindow: s
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    // RG2-E: /live = the process is alive, nothing more. No I/O, no env lookups beyond vars, and deliberately
+    // ABOVE the installation-mismatch check: a mis-deployed bundle is still a running process (that is /ready's
+    // and /health/details' problem to report — both sit below the check and fail closed with it).
+    if (url.pathname === "/live") return Response.json({ ok: true, gitSha: env.GIT_SHA, installation: INSTALLATION });
     // Bundle and vars must name the same installation; anything else is a deployment mistake and stops here (fail-closed).
     if (env.INSTALLATION !== INSTALLATION) {
       return Response.json({ error: "INSTALLATION_MISMATCH", bundle: INSTALLATION, vars: env.INSTALLATION }, { status: 500 });
@@ -2482,6 +2592,24 @@ export default {
       });
     }
     if (url.pathname === "/health") return Response.json({ ok: true, wired: wiredOf(env) });
+    // RG2-E: /ready = "can I SAFELY accept a NEW Case right now?" — 200/503 with named blockers, bounded by the
+    // slowest single probe budget (readinessProbes() above). /health/details = why not / what is degraded — always
+    // 200, it is a report, not a gate; reads only what is already persisted (last self-test, last watchdog
+    // reconcile) plus a bounded /health of each remote host, and names what it CANNOT see (readiness.ts
+    // NOT_OBSERVABLE_GLOBALLY). Neither runs a self-test or touches any WorkflowInstance.
+    if (url.pathname === "/ready") {
+      const report = await readinessReport(env);
+      return Response.json(report, { status: report.ready ? 200 : 503 });
+    }
+    if (url.pathname === "/health/details") {
+      const [readiness, remoteHosts, selfTest, incidents] = await Promise.all([
+        readinessReport(env),
+        runProbes(remoteHostProbes(env)),
+        boundedRead(() => latestSelfTestSummary(env), READINESS_PROBE_TIMEOUT_MS),
+        boundedRead(() => allIncidents(env), READINESS_PROBE_TIMEOUT_MS),
+      ]);
+      return Response.json(buildHealthDetails({ readiness, remoteHosts, lastSelfTest: summarizeSelfTest(selfTest), watchdog: summarizeWatchdog(incidents) }));
+    }
     // Agent Registry (SEVERKA.md item 4): the descriptor's own declared endpoint (endpoints.capabilities), read-only,
     // no live Router round-trip needed — document.classify/document.validate/mail.ingest run in-process here.
     if (url.pathname === "/capabilities") return Response.json({ deployable: "apf-gateway", capabilities: gatewayCatalog() });
