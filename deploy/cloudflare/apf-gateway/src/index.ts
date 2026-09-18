@@ -62,7 +62,7 @@ import { FACT_CATALOG } from "./fact-catalog-bundle.js";
 import { COW_WORKSHOP, describeModels, gatewayCatalog, modelAdapterFor, wirePlatform, type Wiring } from "./platform-wiring.js";
 import { runSelfTest, requiredTestsFor, selfTestCapabilityForTick, SELF_TEST_CAPABILITIES, SELF_TEST_WORKFLOW_ID } from "./self-test.js";
 import { newSession, sendMessage, type WorkshopSession } from "./workshop.js";
-import { D1_AUDIT_DDL, D1_EVIDENCE_DDL, D1_R2_REF_DDL, d1Sql, DDL, evidenceMirrorOf, evidenceStoreOf, r2RefCounterOf, SqliteArtifacts, SqliteAudit, SqliteCaseStore, SqliteFanoutJobStore, SqliteIdempotencyStore, SqliteJournal, SqliteReviewTaskStore } from "./store.js";
+import { D1_AUDIT_DDL, D1_EVIDENCE_DDL, D1_R2_REF_DDL, d1Sql, DDL, evidenceMirrorOf, evidenceStoreOf, r2RefCounterOf, SqliteArtifacts, SqliteAudit, SqliteCaseStore, SqliteDurableJobStore, SqliteFanoutJobStore, SqliteIdempotencyStore, SqliteJournal, SqliteReviewTaskStore } from "./store.js";
 // R2R3 integration (18.9.2026 owner spec — see fanout-retry.ts's/alarm-scheduler.ts's own file-level doc comments
 // for the full "why"): pure decision logic over the durable fanout_job row and the unified alarm scheduler, split
 // out so both stay loadable under plain-Node vitest (this file imports "cloudflare:workers" two lines up and
@@ -75,7 +75,14 @@ import { registerDerived, type DerivedArtifactRegistration, type RegisterDerived
 import { createPrivateKey, createPublicKey } from "node:crypto";
 import { verifyEvidence, type Evidence } from "../../../../src/platform/evidence.js";
 import { mirrorEvidence } from "../../../../src/platform/evidence-mirror.js";
-import { registerR2Refs, releaseR2Ref } from "../../../../src/platform/r2-refcount.js";
+import { releaseR2Ref } from "../../../../src/platform/r2-refcount.js";
+// RG2-A (2026-09-18): the ordering-safe artifact loop copyOut() (below) delegates to, plus the generic durable
+// job primitive both it and (indirectly, via fanout-retry.ts) fan-out's own retry decision now share — see
+// copyout-artifacts.ts's and durable-job.ts's own file-level doc comments for the P0 this closes and why each is
+// its own file rather than a private WorkflowInstance method (same "cannot load cloudflare:workers under vitest"
+// reason fanout-retry.ts/alarm-scheduler.ts already are).
+import { copyOutArtifacts } from "../../../../src/platform/copyout-artifacts.js";
+import type { DurableJobRecord } from "../../../../src/platform/durable-job.js";
 import type { SqliteEvidenceStore } from "../../../../src/platform/evidence-sqlite.js";
 import type { ZlabStats } from "./page.js";
 import { visuallyStamp } from "./visual-stamp.js";
@@ -656,6 +663,18 @@ export class WorkflowInstance extends DurableObject<Env> {
   /** Durable outbox for the attachment fan-out background task (Reliability Gate R3, 18.9.2026 owner audit) — see
    * fanout-retry.ts's file-level doc comment and store.ts's `fanout_job` DDL comment for the full "why". */
   private readonly fanoutJobStore: SqliteFanoutJobStore;
+  /** Durable outbox for copyOut()'s own outstanding-work tracking (Reliability Gate RG2-A, 2026-09-18) — see
+   * copyout-artifacts.ts's/durable-job.ts's file-level doc comments and store.ts's `durable_job` DDL comment for
+   * the full "why". Always read/written with `kind: "copyout"` (this.COPYOUT_JOB_KIND below); the table's PK is
+   * multi-kind-ready for a future job this object might also track this way. */
+  private readonly copyoutJobStore: SqliteDurableJobStore;
+  private static readonly COPYOUT_JOB_KIND = "copyout";
+  /** How long a PENDING copyout-job row must sit untouched before an alarm tick is willing to retry it (RG2-A) —
+   * same "explicit judgment call, not measured" status as FANOUT_RETRY_GRACE_MS below, but deliberately much
+   * shorter: copyOut() only ever does D1/R2 calls, never a real Workers AI model call, so there is far less
+   * concern about a redundant concurrent retry being expensive or racy — the risk this grace period guards
+   * against is only "don't hammer D1/R2 every single tick", not "don't double-run an AI model". */
+  private static readonly COPYOUT_RETRY_GRACE_MS = 60_000;
   /**
    * How long a PENDING fanout_job row must sit untouched before an alarm tick is willing to retry it (R3). Chosen,
    * not measured: this codebase has no live Workers AI latency data for a many-attachment mail's worst-case
@@ -691,6 +710,7 @@ export class WorkflowInstance extends DurableObject<Env> {
     this.caseStore = new SqliteCaseStore(ctx.storage.sql);
     this.idempotency = new SqliteIdempotencyStore(ctx.storage.sql, this.clock);
     this.fanoutJobStore = new SqliteFanoutJobStore(ctx.storage.sql);
+    this.copyoutJobStore = new SqliteDurableJobStore(ctx.storage.sql);
   }
 
   /** Built on first use so that a broken wiring (missing secret) fails the intake with a message, not the object. */
@@ -1488,8 +1508,8 @@ export class WorkflowInstance extends DurableObject<Env> {
    * up on and the check that runs when it does agree on the same clock.
    *
    * Critically, EVERY value fed into nextAlarmWakeMs() (alarm-scheduler.ts) below is read FRESH on every call —
-   * this.reviewStore.all(), this.journal.list()[0] and this.fanoutJobStore.get() are never a value captured
-   * earlier in alarm()'s own body, they are read again right here. This is what makes the four race scenarios
+   * this.reviewStore.all(), this.journal.list()[0], this.fanoutJobStore.get() and (RG2-A) this.copyoutJobStore.get()
+   * are never a value captured earlier in alarm()'s own body, they are read again right here. This is what makes the four race scenarios
    * this integration was explicitly asked to hold (see alarm()'s own doc comment) correct almost for free: a
    * deadline that only became true partway through THIS SAME tick — recovery converting a stale step into a
    * fresh WAITING(REVIEW) task, a fan-out retry that just ran and moved its own row's updatedAt forward — is
@@ -1508,9 +1528,12 @@ export class WorkflowInstance extends DurableObject<Env> {
     }
     const workflowId = this.journal.list()[0]?.workflowId;
     const fanoutJob = workflowId ? this.fanoutJobStore.get(workflowId) : undefined;
+    // RG2-A: read fresh, same discipline as fanoutJob above — never a value captured earlier in this same tick
+    // (this method's own doc comment explains why that matters for the four race scenarios this integration holds).
+    const copyoutJob = workflowId ? this.copyoutJobStore.get(workflowId, WorkflowInstance.COPYOUT_JOB_KIND) : undefined;
     const wake = nextAlarmWakeMs(
-      { openReviewDeadlinesMs, stuckStepDeadlineMs, fanoutJob },
-      { fanoutGraceMs: WorkflowInstance.FANOUT_RETRY_GRACE_MS, fanoutMaxAttempts: WorkflowInstance.FANOUT_MAX_ATTEMPTS },
+      { openReviewDeadlinesMs, stuckStepDeadlineMs, fanoutJob, copyoutJob },
+      { fanoutGraceMs: WorkflowInstance.FANOUT_RETRY_GRACE_MS, fanoutMaxAttempts: WorkflowInstance.FANOUT_MAX_ATTEMPTS, copyoutGraceMs: WorkflowInstance.COPYOUT_RETRY_GRACE_MS },
     );
     if (wake === undefined) {
       await this.ctx.storage.deleteAlarm();
@@ -1653,66 +1676,123 @@ export class WorkflowInstance extends DurableObject<Env> {
 
   /**
    * Text artifacts to R2 (immutable, keyed by tenant + sha256), audit records and sealed evidence to the shared D1.
-   * Idempotent. Also re-registers every artifact this instance holds (not just newly-copied ones — see the r2_ref
-   * block below) as a claim on its R2 key in the shared D1 r2_ref table, so purge() (below) can tell a
-   * still-shared object from a truly orphaned one (Reliability Gate R0, commit 1d465dd: purge() used to delete an
-   * R2 object unconditionally, even when another Case's artifact still pointed at the same content-addressed key
-   * — src/platform/r2-refcount.ts's header has the full finding).
+   * Idempotent. Also re-registers every artifact this instance holds (not just newly-copied ones — see
+   * copyOutArtifacts()'s own doc comment) as a claim on its R2 key in the shared D1 r2_ref table, so purge()
+   * (above) can tell a still-shared object from a truly orphaned one (Reliability Gate R0, commit 1d465dd: purge()
+   * used to delete an R2 object unconditionally, even when another Case's artifact still pointed at the same
+   * content-addressed key — src/platform/r2-refcount.ts's header has the full finding).
+   *
+   * Reliability Gate RG2-A (2026-09-18, this same audit's later, deeper finding): the pre-existing version of this
+   * method registered every r2_ref claim LAST — after every R2 put()/markCopied() for this pass had already run —
+   * wrapped in one try/catch that only logged on a D1 failure ("fail-safe: unregistered until the next copyOut()
+   * call"). The problem: rearmAlarm() can delete this instance's alarm entirely once nothing else is outstanding,
+   * so "the next copyOut() call" may never happen again for an instance whose LAST-EVER copyOut() hit exactly that
+   * D1 failure — meanwhile a SIBLING Case sharing the same content-addressed R2 key (a forwarded email, a resent
+   * PDF — real, by-design dedup, r2-refcount.ts's header) sees zero refs on its own purge() and deletes the shared
+   * blob: permanent, silent evidence loss for the first Case, which still has a live pointer to now-deleted
+   * content. Fixed two ways, both below:
+   *   1. Ordering: copyOutArtifacts() (copyout-artifacts.ts) claims each artifact's r2_ref BEFORE ensuring its
+   *      blob exists / marking it copied — never the other way around. An artifact whose claim fails this pass is
+   *      simply left for the next attempt, never treated as "in use".
+   *   2. Durability (closes C5 — copyOut() was otherwise fire-and-forget via ctx.waitUntil(), invisible to
+   *      rearmAlarm()): `this.copyoutJobStore` (store.ts's `durable_job` table) durably tracks whether this
+   *      instance still has outstanding copyOut work, recomputed fresh at the end of every call — the same
+   *      "recompute, don't track a resume cursor" idiom rearmAlarm()/nextAlarmWakeMs() already use everywhere
+   *      else, since every input here (`.uncopied()`, `.unmirrored()`) is already naturally idempotent. Unlike the
+   *      fan-out job (fanout-retry.ts), this job NEVER gives up — see recordCopyoutOutcome()'s own doc comment.
+   * The governing invariant for every ordering choice here, verbatim (durable-job.ts's own header):
+   *
+   *   "An orphaned reference-claim, or a blob nobody deletes because a stale claim says it's still used, is a
+   *   bounded, cosmetic leak. A live reference pointing at a blob some OTHER Case's purge() has already deleted is
+   *   unbounded, undetectable data loss. Every ordering decision in this file resolves in favor of the leak."
    */
   private async copyOut(): Promise<void> {
-    for (const a of this.artifacts.uncopied()) {
-      const key = `${a.derivedFrom ? "derived" : "originals"}/${a.tenantId}/${a.sha256}`;
-      if (!(await this.env.ARTIFACTS.head(key))) {
-        await this.env.ARTIFACTS.put(key, a.bytes, {
-          httpMetadata: { contentType: a.contentType ?? "text/plain; charset=utf-8" },
-          customMetadata: { artifactId: a.artifactId, receivedFrom: a.receivedFrom, receivedAt: a.receivedAt, ...(a.derivedFrom ? { derivedFrom: a.derivedFrom } : {}) },
-        });
-      }
-      this.artifacts.markCopied(a.artifactId);
-    }
-    const pending = this.audit.unmirrored();
-    if (pending.length > 0) {
-      await ensureD1Audit(this.env.AUDIT);
-      const insert = this.env.AUDIT.prepare(
-        "INSERT OR IGNORE INTO audit (audit_id, at, kind, correlation_id, workflow_id, tenant_id, actor_id, capability, json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      );
-      await this.env.AUDIT.batch(
-        pending.map((r) => insert.bind(r.auditId, r.at, r.kind, r.correlationId ?? null, r.workflowId ?? null, r.tenantId ?? null, r.actorId ?? null, r.capability ?? null, JSON.stringify(r))),
-      );
-      this.audit.markMirrored(pending.map((r) => r.auditId));
-    }
-    // Durable Žlab (M0 D-5): sealed evidence goes to the shared D1 copy the same way — insert-only, replay-safe,
-    // marked after (evidence-mirror.ts mirrorEvidence). The object's SQLite stays the source of truth.
-    if (this.evidenceStore.unmirrored().length > 0) {
-      await ensureD1Evidence(this.env.AUDIT);
-      await mirrorEvidence(this.evidenceStore, evidenceMirrorOf(this.env.AUDIT));
-    }
-    // Reliability Gate R0 (commit 1d465dd, src/platform/r2-refcount.ts): register this instance's claim on every
-    // R2 key it holds. Deliberately `this.artifacts.list()` (ALL artifacts), not `.uncopied()` above — a binary
-    // original is stored already `copied = 1` (SqliteArtifacts.store(), store.ts) because it arrives already in
-    // R2 (location set), so it would never appear in the `.uncopied()` loop above and would otherwise never get a
-    // ref row at all. Re-registers on every copyOut() call, including ones where nothing above changed — that is
-    // intentional and cheap (INSERT OR IGNORE on the composite PK; see registerR2Refs's own doc comment), not a
-    // bug: it is what keeps this instance's claim alive in D1 without needing its own "did I already register
-    // this" bookkeeping. Best-effort and isolated behind its own try/catch: copyOut() itself is always called
-    // through ctx.waitUntil() (constructor/alarm/intake/mailIntake/decideReview, all above and below), so a D1
-    // hiccup here must degrade to "this instance's ref-claim is momentarily unregistered" and log, never surface
-    // as an uncaught rejection the platform would otherwise report as a worker error on an unrelated request path.
     const inst = this.journal.list()[0];
-    if (inst) {
-      const entries = this.artifacts.list().map((a) => ({
-        r2Key: a.location ?? `${a.derivedFrom ? "derived" : "originals"}/${a.tenantId}/${a.sha256}`,
-        workflowId: inst.workflowId,
-        tenantId: a.tenantId,
-      }));
-      if (entries.length > 0) {
-        try {
-          await ensureD1R2Ref(this.env.AUDIT);
-          await registerR2Refs(entries, r2RefCounterOf(this.env.AUDIT));
-        } catch (e) {
-          console.error("copyOut: r2_ref registration failed (fail-safe: this instance's claim is unregistered until the next copyOut() call)", e);
-        }
+    if (!inst) return; // nothing to claim/copy on behalf of — every real call site already has an instance by now
+    let anyRefClaimFailed = false;
+    try {
+      const artifacts = this.artifacts.list();
+      if (artifacts.length > 0) {
+        await ensureD1R2Ref(this.env.AUDIT);
+        const uncopiedIds = new Set(this.artifacts.uncopied().map((a) => a.artifactId));
+        const result = await copyOutArtifacts(
+          {
+            refCounter: r2RefCounterOf(this.env.AUDIT),
+            blobs: this.env.ARTIFACTS,
+            markCopied: (artifactId) => this.artifacts.markCopied(artifactId),
+            onClaimFailed: (artifactId, e) =>
+              console.error(
+                `[apf-gateway] copyOut: r2_ref claim failed artifactId=${artifactId} workflowId=${inst.workflowId} (ordering invariant: blob-write/markCopied skipped this pass, retried by the durable copyout job)`,
+                e,
+              ),
+          },
+          { workflowId: inst.workflowId, artifacts, uncopiedIds },
+        );
+        anyRefClaimFailed = result.anyRefClaimFailed;
       }
+
+      const pending = this.audit.unmirrored();
+      if (pending.length > 0) {
+        await ensureD1Audit(this.env.AUDIT);
+        const insert = this.env.AUDIT.prepare(
+          "INSERT OR IGNORE INTO audit (audit_id, at, kind, correlation_id, workflow_id, tenant_id, actor_id, capability, json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        );
+        await this.env.AUDIT.batch(
+          pending.map((r) => insert.bind(r.auditId, r.at, r.kind, r.correlationId ?? null, r.workflowId ?? null, r.tenantId ?? null, r.actorId ?? null, r.capability ?? null, JSON.stringify(r))),
+        );
+        this.audit.markMirrored(pending.map((r) => r.auditId));
+      }
+      // Durable Žlab (M0 D-5): sealed evidence goes to the shared D1 copy the same way — insert-only, replay-safe,
+      // marked after (evidence-mirror.ts mirrorEvidence). The object's SQLite stays the source of truth.
+      if (this.evidenceStore.unmirrored().length > 0) {
+        await ensureD1Evidence(this.env.AUDIT);
+        await mirrorEvidence(this.evidenceStore, evidenceMirrorOf(this.env.AUDIT));
+      }
+    } catch (e) {
+      // RG2-A: a failure anywhere above (a thrown R2 put(), a D1 batch() rejection) must not skip
+      // recordCopyoutOutcome() below — that write is what keeps this pass's failure durably visible to the next
+      // alarm tick instead of silently vanishing the way a bare, unguarded ctx.waitUntil() rejection would.
+      console.error(`[apf-gateway] copyOut: pass failed workflowId=${inst.workflowId} (durable copyout job stays PENDING; alarm() retries)`, e instanceof Error ? (e.stack ?? e.message) : String(e));
+    } finally {
+      this.recordCopyoutOutcome(inst.workflowId, anyRefClaimFailed);
+      // Same discipline as fanOutAttachmentsIfAny()'s own trailing rearmAlarm() call (R3): a background task that
+      // just durably changed a job row this object's alarm cares about must re-arm itself, rather than relying on
+      // a caller that scheduled it via ctx.waitUntil() (and so already returned before this line ever runs).
+      await this.rearmAlarm();
+    }
+  }
+
+  /**
+   * Freshly recomputes whether this instance still has outstanding copyOut work — never a resume cursor, the same
+   * "recompute, don't remember" idiom every other alarm-facing check in this file already uses (rearmAlarm()'s
+   * own doc comment) — and writes `this.copyoutJobStore` accordingly. PENDING while outstanding (an uncopied
+   * artifact, an unmirrored audit/evidence record, or `anyRefClaimFailedThisPass`); DONE once nothing is left,
+   * only if a row already existed (a fully clean instance that has never had trouble gets no row at all).
+   *
+   * Critical semantic difference from maybeRetryFanoutJob()'s job (fanout-retry.ts/index.ts): this job must NEVER
+   * give up. Fan-out abandons after FANOUT_MAX_ATTEMPTS because it is bounded, best-effort AI work with an
+   * accepted "some attachments may be permanently missing" outcome. copyOut() is REQUIRED durability work (R2
+   * refs, the audit trail, the evidence mirror) — there is no acceptable give-up outcome, so `attempts` here is
+   * observability only (surfaced via this row's own `lastError`/`attempts` if an operator ever inspects it),
+   * never compared against a cap the way FanoutJobRecord.attempts is in fanoutRetryDecision().
+   */
+  private recordCopyoutOutcome(workflowId: string, anyRefClaimFailedThisPass: boolean): void {
+    const outstanding = anyRefClaimFailedThisPass || this.artifacts.uncopied().length > 0 || this.audit.unmirrored().length > 0 || this.evidenceStore.unmirrored().length > 0;
+    const existing = this.copyoutJobStore.get(workflowId, WorkflowInstance.COPYOUT_JOB_KIND);
+    const now = iso(this.clock.now());
+    if (outstanding) {
+      const job: DurableJobRecord = {
+        workflowId,
+        kind: WorkflowInstance.COPYOUT_JOB_KIND,
+        status: "PENDING",
+        attempts: (existing?.attempts ?? 0) + 1,
+        startedAt: existing?.startedAt ?? now,
+        updatedAt: now,
+        ...(anyRefClaimFailedThisPass ? { lastError: "r2_ref claim failed for at least one artifact this pass" } : {}),
+      };
+      this.copyoutJobStore.set(job);
+    } else if (existing) {
+      this.copyoutJobStore.set({ ...existing, status: "DONE", updatedAt: now });
     }
   }
 }

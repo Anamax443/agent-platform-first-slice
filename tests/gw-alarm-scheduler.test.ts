@@ -20,8 +20,9 @@ import type { Instance, StepRecord } from "../src/platform/journal.js";
 import { isRunningStepStale, type WorkflowDef } from "../src/platform/orchestrator.js";
 import { fanoutRetryDecision, type FanoutJobRecord } from "../deploy/cloudflare/apf-gateway/src/fanout-retry.js";
 import { nextAlarmWakeMs, runAlarmTick, type AlarmSubsystem } from "../deploy/cloudflare/apf-gateway/src/alarm-scheduler.js";
+import type { DurableJobRecord } from "../src/platform/durable-job.js";
 
-const OPTS = { fanoutGraceMs: 5 * 60_000, fanoutMaxAttempts: 5 };
+const OPTS = { fanoutGraceMs: 5 * 60_000, fanoutMaxAttempts: 5, copyoutGraceMs: 60_000 };
 // fanoutRetryDecision()/fanoutNextWakeAt() (fanout-retry.ts, R3) take their own opts shape ({ graceMs,
 // maxAttempts }) — same values as OPTS above, kept as a separate constant rather than reusing OPTS's own
 // ({ fanoutGraceMs, fanoutMaxAttempts }) keys so a call site can never silently pass the wrong shape (which
@@ -33,6 +34,18 @@ const NOW = Date.parse("2026-09-18T12:00:00.000Z");
 const fanoutJob = (overrides: Partial<FanoutJobRecord> = {}): FanoutJobRecord => ({
   workflowId: "wf-alarm-1",
   caseId: "case-1",
+  status: "PENDING",
+  attempts: 1,
+  startedAt: "2026-09-18T11:00:00.000Z",
+  updatedAt: "2026-09-18T11:00:00.000Z",
+  ...overrides,
+});
+
+// RG2-A (2026-09-18): the copyout job's own fixture — no `caseId` (durable-job.ts's DurableJobRecord is the
+// fan-out-free shape), `kind` always "copyout" as of this change (store.ts's `durable_job` DDL comment).
+const copyoutJob = (overrides: Partial<DurableJobRecord> = {}): DurableJobRecord => ({
+  workflowId: "wf-alarm-1",
+  kind: "copyout",
   status: "PENDING",
   attempts: 1,
   startedAt: "2026-09-18T11:00:00.000Z",
@@ -159,6 +172,42 @@ describe("nextAlarmWakeMs — the central nextWake = min(...) authority", () => 
     // fresh WAITING(REVIEW) task with a near expiry — this is the state a FRESH read after recovery would see.
     const afterRecovery = { openReviewDeadlinesMs: [NOW + 5_000] };
     expect(nextAlarmWakeMs(afterRecovery, OPTS)).toBe(NOW + 5_000);
+  });
+});
+
+// RG2-A (2026-09-18): closes Reliability Gate C5 — copyOut() was invisible to rearmAlarm() (fire-and-forget via
+// ctx.waitUntil()), so an instance with a PENDING copyout job but zero open reviews, zero stuck steps and zero
+// fanout job would previously have its alarm DELETED, never woken up again to retry the outstanding R2 ref
+// claim/blob copy/audit-or-evidence mirror. This is the test that proves THAT gap specifically, not merely that
+// nextAlarmWakeMs() folds in a fourth source (which the "single copyout job" test below also shows).
+describe("nextAlarmWakeMs — copyoutJob (RG2-A): the fourth source, closing Reliability Gate C5", () => {
+  it("a PENDING copyout job, and NOTHING else (no open reviews, no stuck step, no fanout job) -> still a wake time, not undefined", () => {
+    const job = copyoutJob({ updatedAt: new Date(NOW).toISOString() });
+    const wake = nextAlarmWakeMs({ openReviewDeadlinesMs: [], copyoutJob: job }, OPTS);
+    expect(wake).toBe(NOW + OPTS.copyoutGraceMs);
+    expect(wake).not.toBeUndefined();
+  });
+
+  it("a DONE copyout job, and nothing else -> undefined (caller deletes the alarm, exactly like before RG2-A)", () => {
+    const job = copyoutJob({ status: "DONE", updatedAt: new Date(NOW).toISOString() });
+    expect(nextAlarmWakeMs({ openReviewDeadlinesMs: [], copyoutJob: job }, OPTS)).toBeUndefined();
+  });
+
+  it("no copyout job at all, and nothing else -> undefined (an instance that never had copyOut trouble gets no row)", () => {
+    expect(nextAlarmWakeMs({ openReviewDeadlinesMs: [] }, OPTS)).toBeUndefined();
+  });
+
+  it("unlike fanoutJob, a copyout job contributes a wake time NO MATTER HOW MANY attempts it has racked up — there is no cap input to even pass", () => {
+    const job = copyoutJob({ attempts: 999_999, updatedAt: new Date(NOW).toISOString() });
+    expect(nextAlarmWakeMs({ openReviewDeadlinesMs: [], copyoutJob: job }, OPTS)).toBe(NOW + OPTS.copyoutGraceMs);
+  });
+
+  it("an earlier copyout retry wins over a later review deadline, the same Math.min(...) role fanoutJob already plays", () => {
+    const farReview = NOW + 10 * 60_000;
+    const job = copyoutJob({ updatedAt: new Date(NOW).toISOString() }); // wake = NOW + copyoutGraceMs, sooner
+    const wake = nextAlarmWakeMs({ openReviewDeadlinesMs: [farReview], copyoutJob: job }, OPTS);
+    expect(wake).toBe(NOW + OPTS.copyoutGraceMs);
+    expect(wake).toBeLessThan(farReview);
   });
 });
 

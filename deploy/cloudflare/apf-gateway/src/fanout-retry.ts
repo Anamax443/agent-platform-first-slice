@@ -33,6 +33,7 @@
 // file) avoid "cloudflare:workers"/"apf:*" imports. This file therefore imports only *type* declarations from
 // src/platform/*, nothing that would drag in a Workers-only runtime dependency.
 import type { AttachmentFanoutAttachment } from "../../../../src/platform/attachment-fanout.js";
+import { jobNextWakeAt, jobRetryDecision } from "../../../../src/platform/durable-job.js";
 
 /**
  * One row of the durable outbox (store.ts's `fanout_job` table, DDL comment there), one row per WorkflowInstance
@@ -138,14 +139,17 @@ export function missingAttachments(caseMembers: readonly CaseMemberSummary[], at
  *     residual risk the prior P0 pass itself flagged as accepted-but-bounded (attempts-capped) rather than solved.
  *   - "retry": PENDING, under the cap, stale enough that whatever pass last touched this row has had long enough
  *     to either finish or actually be gone (eviction, or a genuine crash) — safe to attempt again.
+ *
+ * RG2-A (2026-09-18): the none/wait/retry arithmetic itself (missing-or-DONE vs. stale-vs-fresh) is no longer
+ * written out here — it is jobRetryDecision() (src/platform/durable-job.ts), shared with the new copyout durable
+ * job (index.ts's copyOut()), which needs the identical staleness check but must never give up. This function is
+ * now only the fan-out-SPECIFIC layer on top: the attempts-cap check that turns a would-be "retry" into "give-up".
  */
 export type FanoutRetryDecision = "none" | "wait" | "retry" | "give-up";
 
 export function fanoutRetryDecision(job: FanoutJobRecord | undefined, nowMs: number, opts: { graceMs: number; maxAttempts: number }): FanoutRetryDecision {
-  if (!job || job.status === "DONE") return "none";
-  if (job.attempts >= opts.maxAttempts) return "give-up";
-  const staleMs = nowMs - Date.parse(job.updatedAt);
-  return staleMs < opts.graceMs ? "wait" : "retry";
+  if (job && job.status === "PENDING" && job.attempts >= opts.maxAttempts) return "give-up";
+  return jobRetryDecision(job, nowMs, opts);
 }
 
 /**
@@ -157,8 +161,12 @@ export function fanoutRetryDecision(job: FanoutJobRecord | undefined, nowMs: num
  * before this file existed). Returns undefined for the same two "nothing to wait for" cases
  * fanoutRetryDecision() maps to "none"/"give-up" — a job already resolved (one way or the other) needs no future
  * wake-up on its account.
+ *
+ * RG2-A (2026-09-18): delegates its own missing-or-DONE-or-stale arithmetic to jobNextWakeAt()
+ * (src/platform/durable-job.ts), layering only the fan-out-specific `maxAttempts` cutoff on top — the one thing
+ * the new copyout durable job's own equivalent call (index.ts's rearmAlarm(), alarm-scheduler.ts) must NOT have.
  */
 export function fanoutNextWakeAt(job: FanoutJobRecord | undefined, opts: { graceMs: number; maxAttempts: number }): number | undefined {
-  if (!job || job.status === "DONE" || job.attempts >= opts.maxAttempts) return undefined;
-  return Date.parse(job.updatedAt) + opts.graceMs;
+  if (job && job.attempts >= opts.maxAttempts) return undefined;
+  return jobNextWakeAt(job, opts);
 }
