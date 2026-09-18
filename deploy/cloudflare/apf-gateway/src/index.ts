@@ -62,7 +62,7 @@ import { FACT_CATALOG } from "./fact-catalog-bundle.js";
 import { COW_WORKSHOP, describeModels, gatewayCatalog, modelAdapterFor, wirePlatform, type Wiring } from "./platform-wiring.js";
 import { runSelfTest, requiredTestsFor, selfTestCapabilityForTick, SELF_TEST_CAPABILITIES, SELF_TEST_WORKFLOW_ID } from "./self-test.js";
 import { newSession, sendMessage, type WorkshopSession } from "./workshop.js";
-import { D1_AUDIT_DDL, D1_EVIDENCE_DDL, d1Sql, DDL, evidenceMirrorOf, evidenceStoreOf, SqliteArtifacts, SqliteAudit, SqliteCaseStore, SqliteJournal, SqliteReviewTaskStore } from "./store.js";
+import { D1_AUDIT_DDL, D1_EVIDENCE_DDL, d1Sql, DDL, evidenceMirrorOf, evidenceStoreOf, SqliteArtifacts, SqliteAudit, SqliteCaseStore, SqliteIdempotencyStore, SqliteJournal, SqliteReviewTaskStore } from "./store.js";
 import { registerDerived, type DerivedArtifactRegistration, type RegisterDerivedResult } from "./artifact-registration.js";
 import { createPrivateKey, createPublicKey } from "node:crypto";
 import { verifyEvidence, type Evidence } from "../../../../src/platform/evidence.js";
@@ -585,6 +585,11 @@ export class WorkflowInstance extends DurableObject<Env> {
   /** Case wiring (Commit 3): groups this object's own mail-intake instance with its fanned-out attachment-
    * classify/attachment-extract instances — DO-local only, same as `journal`, no D1 mirror (store.ts's DDL comment). */
   private readonly caseStore: SqliteCaseStore;
+  /** R1 (Reliability Gate, 2026-09-18): backs mail.ingest's ExecutorHost dedup durably across this object's own
+   * restart — see store.ts's `idempotency` DDL comment for the full citation trail (executor-host.ts:90's
+   * in-memory fallback, orchestrator.ts:245's key shape, what this deliberately does not fix). DO-local only,
+   * same reasoning as `caseStore`/`journal` above: a reservation is scoped to the instance that made it. */
+  private readonly idempotency: SqliteIdempotencyStore;
   private wiringCache: Wiring | undefined;
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -596,6 +601,7 @@ export class WorkflowInstance extends DurableObject<Env> {
     this.reviewStore = new SqliteReviewTaskStore(ctx.storage.sql);
     this.evidenceStore = evidenceStoreOf(ctx.storage.sql);
     this.caseStore = new SqliteCaseStore(ctx.storage.sql);
+    this.idempotency = new SqliteIdempotencyStore(ctx.storage.sql, this.clock);
   }
 
   /** Built on first use so that a broken wiring (missing secret) fails the intake with a message, not the object. */
@@ -614,6 +620,7 @@ export class WorkflowInstance extends DurableObject<Env> {
       keyId: this.env.SIGNING_KEY_ID,
       signingKeyPem: this.env.GATEWAY_SIGNING_KEY,
       evidence: { store: this.evidenceStore, buildHash: this.env.GIT_SHA },
+      idempotency: this.idempotency,
       notWired: (m, a) => notWired.dispatch(m, a),
     });
     return this.wiringCache;

@@ -1,8 +1,11 @@
-// IDM family: replay, deadline with clock tolerance, strategy keys.
+// IDM family: replay, deadline with clock tolerance, strategy keys, durability across a restart.
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { FakeRegistryAdapter, RegistryUnavailable } from "../src/adapters/registry.js";
+import { FakeClock } from "../src/platform/clock.js";
 import { newId } from "../src/platform/ids.js";
-import { command, createSlice, dispatch, INJECTION_APPROVE_DOC, INVOICE_CZ, putArtifact, runIntake, TENANT_A, validatedStampPayload } from "./harness/index.js";
+import { command, createSlice, dispatch, INJECTION_APPROVE_DOC, INVOICE_CZ, putArtifact, runIntake, TENANT_A, tmpDir, validatedStampPayload } from "./harness/index.js";
+import { IDEMPOTENCY_DDL, openSql, TestIdempotencyStore } from "./harness/sqlite.js";
 
 /** Registry that fails N times with 503 and then answers: the technical-retry path. */
 class FlakyRegistry extends FakeRegistryAdapter {
@@ -134,5 +137,75 @@ describe("IDM-HOST-SCOPE-001 dedup is scoped by capability, not by idempotencyKe
     expect(slice.archive.putCalls).toBe(1); // archive actually ran; a shared bare key would have short-circuited it
     expect(slice.audit.byKind("duplicate")).toHaveLength(0);
     expect(await slice.host.remembered(TENANT_A, "document.stamp", key)).not.toEqual(await slice.host.remembered(TENANT_A, "document.archive", key));
+  });
+});
+
+describe("IDM-DUR-001 the idempotency reservation survives a restart of the object that wrote it", () => {
+  // R1 of the 2026-09-18 Reliability Gate audit: executor-host.ts:90's `opts.idempotency ?? new
+  // InMemoryIdempotencyStore()` fallback means an ExecutorHost with no durable store loses every RESERVED
+  // reservation when the object holding it restarts — the exact gap store.ts's new `idempotency` table and
+  // SqliteIdempotencyStore close (see that file's own DDL comment for the full citation trail). This suite
+  // follows tests/zlab-durable.test.ts's own established "durable-store survives a process restart" pattern
+  // (open a real SQLite file, act, close — simulating eviction — reopen a fresh store over the same file, assert
+  // state crossed the reopen) rather than inventing a new one; TestIdempotencyStore (tests/harness/sqlite.ts) is
+  // a hand-kept, same-statements mirror of SqliteIdempotencyStore, for the typechecking reason that file's own
+  // header comment documents (store.ts cannot be imported under the root tsconfig tests run under).
+
+  /** One "process": a SQLite file opened, the idempotency table created, a store over it. */
+  function boot(file: string) {
+    const { sql, close } = openSql(file);
+    sql.exec(IDEMPOTENCY_DDL);
+    const store = new TestIdempotencyStore(sql, new FakeClock("2026-09-18T08:00:00Z"));
+    return { store, close };
+  }
+
+  it("a RESERVED reservation is still RESERVED, with its original fingerprint, after the object is evicted and reopened", async () => {
+    const file = join(tmpDir(), "idem-reserve.sqlite");
+    const before = boot(file);
+    const reserved = await before.store.reserveOrGet("k1", "fp1");
+    expect(reserved).toBeUndefined(); // freshly reserved, not a pre-existing record
+    before.close(); // the object is evicted; only the file remains
+
+    const after = boot(file);
+    expect(await after.store.peek("k1")).toEqual({ status: "RESERVED", fingerprint: "fp1" });
+  });
+
+  it("a resolved (DONE) outcome round-trips through JSON intact across a second restart", async () => {
+    const file = join(tmpDir(), "idem-resolve.sqlite");
+    const before = boot(file);
+    await before.store.reserveOrGet("k1", "fp1");
+    await before.store.resolve("k1", { status: "SUCCEEDED", payload: { ok: true } });
+    before.close();
+
+    const after = boot(file);
+    expect(await after.store.peek("k1")).toEqual({ status: "DONE", fingerprint: "fp1", outcome: { status: "SUCCEEDED", payload: { ok: true } } });
+  });
+
+  it("a released reservation is gone after a restart, so a later attempt may reserve the key again", async () => {
+    const file = join(tmpDir(), "idem-release.sqlite");
+    const before = boot(file);
+    await before.store.reserveOrGet("k2", "fp2");
+    await before.store.release("k2");
+    before.close();
+
+    const after = boot(file);
+    expect(await after.store.peek("k2")).toBeUndefined();
+    // matches InMemoryIdempotencyStore.release()/IdempotencyLedger.release()'s own semantics: released means
+    // genuinely gone, not a tombstone — a later attempt reserves cleanly rather than hitting IDEMPOTENCY_IN_FLIGHT.
+    expect(await after.store.reserveOrGet("k2", "fp2-retry")).toBeUndefined();
+  });
+
+  it("a second reserveOrGet() on the same key returns the existing record rather than reserving again — durable across a restart (mirrors IDM-REPLAY-001)", async () => {
+    const file = join(tmpDir(), "idem-second-reserve.sqlite");
+    const before = boot(file);
+    expect(await before.store.reserveOrGet("k3", "fp3")).toBeUndefined();
+    before.close();
+
+    const after = boot(file);
+    // Same key, same fingerprint: the record from before the restart, not a fresh RESERVED row.
+    expect(await after.store.reserveOrGet("k3", "fp3")).toEqual({ status: "RESERVED", fingerprint: "fp3" });
+    // A concurrent/crashed attempt with a different payload after the restart still sees the original fingerprint
+    // (ExecutorHost turns this mismatch into IDEMPOTENCY_CONFLICT, not a silent replay — src/platform/executor-host.ts).
+    expect(await after.store.reserveOrGet("k3", "fp3-different")).toEqual({ status: "RESERVED", fingerprint: "fp3" });
   });
 });
