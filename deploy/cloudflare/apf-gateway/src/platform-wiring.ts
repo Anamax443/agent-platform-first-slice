@@ -3,9 +3,9 @@
 // document.validate), and the transport the orchestrator talks to. Nothing installation-bound is written here.
 import { createPrivateKey, createPublicKey, generateKeyPairSync, type KeyObject } from "node:crypto";
 import { AnthropicAdapter } from "../../../../src/adapters/anthropic.js";
-import { FakeAresAdapter, type AresAdapter } from "../../../../src/adapters/ares.js";
+import { FakeAresAdapter, NotConfiguredAresAdapter, type AresAdapter } from "../../../../src/adapters/ares.js";
 import { classifyByRules, FakeInvoiceExtractorAdapter, FakeLlmAdapter, KeywordClassifierAdapter, RulesInvoiceExtractorAdapter, type LlmAdapter } from "../../../../src/adapters/llm.js";
-import { FakeMojeDaneAdapter, type MojeDaneAdapter } from "../../../../src/adapters/moje-dane.js";
+import { FakeMojeDaneAdapter, NotConfiguredMojeDaneAdapter, type MojeDaneAdapter } from "../../../../src/adapters/moje-dane.js";
 import type { RegistryAdapter } from "../../../../src/adapters/registry.js";
 import { WorkersAiAdapter, type WorkersAiBinding } from "../../../../src/adapters/workers-ai.js";
 import { WorkersAiExtractor } from "../../../../src/adapters/extract.js";
@@ -191,13 +191,19 @@ export interface WiringOptions {
   /** Result for a capability no deployable serves yet. */
   notWired: (message: MessageEnvelope, actorId: string) => Promise<ResultEnvelope>;
   modelTimeoutMs?: number;
-  /** Any AresAdapter: FakeAresAdapter (default — same "no real baseUrl configured yet" fallback shape as
-   * buildAdapters()'s FakeLlmAdapter below) or HttpAresAdapter once a real ares.gov.cz baseUrl is an
-   * installation value (SEVERKA.md "## Pořadí" bod 5, HANDOFF 132). */
+  /** Any AresAdapter: HttpAresAdapter once a real ares.gov.cz baseUrl is an installation value (SEVERKA.md
+   * "## Pořadí" bod 5, HANDOFF 132), or a caller-supplied fake for tests. Absent (the live default) no
+   * longer falls back to FakeAresAdapter unconditionally: Reliability Gate R4 (18.9.2026 audit) changed
+   * that fallback to require the installation's explicit opt-in (aresFor(), below) — see
+   * TrustedProviderNotConfigured's doc comment (src/platform/errors.ts) for the full rationale. This
+   * comment used to say "FakeAresAdapter (default — same ... fallback shape as buildAdapters()'s
+   * FakeLlmAdapter below)"; that is no longer true and is corrected here rather than left stale. */
   ares?: AresAdapter;
   aresTimeoutMs?: number;
-  /** Any MojeDaneAdapter: FakeMojeDaneAdapter (default) or HttpMojeDaneAdapter once a real adisrws.mfcr.cz
-   * baseUrl is an installation value (SEVERKA.md "## Pořadí" bod 6, HANDOFF 136). */
+  /** Any MojeDaneAdapter: HttpMojeDaneAdapter once a real adisrws.mfcr.cz baseUrl is an installation value
+   * (SEVERKA.md "## Pořadí" bod 6, HANDOFF 136), or a caller-supplied fake for tests. Absent no longer
+   * falls back to FakeMojeDaneAdapter unconditionally — same Reliability Gate R4 change and same
+   * correction as `ares` above; see mojeDaneFor() below and TrustedProviderNotConfigured's doc comment. */
   mojeDane?: MojeDaneAdapter;
   mojeDaneTimeoutMs?: number;
   /**
@@ -251,6 +257,25 @@ export function wirePlatform(o: WiringOptions): Wiring {
   };
   const router = new Router({ registry, clock: o.clock, audit: o.audit, lifecycle: o.installation.lifecycle });
   const policy = (capability: string) => policyFor(o.installation.policies, capability, "1");
+  // Reliability Gate R4 (owner's second, "months/years unattended" audit, 18.9.2026): before this change,
+  // `o.ares ?? new FakeAresAdapter()` / `o.mojeDane ?? new FakeMojeDaneAdapter()` at the two capability
+  // registrations below fell back to the fakes UNCONDITIONALLY whenever no real adapter was wired — a
+  // missing installation config silently became fabricated ARES/MOJE daně data indistinguishable from a
+  // real answer downstream. These two closures gate that fallback on the installation's explicit opt-in
+  // (InstallationProfile.allowUnconfiguredTrustedProviders, installation.ts) instead: opted in ->
+  // FakeAresAdapter/FakeMojeDaneAdapter, same as before (config/local-fakes/profile.json sets this, on
+  // purpose — it exists to BE the fakes); not opted in -> NotConfiguredAresAdapter/NotConfiguredMojeDaneAdapter,
+  // whose lookup() throws TrustedProviderNotConfigured (src/platform/errors.ts), caught by
+  // cz-company-verify/cz-vat-verify's own handler.ts and turned into a FAILED/TRUSTED_PROVIDER_NOT_CONFIGURED
+  // result — loud and named, never a silent HANDLER_CRASHED and never a fabricated SUCCEEDED. Deliberately
+  // just two closures, not a throw here in wirePlatform() itself (Approach B, rejected — see the R4 patch
+  // plan): wirePlatform() builds every capability of one Durable Object in a single call that index.ts's
+  // WorkflowInstance.wiring() and self-test.ts both share unconditionally, so throwing here over a config
+  // gap in only these two capabilities would take document.classify/invoice.extract/document.validate/
+  // mail.ingest down with them for every tenant, including ones that never call cz.company.verify or
+  // cz.vat.verify at all.
+  const aresFor = (): AresAdapter => o.ares ?? (profile.allowUnconfiguredTrustedProviders ? new FakeAresAdapter() : new NotConfiguredAresAdapter());
+  const mojeDaneFor = (): MojeDaneAdapter => o.mojeDane ?? (profile.allowUnconfiguredTrustedProviders ? new FakeMojeDaneAdapter() : new NotConfiguredMojeDaneAdapter());
 
   router.register({
     descriptor: classifier.descriptor as never,
@@ -304,7 +329,7 @@ export function wirePlatform(o: WiringOptions): Wiring {
         version: "1",
         inputSchema: companyVerify.inputSchema,
         handler: companyVerify.createCompanyVerifier({
-          ares: o.ares ?? new FakeAresAdapter(),
+          ares: aresFor(),
           clock: o.clock,
           ...(o.aresTimeoutMs !== undefined ? { aresTimeoutMs: o.aresTimeoutMs } : {}),
           ...writerFor(COMPANY_VERIFY, "TENANT_WIDE"),
@@ -321,7 +346,7 @@ export function wirePlatform(o: WiringOptions): Wiring {
         version: "1",
         inputSchema: vatVerify.inputSchema,
         handler: vatVerify.createVatVerifier({
-          mojeDane: o.mojeDane ?? new FakeMojeDaneAdapter(),
+          mojeDane: mojeDaneFor(),
           clock: o.clock,
           ...(o.mojeDaneTimeoutMs !== undefined ? { mojeDaneTimeoutMs: o.mojeDaneTimeoutMs } : {}),
           ...writerFor(VAT_VERIFY, "TENANT_WIDE"),
