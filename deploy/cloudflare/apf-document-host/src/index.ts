@@ -248,7 +248,7 @@ export default {
         // today (document.stamp/document.archive have approval.required:false) — checkApproval() still
         // fails closed (APPROVAL_REQUIRED) if a future policy ever sets approval.required:true here.
         const policy = (capability: string) => policyFor(installation.policies, capability, "1");
-        const executor = new ExecutorHost({ hostId: env.HOST_ID, clock, audit, credentials, idempotency: new DurableIdempotencyStore(env.IDEMPOTENCY), policyFor: policy });
+        const executor = ExecutorHost.production({ hostId: env.HOST_ID, clock, audit, credentials, idempotency: new DurableIdempotencyStore(env.IDEMPOTENCY), policyFor: policy });
         executor.register(host.createStampHandler({ artifacts, dms: new HttpDmsAdapter(env.FAKES), credentials, clock }));
         executor.register(archiveHandler.createArchiveHandler({ artifacts, archive: new HttpArchiveAdapter(env.FAKES), credentials, clock }));
 

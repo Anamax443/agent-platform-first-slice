@@ -63,6 +63,22 @@ export interface InstallationProfile {
    * not silently ignored.
    */
   allowUnconfiguredTrustedProviders?: boolean;
+  /**
+   * Adversarial review of RG2-C's own branch (18.9.2026): before this field existed, platform-wiring.ts's
+   * ingestHost fell back to `ExecutorHost.forTests()` (in-memory idempotency) SILENTLY whenever
+   * WiringOptions.idempotency was merely omitted — the exact "optional, silently-substitutes-a-fake" shape
+   * ExecutorHost.production()/forTests() (executor-host.ts) exists to forbid, just moved one layer up into
+   * wirePlatform(), the one place under deploy/cloudflare/* whose own doc comments say forTests() must
+   * never be reached from. Same shape as allowUnconfiguredTrustedProviders above: explicit, per-
+   * installation opt-in. Absent (or false) = fail-closed — wirePlatform() throws at construction instead
+   * of silently building a non-durable mail.ingest host. Only config/local-fakes/profile.json sets this
+   * true (mail.ingest's dedup durability doesn't matter for an installation that exists to BE the fakes).
+   * Unlike allowUnconfiguredTrustedProviders, a construction-time throw here is safe for the ENTIRE wiring,
+   * not just the affected capability: mail.ingest is a GATEWAY_CAPABILITY every installation registers
+   * unconditionally (platform-wiring.ts's GATEWAY_CAPABILITIES), so there is no tenant a throw here could
+   * take down that omitting `idempotency` would not already have left with a non-durable ingest host.
+   */
+  allowEphemeralIdempotency?: boolean;
 }
 
 export interface Installation {

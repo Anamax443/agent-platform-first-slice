@@ -81,7 +81,9 @@ function basePolicy(overrides: Partial<Policy> = {}): Policy {
   };
 }
 
-type HostOptions = ConstructorParameters<typeof ExecutorHost>[0];
+// RG2-C: ExecutorHost's constructor is private now — Parameters<> of the public forTests() factory instead of
+// ConstructorParameters<> of the class itself, same `reviewTasks` field either way.
+type HostOptions = Parameters<typeof ExecutorHost.forTests>[0];
 
 /** Builds a real Gateway + Router + ExecutorHost trio for `test.write`, same pattern as tests/dh.test.ts's
  * remoteHost() — a real signed dispatch runs the real decision chain, not a hand-built context. */
@@ -89,7 +91,7 @@ function fixture(opts: { policy: Policy; reviewTasks?: HostOptions["reviewTasks"
   const clock = new FakeClock(START);
   const audit = new Audit(clock);
   const credentials = new CredentialResolver({}, audit);
-  const executor = new ExecutorHost({
+  const executor = ExecutorHost.forTests({
     hostId: MODULE,
     clock,
     audit,

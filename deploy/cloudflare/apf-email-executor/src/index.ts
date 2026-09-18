@@ -184,7 +184,7 @@ export default {
         // today (email.send has approval.required:false) — checkApproval() still fails closed
         // (APPROVAL_REQUIRED) if a future policy ever sets approval.required:true here.
         const policy = policyFor(installation.policies, "email.send", "1");
-        const executor = new ExecutorHost({ hostId: env.HOST_ID, clock, audit, credentials, idempotency: new DurableIdempotencyStore(env.IDEMPOTENCY), policyFor: () => policy });
+        const executor = ExecutorHost.production({ hostId: env.HOST_ID, clock, audit, credentials, idempotency: new DurableIdempotencyStore(env.IDEMPOTENCY), policyFor: () => policy });
 
         const recipients: RecipientDirectory = (tenantId, ref) => policy.recipientAllowlist?.[tenantId]?.[ref];
         const smtp = env.SEND_MODE === "live" ? new CloudflareSmtpAdapter(env.EMAIL, env.EMAIL_FROM, env.EMAIL_FROM_NAME) : new FakeSmtpAdapter();

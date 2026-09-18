@@ -216,10 +216,16 @@ export interface WiringOptions {
    */
   evidence?: { store: EvidenceStore; buildHash: string };
   /** R1 (Reliability Gate, 2026-09-18): backs mail.ingest's ExecutorHost dedup durably across this object's own
-   * restart. Absent = ExecutorHost's own `opts.idempotency ?? new InMemoryIdempotencyStore()` fallback
-   * (executor-host.ts:90) — every existing wirePlatform() caller that omits it (tests included) keeps compiling
-   * and behaving exactly as before. Does NOT dedup two independent deliveries of the same e-mail (each mints its
-   * own workflowId before any dedup key exists, index.ts's `startMailIntake()`) — that is a separate, deliberately
+   * restart. Absent = wirePlatform() itself calls `ExecutorHost.forTests()` for the ingest host instead of
+   * `.production()` (RG2-C, see that call site's own doc comment for the full rationale) — but ONLY when
+   * `installation.profile.allowEphemeralIdempotency` says so explicitly (RG2-C follow-up, adversarial review
+   * of RG2-C's own branch, 18.9.2026: this option alone used to be enough, silently, which was the same
+   * "optional store, silent in-memory fallback" bug RG2-C closed one layer down, just moved up here — see
+   * InstallationProfile.allowEphemeralIdempotency's own doc comment). An installation that has NOT opted in
+   * and omits this option gets a construction-time throw from wirePlatform() instead: fail-closed, matching
+   * this branch's own acceptance criterion ("missing durable idempotency -> constructor/wiring FAIL, not a
+   * warning"). Does NOT dedup two independent deliveries of the same e-mail (each mints its own workflowId
+   * before any dedup key exists, index.ts's `startMailIntake()`) — that is a separate, deliberately
    * out-of-scope gap (see store.ts's `idempotency` DDL comment). */
   idempotency?: IdempotencyStore;
 }
@@ -371,7 +377,51 @@ export function wirePlatform(o: WiringOptions): Wiring {
   // `idempotency: o.idempotency` (R1, 2026-09-18): previously never passed, so this host's dedup ran on
   // ExecutorHost's own in-memory fallback and lost every RESERVED reservation across a restart of this object —
   // see the WiringOptions.idempotency doc comment above and store.ts's `idempotency` DDL comment for the trail.
-  const ingestHost = new ExecutorHost({ hostId: ingest.descriptor.module, clock: o.clock, audit: o.audit, credentials: ingestCredentials, policyFor: policy, idempotency: o.idempotency });
+  //
+  // RG2-C (2026-09-18): ExecutorHost's constructor no longer defaults idempotency at all — `production()`
+  // requires a real store, `forTests()` is the only place an in-memory one still appears, and it must be called
+  // by name. This is the ONE call site in the whole codebase that deliberately still allows the ephemeral,
+  // ExecutorHost.forTests()-style non-durable path in something that is not a plain unit test: wirePlatform()
+  // itself supports installations that opt into ephemeral dedup for the ingest host — a NAMED, visible
+  // exception, made explicit right here, not a silent default buried in ExecutorHost's constructor.
+  //
+  // RG2-C follow-up (adversarial review of RG2-C's own branch, 18.9.2026): the opt-in below used to be
+  // WiringOptions.idempotency alone being omitted — no installation-level gate — which was exactly the
+  // "optional, silently substitutes a fake" bug this branch closed one layer down (ExecutorHost's own
+  // constructor), just recreated here under deploy/cloudflare/*, the one place this branch's own doc comments
+  // say forTests() must never be reached from. It now additionally requires
+  // `installation.profile.allowEphemeralIdempotency === true` (see that field's own doc comment,
+  // src/installation.ts) — an installation that omits `idempotency` WITHOUT that opt-in gets a
+  // construction-time throw instead of a silent fallback, matching this branch's own acceptance criterion
+  // ("missing durable idempotency -> constructor/wiring FAIL, not a warning"). Safe to throw for the whole
+  // wiring, not just this capability: mail.ingest is a GATEWAY_CAPABILITY every installation registers
+  // unconditionally, unlike cz.company.verify/cz.vat.verify's narrower, per-capability
+  // allowUnconfiguredTrustedProviders gate above (Approach B was rejected there specifically because a
+  // construction-time throw would have taken unrelated capabilities down with it for tenants that never call
+  // those two — that concern does not apply here).
+  //
+  // tests/gw-platform-wiring-fanout.test.ts's "without a passed-in idempotency store (every pre-existing call
+  // site's shape), two independently-built wirings do NOT dedup — the pre-existing behavior is unchanged" test
+  // (LOCAL_FAKES, which sets allowEphemeralIdempotency:true) is what proves this branch is real, tested,
+  // intentional behavior, not an oversight — it must keep passing. Its sibling
+  // "installation that has NOT opted in AND omits idempotency -> wirePlatform() throws, fail-closed" test
+  // proves the new gate actually gates. In practice neither real installation takes the ephemeral branch today:
+  // both farm-bass443 and local-fakes' own live deploy always pass a real store via
+  // deploy/cloudflare/apf-gateway/src/index.ts's own wirePlatform() call (`idempotency: this.idempotency`, a
+  // real SqliteIdempotencyStore) — verified by grepping every wirePlatform() call site in this repo, there is
+  // exactly one, and it always supplies `idempotency`. So this `else` branch exists for wirePlatform()'s own
+  // generality (a future caller, or this test file) rather than any live installation actually needing it —
+  // but unlike before, a future caller that forgets `idempotency` now fails loudly instead of degrading silently.
+  let ingestHost: ExecutorHost;
+  if (o.idempotency) {
+    ingestHost = ExecutorHost.production({ hostId: ingest.descriptor.module, clock: o.clock, audit: o.audit, credentials: ingestCredentials, policyFor: policy, idempotency: o.idempotency });
+  } else if (profile.allowEphemeralIdempotency) {
+    ingestHost = ExecutorHost.forTests({ hostId: ingest.descriptor.module, clock: o.clock, audit: o.audit, credentials: ingestCredentials, policyFor: policy });
+  } else {
+    throw new Error(
+      "mail.ingest's ExecutorHost needs a durable idempotency store (WiringOptions.idempotency) and this installation has not set profile.allowEphemeralIdempotency (fail-closed) — see InstallationProfile.allowEphemeralIdempotency's doc comment",
+    );
+  }
   // Same extractor as document.extract (below, Podatelna's binary uploads) — one implementation of "binary ->
   // readable text" regardless of which channel handed the farm the attachment.
   ingestHost.register(ingest.createIngestHandler({ artifacts: o.artifacts, clock: o.clock, extractor: new WorkersAiExtractor(o.ai) }));

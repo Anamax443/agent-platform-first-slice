@@ -152,16 +152,21 @@ export function createSlice(installation: Installation, secrets: SecretsSource, 
   const review = o.reviewStore ? new ReviewService(clock, audit, o.reviewStore) : new ReviewService(clock, audit);
 
   // Hosts: document-executor-host (LOGICAL, two handlers), email-executor (PRINCIPAL: own context, own credential domain), mail-ingest.
-  const documentHost = new ExecutorHost({ hostId: host.descriptor.module, clock, audit, credentials: documentCredentials, idempotency: o.documentIdempotencyStore, policyFor: policy, reviewTasks: review });
+  // `.forTests()` (RG2-C, 2026-09-18), not `.production()`: createSlice() is only ever used by tests/harness/index.ts
+  // (this is test/reference composition, never deployed to Cloudflare directly) — the three *IdempotencyStore
+  // options above still thread a real durable store through when a test passes one (RES-IDM-001 and friends
+  // share one across two slices to simulate a restart), `.forTests()` just supplies the in-memory default when
+  // a test doesn't care, exactly like the old constructor default did.
+  const documentHost = ExecutorHost.forTests({ hostId: host.descriptor.module, clock, audit, credentials: documentCredentials, idempotency: o.documentIdempotencyStore, policyFor: policy, reviewTasks: review });
   Object.assign(documentHost.mutants, o.hostMutants ?? {});
   documentHost.register(host.createStampHandler({ artifacts, dms, credentials: documentCredentials, clock }));
   documentHost.register((o.archiveHandler ?? createArchiveHandler)({ artifacts, archive, credentials: documentCredentials, clock }));
 
-  const emailHost = new ExecutorHost({ hostId: email.descriptor.module, clock, audit, credentials: emailCredentials, idempotency: o.emailIdempotencyStore, policyFor: policy, reviewTasks: review });
+  const emailHost = ExecutorHost.forTests({ hostId: email.descriptor.module, clock, audit, credentials: emailCredentials, idempotency: o.emailIdempotencyStore, policyFor: policy, reviewTasks: review });
   Object.assign(emailHost.mutants, o.emailHostMutants ?? {});
   emailHost.register(email.createEmailSendHandler({ artifacts, smtp, credentials: emailCredentials, recipients, clock }));
 
-  const ingestHost = new ExecutorHost({ hostId: ingest.descriptor.module, clock, audit, credentials: ingestCredentials, idempotency: o.ingestIdempotencyStore, policyFor: policy, reviewTasks: review });
+  const ingestHost = ExecutorHost.forTests({ hostId: ingest.descriptor.module, clock, audit, credentials: ingestCredentials, idempotency: o.ingestIdempotencyStore, policyFor: policy, reviewTasks: review });
   ingestHost.register(ingest.createIngestHandler({ artifacts, clock, extractor: documentExtractor }));
 
   // Router: descriptors validated against the frozen schema, policies looked up fail-closed.

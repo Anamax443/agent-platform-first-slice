@@ -328,7 +328,7 @@ describe("wirePlatform()'s ingestHost honors a passed-in IdempotencyStore across
     expect(two.artifacts.get(originalArtifactId as string)).toBeUndefined();
   });
 
-  it("without a passed-in idempotency store (every pre-existing call site's shape), two independently-built wirings do NOT dedup — the pre-existing behavior is unchanged", async () => {
+  it("without a passed-in idempotency store, on an installation that opted in (LOCAL_FAKES.allowEphemeralIdempotency), two independently-built wirings do NOT dedup — the pre-existing behavior is unchanged", async () => {
     const key = "mail-ingest-no-store-key-1";
     const one = buildRealWiring();
     const first = await one.wiring.transport.dispatch(mailIngestCommand(one.clock, key), ORCHESTRATOR);
@@ -340,6 +340,13 @@ describe("wirePlatform()'s ingestHost honors a passed-in IdempotencyStore across
     // reservation, so it ran mail.ingest again rather than replaying: no "duplicate" audit entry on `two`.
     expect(second.status).toBe("SUCCEEDED");
     expect(two.audit.byKind("duplicate")).toHaveLength(0);
+  });
+
+  it("RG2-C follow-up (adversarial review, 18.9.2026): without a passed-in idempotency store AND without allowEphemeralIdempotency, wirePlatform() itself throws — fail-closed, not a silent in-memory fallback", () => {
+    // Same shape as NOT_OPTED_IN below (Reliability Gate R4), but for the idempotency gate instead of the
+    // trusted-provider gate: everything else stays real LOCAL_FAKES data, only the one field under test flips.
+    const idempotencyNotOptedIn: Installation = { ...LOCAL_FAKES, profile: { ...LOCAL_FAKES.profile, allowEphemeralIdempotency: false } };
+    expect(() => buildRealWiring({ installation: idempotencyNotOptedIn })).toThrow(/allowEphemeralIdempotency/);
   });
 });
 
