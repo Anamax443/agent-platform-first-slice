@@ -28,18 +28,19 @@ import type { Artifact } from "../src/platform/artifacts.js";
 import { ArtifactStore } from "../src/platform/artifacts.js";
 import { Audit } from "../src/platform/audit.js";
 import { fanOutAttachments } from "../src/platform/attachment-fanout.js";
-import { FakeClock, iso, plus } from "../src/platform/clock.js";
+import { FakeClock, iso, plus, type Clock } from "../src/platform/clock.js";
 import { MemoryEvidenceStore } from "../src/platform/evidence.js";
 import { newEntityId } from "../src/platform/fact-address.js";
 import { newId } from "../src/platform/ids.js";
 import type { IdempotencyStore } from "../src/platform/idempotency.js";
 import { Journal } from "../src/platform/journal.js";
+import type { Installation } from "../src/installation.js";
 import { Orchestrator } from "../src/platform/orchestrator.js";
 import { plan } from "../src/platform/planner.js";
 import { ReviewService } from "../src/platform/review.js";
 import { workflowDef } from "../src/platform/workflow.js";
 import { FACT_CATALOG } from "../deploy/cloudflare/apf-gateway/src/fact-catalog-bundle.js";
-import { CLASSIFY, wirePlatform, type Wiring } from "../deploy/cloudflare/apf-gateway/src/platform-wiring.js";
+import { CLASSIFY, COMPANY_VERIFY, VAT_VERIFY, wirePlatform, type Wiring } from "../deploy/cloudflare/apf-gateway/src/platform-wiring.js";
 import { CONTRACT_CZ, FAKE_SECRETS, INVOICE_CZ, INVOICE_MAIL, LOCAL_FAKES, ORCHESTRATOR, TENANT_A, tmpDir } from "./harness/index.js";
 import { IDEMPOTENCY_DDL, openSql, TestIdempotencyStore } from "./harness/sqlite.js";
 import type { WorkersAiBinding } from "../src/adapters/workers-ai.js";
@@ -51,8 +52,13 @@ import type { ResultEnvelope, MessageEnvelope } from "../src/platform/types.js";
  * wirePlatform(), same evidence-writer wiring). No fake/mocked classifier or evidence writer: `models` comes from
  * LOCAL_FAKES's own installation profile (provider "fake" -> FakeLlmAdapter/KeywordClassifierAdapter, the same
  * adapters createSlice() uses), and `evidence` is a real EvidenceLedger over a real (in-memory) EvidenceStore.
+ *
+ * `installation` defaults to LOCAL_FAKES but is overridable (Reliability Gate R4 below, 18.9.2026): the R4
+ * describe block needs to drive the same real wirePlatform() over a SYNTHETIC installation whose profile
+ * differs from LOCAL_FAKES only in `allowUnconfiguredTrustedProviders`, to prove the gate reacts to that one
+ * field and nothing else changes.
  */
-function buildRealWiring(opts: { idempotency?: IdempotencyStore } = {}) {
+function buildRealWiring(opts: { idempotency?: IdempotencyStore; installation?: Installation } = {}) {
   const clock = new FakeClock("2026-09-18T08:00:00Z");
   const artifacts = new ArtifactStore(clock);
   const audit = new Audit(clock);
@@ -64,7 +70,7 @@ function buildRealWiring(opts: { idempotency?: IdempotencyStore } = {}) {
   // buildAdapters()/buildExtractAdapters() only ever construct FakeLlmAdapter/FakeInvoiceExtractorAdapter here.
   const ai: WorkersAiBinding = { run: async () => { throw new Error("WorkersAiBinding.run() not expected in this test"); } };
   const wiring: Wiring = wirePlatform({
-    installation: LOCAL_FAKES,
+    installation: opts.installation ?? LOCAL_FAKES,
     secrets: FAKE_SECRETS,
     ai,
     artifacts,
@@ -83,6 +89,30 @@ function buildRealWiring(opts: { idempotency?: IdempotencyStore } = {}) {
   const review = new ReviewService(clock, audit);
   const orchestratorFor = (def: ReturnType<typeof workflowDef>) => new Orchestrator({ workflow: def, transport: wiring.transport, journal, review, audit, clock, actorId: ORCHESTRATOR });
   return { wiring, artifacts, audit, journal, orchestratorFor, clock };
+}
+
+/**
+ * Reliability Gate R4 below dispatches cz.company.verify/cz.vat.verify/document.classify DIRECTLY through
+ * wiring.transport, bypassing the Orchestrator/workflow machinery the rest of this file uses (that machinery
+ * needs a full attachment-classify/attachment-extract workflow definition per step; these three checks only
+ * need one bare command each). Mirrors src/slice.ts's own `command()` helper (the reference every other test
+ * file's direct-dispatch commands already build against) but takes a bare Clock instead of a full Slice,
+ * since buildRealWiring() above builds no Slice.
+ */
+function directCommand(clock: Clock, capability: string, payload: Record<string, unknown>): MessageEnvelope {
+  const now = clock.now();
+  return {
+    messageId: newId("msg"),
+    correlationId: newId("cor"),
+    type: "command",
+    capability,
+    capabilityVersion: "1",
+    schemaVersion: "1",
+    createdAt: iso(now),
+    payload,
+    idempotencyKey: newId("key"),
+    notValidAfter: iso(plus(now, 60_000)),
+  };
 }
 
 describe("wirePlatform() (the LIVE composition) actually seals document.type.invoiceConfirmed evidence — Gap 2", () => {
@@ -310,5 +340,50 @@ describe("wirePlatform()'s ingestHost honors a passed-in IdempotencyStore across
     // reservation, so it ran mail.ingest again rather than replaying: no "duplicate" audit entry on `two`.
     expect(second.status).toBe("SUCCEEDED");
     expect(two.audit.byKind("duplicate")).toHaveLength(0);
+  });
+});
+
+describe("Reliability Gate R4: a trusted provider left unconfigured fails loud, not fabricated — TRUSTED_PROVIDER_NOT_CONFIGURED", () => {
+  // Owner's second, "months/years unattended" audit (18.9.2026): before this gate, platform-wiring.ts's
+  // `o.ares ?? new FakeAresAdapter()` / `o.mojeDane ?? new FakeMojeDaneAdapter()` made every installation that
+  // never wired a real ARES/MOJE daně adapter fall back to the fakes SILENTLY — farm-bass443 included, since
+  // its profile.json has neither a real adapter nor (before this change existed) any way to say so on purpose.
+  // NOT_OPTED_IN reproduces exactly that installation shape: LOCAL_FAKES's own profile with
+  // allowUnconfiguredTrustedProviders forced back to false, i.e. "an installation that has NOT said fakes are
+  // fine here" — everything else (identities, policies, scopes) stays real LOCAL_FAKES data, so these tests
+  // isolate the one field the gate actually keys on.
+  const NOT_OPTED_IN: Installation = { ...LOCAL_FAKES, profile: { ...LOCAL_FAKES.profile, allowUnconfiguredTrustedProviders: false } };
+
+  it("cz.company.verify and cz.vat.verify both fail loud on an installation that never opted in, and document.classify on the SAME wiring is unaffected (no blast radius)", async () => {
+    const { wiring, artifacts, clock } = buildRealWiring({ installation: NOT_OPTED_IN });
+
+    const companyResult = await wiring.transport.dispatch(directCommand(clock, COMPANY_VERIFY, { ico: "27074358" }), ORCHESTRATOR);
+    expect(companyResult.status).toBe("FAILED");
+    expect(companyResult.error).toMatchObject({ code: "TRUSTED_PROVIDER_NOT_CONFIGURED", class: "DEPENDENCY", retryable: false, reissuable: true });
+
+    const vatResult = await wiring.transport.dispatch(directCommand(clock, VAT_VERIFY, { dic: "27074358" }), ORCHESTRATOR);
+    expect(vatResult.status).toBe("FAILED");
+    expect(vatResult.error).toMatchObject({ code: "TRUSTED_PROVIDER_NOT_CONFIGURED", class: "DEPENDENCY", retryable: false, reissuable: true });
+
+    // The owner's own named fear (patch plan, "a construction-time throw could take the whole Worker down...
+    // even for tenants that never use it"): wirePlatform() must not throw building THIS wiring at all (both
+    // dispatches above already prove that — a construction-time throw would have failed buildRealWiring()
+    // itself, before either dispatch ran), and a capability sharing the exact same Wiring/Durable-Object-
+    // equivalent object that has NOTHING to do with ares/mojeDane must keep succeeding normally.
+    const invoice: Artifact = artifacts.put({ tenantId: TENANT_A, bytes: INVOICE_CZ, receivedFrom: "test-harness" });
+    const classifyResult = await wiring.transport.dispatch(directCommand(clock, CLASSIFY, { artifactId: invoice.artifactId }), ORCHESTRATOR);
+    expect(classifyResult.status).toBe("SUCCEEDED");
+  });
+
+  it("unmodified LOCAL_FAKES (opted in) still succeeds against the fakes' own TABLE values — zero behavior change for the deliberately-fake installation", async () => {
+    const { wiring, clock } = buildRealWiring({ installation: LOCAL_FAKES });
+
+    const companyResult = await wiring.transport.dispatch(directCommand(clock, COMPANY_VERIFY, { ico: "27074358" }), ORCHESTRATOR);
+    expect(companyResult.status).toBe("SUCCEEDED");
+    expect(companyResult.payload).toMatchObject({ found: true, active: true, companyName: "Testovací Aktivní s.r.o." });
+
+    const vatResult = await wiring.transport.dispatch(directCommand(clock, VAT_VERIFY, { dic: "27074358" }), ORCHESTRATOR);
+    expect(vatResult.status).toBe("SUCCEEDED");
+    expect(vatResult.payload).toMatchObject({ found: true, reliability: "NE", companyName: "Testovací Spolehlivý s.r.o." });
   });
 });

@@ -26,7 +26,7 @@
       "reversibility": "not-applicable",
       "unknownOutcomeRecovery": "not-applicable",
       "humanApproval": "none",
-      "errorCodes": ["DEPENDENCY_TIMEOUT", "DEPENDENCY_UNAVAILABLE", "REGISTRY_RESPONSE_INVALID"]
+      "errorCodes": ["DEPENDENCY_TIMEOUT", "DEPENDENCY_UNAVAILABLE", "REGISTRY_RESPONSE_INVALID", "TRUSTED_PROVIDER_NOT_CONFIGURED"]
     }
   ]
 }

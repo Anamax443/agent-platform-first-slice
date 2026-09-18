@@ -39,6 +39,25 @@ export const PLATFORM_CODES = {
   // The norm doesn't name an exact code for this branch (only the shape of the check) — this is a project
   // choice, not a normative one.
   EFFECT_FIELD_VALIDATION_FAILED: { class: "SECURITY", retryable: false, reissuable: false },
+  // Reliability Gate R4 (owner's second, "months/years unattended" audit, 18.9.2026; "než dáme Farmě
+  // větší autonomii, musí se nejdřív sama umět bezpečně probudit... a odhalit stagnaci" — the systemic
+  // point cz.company.verify/cz.vat.verify became the concrete instance of): before this fix, an
+  // installation that never opted a trusted provider in (no HttpAresAdapter/HttpMojeDaneAdapter
+  // wired, no explicit "yes, fabricated data is fine here" flag) got FakeAresAdapter/FakeMojeDaneAdapter
+  // silently, unconditionally, as its production fallback (platform-wiring.ts's `o.ares ?? new
+  // FakeAresAdapter()` — the `??` hid a missing installation value behind a made-up company record with
+  // no signal anywhere that it was fabricated). Self-test.ts's own comment already conceded this is not
+  // hypothetical: cz.company.verify/cz.vat.verify's live conformance fixtures on HEAD 1d465dd run "against
+  // FakeAresAdapter/FakeMojeDaneAdapter (no real ... baseUrl configured yet)" — i.e. farm-bass443's
+  // self-test today reports SUCCEEDED against invented data, indistinguishable from a real ARES/MOJE daně
+  // answer to anything reading the result. class DEPENDENCY (not POLICY): placed next to its closest
+  // siblings DEPENDENCY_TIMEOUT/DEPENDENCY_UNAVAILABLE in each capability's errorCodes list, since the
+  // shape of the failure — "a trusted external dependency this capability needs isn't reachable" — is the
+  // same family; retryable:false/reissuable:true mirrors MODULE_QUARANTINED's shape rather than the
+  // transient-dependency shape, because a bare retry cannot fix a missing installation config — only an
+  // operator wiring the real adapter (or, for a deliberately-fake installation, setting
+  // InstallationProfile.allowUnconfiguredTrustedProviders:true) makes the same request succeed later.
+  TRUSTED_PROVIDER_NOT_CONFIGURED: { class: "DEPENDENCY", retryable: false, reissuable: true },
 } as const satisfies Record<string, { class: ErrorClass; retryable: boolean; reissuable: boolean }>;
 
 export type PlatformCode = keyof typeof PLATFORM_CODES;
@@ -77,5 +96,24 @@ export class ProcessCrash extends Error {
   constructor(public readonly at: string) {
     super(`process crashed at ${at}`);
     this.name = "ProcessCrash";
+  }
+}
+
+/**
+ * Reliability Gate R4: thrown by NotConfiguredAresAdapter/NotConfiguredMojeDaneAdapter
+ * (src/adapters/ares.ts, src/adapters/moje-dane.ts) when platform-wiring.ts's wirePlatform() has neither
+ * a real adapter (`o.ares`/`o.mojeDane`) nor the installation's explicit opt-in
+ * (InstallationProfile.allowUnconfiguredTrustedProviders) to fall back to the fakes. Lives here, not in
+ * platform/api.ts alongside DependencyTimeout, because scripts/arch-dep.mjs's ARCH-DEP-001 `inAdapters`
+ * import rule lets an adapter file import only "./", "../platform/errors.js", "node:*", or a bare vendor
+ * specifier — never "../platform/api.js" (that's a components/*-only door) — the exact same constraint
+ * that already put UnknownOutcomeError here instead of api.ts (thrown by src/adapters/dms.ts and
+ * smtp.ts, re-exported by api.ts below for components to catch); this class follows that live precedent
+ * rather than inventing a new placement.
+ */
+export class TrustedProviderNotConfigured extends Error {
+  constructor(public readonly provider: "ares" | "mojeDane") {
+    super(`${provider} adapter not configured for this installation (Reliability Gate R4, fail-closed — see PLATFORM_CODES.TRUSTED_PROVIDER_NOT_CONFIGURED)`);
+    this.name = "TrustedProviderNotConfigured";
   }
 }

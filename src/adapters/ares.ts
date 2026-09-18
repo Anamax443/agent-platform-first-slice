@@ -7,6 +7,8 @@
  * already have rejected via input schema comes back 400 `VSTUP_NEVALIDNI_FORMAT_ICO`. A 200 body is untrusted data
  * like any adapter response — the handler still checks shape before trusting it (INT-FAIL-004 pattern).
  */
+import { TrustedProviderNotConfigured } from "../platform/errors.js";
+
 export interface AresRecord {
   ico: string;
   obchodniJmeno: string;
@@ -68,6 +70,23 @@ export class FakeAresAdapter implements AresAdapter {
         return { ...r };
       }
     }
+  }
+}
+
+/**
+ * Reliability Gate R4 (owner's second audit, 18.9.2026 — "než dáme Farmě větší autonomii, musí se nejdřív
+ * sama umět... odhalit stagnaci", the systemic finding this class exists to close a concrete instance of):
+ * platform-wiring.ts's wirePlatform() constructs this instead of FakeAresAdapter when the installation has
+ * neither a real `ares` adapter wired nor InstallationProfile.allowUnconfiguredTrustedProviders:true — so a
+ * missing configuration fails LOUD (TrustedProviderNotConfigured -> TRUSTED_PROVIDER_NOT_CONFIGURED) the
+ * moment cz.company.verify is actually called, instead of silently returning fabricated ARES data as if it
+ * were real (the exact gap the owner's audit named). Every method a real AresAdapter could be asked for
+ * throws the same way — there is only one today (`lookup`), but a future addition should throw too, not
+ * fall through to `undefined`.
+ */
+export class NotConfiguredAresAdapter implements AresAdapter {
+  async lookup(_ico: string): Promise<AresRecord> {
+    throw new TrustedProviderNotConfigured("ares");
   }
 }
 

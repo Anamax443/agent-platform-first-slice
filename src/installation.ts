@@ -42,6 +42,27 @@ export interface InstallationProfile {
    * envisioned `assistant.displayName` field, pulled forward narrowly (just a name, not the full future
    * TenantConfig). Absent = caller's own fallback, never a hardcoded name in code. */
   assistant?: { displayName: string };
+  /**
+   * Reliability Gate R4 (owner's second, "months/years unattended" audit, 18.9.2026): explicit, per-
+   * installation opt-in to let cz.company.verify/cz.vat.verify fall back to FakeAresAdapter/
+   * FakeMojeDaneAdapter when no real adapter is wired (platform-wiring.ts). Absent (or false) is the
+   * fail-closed default everywhere, including farm-bass443 — a real installation that never sets this gets
+   * TRUSTED_PROVIDER_NOT_CONFIGURED (PLATFORM_CODES, errors.ts) instead of silently returning fabricated
+   * ARES/MOJE daně data as if it were real, which is exactly what happened before this field existed
+   * (self-test.ts's own comment already conceded HEAD 1d465dd's fixtures run "against FakeAresAdapter/
+   * FakeMojeDaneAdapter (no real ... baseUrl configured yet)"). config/local-fakes/profile.json is the one
+   * installation that sets this to true, on purpose — it exists to BE the fakes.
+   *
+   * Deliberately config-driven, never a code-level check: ARCH-DEP-001 (scripts/arch-dep.mjs) forbids any
+   * installation-name literal (e.g. `profile.installation === "local-fakes"`) anywhere under src/ or
+   * deploy/cloudflare/ — a hardcoded name is exactly the kind of installation value that must live in
+   * config/<installation>/, not in code that has to stay identical across every installation. This file
+   * (assembleInstallation()) does no extra work for this field: the whole profile object already passes
+   * through to platform-wiring.ts untouched, and config/profile.schema.json's `additionalProperties:false`
+   * is the actual enforcement point — a profile.json that sets an unknown field fails schema validation,
+   * not silently ignored.
+   */
+  allowUnconfiguredTrustedProviders?: boolean;
 }
 
 export interface Installation {

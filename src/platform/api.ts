@@ -2,7 +2,10 @@
 export type { Handler, HandlerInput, HandlerOutcome, ErrorObject, ErrorClass, FieldValue, Provenance } from "./types.js";
 export type { Clock } from "./clock.js";
 export { iso } from "./clock.js";
-export { capabilityError, platformError, UnknownOutcomeError } from "./errors.js";
+// Reliability Gate R4 (18.9.2026, errors.ts's own TrustedProviderNotConfigured doc comment has the full
+// rationale): re-exported here, same shape as UnknownOutcomeError above, so cz-company-verify/cz-vat-verify's
+// handlers (components/*, ARCH-DEP-001-restricted to this file) can catch what their adapters throw.
+export { capabilityError, platformError, UnknownOutcomeError, TrustedProviderNotConfigured } from "./errors.js";
 export { sha256, StorageFull } from "./artifacts.js";
 export { stripMimeAttachments, parseMimeMessage } from "./mime.js";
 export type { Artifact, ArtifactReader, ArtifactWriter } from "./artifacts.js";

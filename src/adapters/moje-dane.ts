@@ -17,6 +17,7 @@
  *    service unavailable — both normal 200 responses, both mapped to MojeDaneUnavailable (retryable).
  */
 import { XMLParser } from "fast-xml-parser";
+import { TrustedProviderNotConfigured } from "../platform/errors.js";
 
 export interface VatAccount {
   kind: "standard" | "other";
@@ -87,6 +88,18 @@ export class FakeMojeDaneAdapter implements MojeDaneAdapter {
         return { dic, reliability: "NENALEZEN", found: false, companyName: null, publishedAccounts: [] };
       }
     }
+  }
+}
+
+/**
+ * Reliability Gate R4 — mirror of ares.ts's NotConfiguredAresAdapter (see that class's doc comment for the
+ * full rationale). platform-wiring.ts's wirePlatform() constructs this instead of FakeMojeDaneAdapter when
+ * the installation has neither a real `mojeDane` adapter wired nor
+ * InstallationProfile.allowUnconfiguredTrustedProviders:true.
+ */
+export class NotConfiguredMojeDaneAdapter implements MojeDaneAdapter {
+  async lookup(_dic: string): Promise<VatSubjectStatus> {
+    throw new TrustedProviderNotConfigured("mojeDane");
   }
 }
 

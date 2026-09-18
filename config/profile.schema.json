@@ -77,6 +77,10 @@
         "displayName": { "type": "string", "minLength": 1, "maxLength": 60 }
       }
     },
+    "allowUnconfiguredTrustedProviders": {
+      "type": "boolean",
+      "description": "Reliability Gate R4 (18.9.2026 audit): explicit opt-in to let cz.company.verify/cz.vat.verify fall back to FakeAresAdapter/FakeMojeDaneAdapter when no real adapter is wired (platform-wiring.ts). Absent = false = fail-closed (TRUSTED_PROVIDER_NOT_CONFIGURED) — the correct default for every real installation. Only config/local-fakes/profile.json sets this true, deliberately: that installation exists to BE the fakes."
+    },
     "models": {
       "type": "object",
       "description": "AI models per capability: the options the operator may pick from and the default. Never without a model; credentials by reference only; processor and inference geography written down per option (NIS2 / ISO 27001 supplier control).",

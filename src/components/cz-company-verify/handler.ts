@@ -2,7 +2,7 @@
 // "IČO does not exist" is a business result (found: false), not a technical error — same pattern as
 // document.classify's OTHER (SEVERKA docs/SEVERKA.md "## Připravované doménové COW").
 import { AresSubjectNotFound, AresUnavailable, type AresAdapter } from "../../adapters/ares.js";
-import { CASE_SCOPE, capabilityError, DependencyTimeout, iso, platformError, sha256, withTimeout } from "../../platform/api.js";
+import { CASE_SCOPE, capabilityError, DependencyTimeout, iso, platformError, sha256, TrustedProviderNotConfigured, withTimeout } from "../../platform/api.js";
 import type { Clock, EvidenceWriter, Handler, HandlerInput, HandlerOutcome, Provenance } from "../../platform/api.js";
 import descriptor from "./descriptor.json" with { type: "json" };
 import inputSchema from "./input.schema.json" with { type: "json" };
@@ -74,6 +74,12 @@ export function createCompanyVerifier(deps: CompanyVerifierDeps): Handler {
       }
       if (e instanceof DependencyTimeout) return failed(platformError("DEPENDENCY_TIMEOUT", "ARES did not answer before the deadline", { ms: e.ms }));
       if (e instanceof AresUnavailable) return failed(platformError("DEPENDENCY_UNAVAILABLE", "ARES unavailable"));
+      // Reliability Gate R4 (18.9.2026 audit): platform-wiring.ts's aresFor() throws this via
+      // NotConfiguredAresAdapter when this installation has no real ARES adapter wired and has not opted
+      // into the fakes (InstallationProfile.allowUnconfiguredTrustedProviders) — loud and named, instead
+      // of the pre-R4 behavior of silently returning FakeAresAdapter's fabricated data as if it were a
+      // real ARES answer. See TrustedProviderNotConfigured's doc comment (src/platform/errors.ts).
+      if (e instanceof TrustedProviderNotConfigured) return failed(platformError("TRUSTED_PROVIDER_NOT_CONFIGURED", "ARES adapter not configured for this installation"));
       throw e;
     }
   };
