@@ -122,7 +122,7 @@ dispatch typů použitých všude). Řešení: `originCaseId` se vyplní jen tam
 už prokazatelně známý (typicky fan-out sub-instance, které `fanOutAttachmentsIfAny()` spouští AŽ PO
 `createCaseForMailIntake()` — tam už Case existuje). Kde není, zůstává `undefined` — a Case-scoped filtr
 (část 2 výš) takovou evidenci prostě nikdy nenabídne jako reusable pro žádný Case (bezpečný default, ne
-díra). Plné řešení ("Case vzniká dřív, než první krok, co zapisuje evidenci") patří k části 3/6 kroku 8, kdy
+díra). Plné řešení ("Case vzniká dřív, než první krok, co zapisuje evidenci") patří k části 3/6 kroku 9, kdy
 se stejně mění POŘADÍ vzniku Case vůči execution (Case vzniká z impulsu PŘED plánováním, ne po prvním kroku)
 — tady se to neopravuje předčasně jako vedlejší efekt schématu.
 
@@ -139,10 +139,11 @@ storage boundary", ne že se musí stavět per-Case DB. `forTenant()` zůstává
 
 ### Status
 
-**IMPLEMENTOVÁNO lokálně 18.9.2026** (část 6, krok 2, přímo navazující krok po tomhle dokumentu) — `Evidence` má
-`originCaseId?`/`subject: FactAddress`/`reusePolicy` přesně podle tvaru výš, `EVIDENCE_SCHEMA_VERSION` postoupilo
-2→3 se stejnou fail-closed disciplínou (v1 i v2 záznamy `verify()` odmítá, nikdy tiše nepřijme). **Žádný commit,
-push ani deploy** — jen lokální change set + testy (viz `HANDOFF.md`, nejnovější záznam).
+**LIVE WIRED, LIVE VERIFIED** (część 6, krok 2) — `Evidence` má `originCaseId?`/`subject: FactAddress`/
+`reusePolicy` přesně podle tvaru výš, `EVIDENCE_SCHEMA_VERSION` postoupilo 2→3 se stejnou fail-closed disciplínou
+(v1 i v2 záznamy `verify()` odmítá, nikdy tiše nepřijme). Commitnuto `7971ede`, nasazeno na `farm-bass443` a
+vlastníkem živě potvrzeno (18.9.2026) — status níže byl původně "žádný commit/push/deploy"; to už neplatí, viz
+část 11 pro to, co se stalo od tohodle bodu dál.
 
 **Kde se implementace odchýlila od téhle skici (aby ADR zůstal pravdivý, ne jen "co bylo navrženo"):**
 - `inputField: string` na `Evidence` **zůstal** jako reálné, uložené pole (ne odstraněný) — ale je teď ODVOZENÉ:
@@ -233,7 +234,7 @@ Status: **TARGET**, nic z tohohle dnes neexistuje jako pojmenovaná funkce (exis
 **Rozhodnutí: `/intake` se nemění.** Zůstává jako legacy adaptér (`workflow` pole, `startIntake()`) do doby,
 než je nová cesta hotová a živě ověřená na všech třech scénářích (část 8) — pak se `/intake` buď přepne na
 interní použití nové cesty, nebo formálně označí jako deprecated. Tenhle dokument NEIMPLEMENTUJE nic z týhle
-části — je to specifikace pro pozdější krok (část 6, krok 4).
+části — je to specifikace pro pozdější krok (část 6, krok 5).
 
 Nová cesta (pracovní název `/impulse`, může se změnit):
 
@@ -255,22 +256,29 @@ Co se PO tomhle požadavku stane (intent.resolve → goal → plan → execution
 
 ---
 
-## 6. Pořadí implementace (vlastníkovo rozhodnutí 18. 9. 2026)
+## 6. Pořadí implementace (vlastníkovo rozhodnutí 18. 9. 2026, upraveno stejného dne — viz část 11)
 
-1. **Tenhle dokument** — bez zásahu do runtime. ✅ (tenhle commit)
+1. **Tenhle dokument** — bez zásahu do runtime. ✅ (tenhle commit, `7971ede`)
 2. **Evidence/Case hranice** (část 2) — `originCaseId`/`subject`/`reusePolicy` na Evidence, `Dojička`/každý
-   čtenář evidence přepnutý na filtrovaný přístup. Přímo navazující krok.
-3. **`CurrentCaseProjection`** (část 4) — teprve TEĎ, na opravené hranici.
-4. **Nový vstupní kontrakt** (část 5) — aditivně, `/intake` zůstává jako legacy adaptér.
-5. **`intent.resolve`** — normální COW, ne privilegovaný Farmář. Vstup: impulse/artifact refy. Výstup:
+   čtenář evidence přepnutý na filtrovaný přístup. ✅ (`7971ede`, živě nasazeno a potvrzeno)
+3. **Tři P0 opravy primitiv** (část 11, vloženo 18.9.2026 týž den po externím auditu tohohle dokumentu) — Case
+   bez instance, NormalizedImpulse bez těla mailu, fact scope pro >1 dokument v Case. **Vloženo PŘED
+   `CurrentCaseProjection` právě proto, že by je Projection jinak zabetonovala jako implicitní předpoklad.** ✅
+   (`db5bc8b`, živě nasazeno)
+4. **`CurrentCaseProjection`** (část 4) — teprve TEĎ, na opravené hranici A opravených primitivech.
+5. **Nový vstupní kontrakt** (část 5) — aditivně, `/intake` zůstává jako legacy adaptér.
+6. **`intent.resolve`** — normální COW, ne privilegovaný Farmář. Vstup: impulse/artifact refy. Výstup:
    `impulse.intent` hodnota (do Artifactu, ne do Žlabu přímo — stejný vzor jako `invoice.extract`), evidence
    `impulse.intent.resolved` (uzavřený slovník, AR-6).
-6. **Intent → Goal mapping** — konfigurace (JSON/policy vrstva), nikdy `if` v orchestration kódu. Tohle je
+7. **Intent → Goal mapping** — konfigurace (JSON/policy vrstva), nikdy `if` v orchestration kódu. Tohle je
    přesně ten bod, kde se láme n8n vs. Farma (AR-4).
-7. **`plan → WorkflowDef` compiler** — SEVERKA's M3 "No-n8n Gate". Planner beze změny, jen nový spotřebitel
+8. **`plan → WorkflowDef` compiler** — SEVERKA's M3 "No-n8n Gate". Planner beze změny, jen nový spotřebitel
    jeho výstupu.
-8. **Case-level replanning loop** (část 3) — observe → plan → immutable execution → nový stav → observe.
-9. Teprve **potom** další invoice-specific práce (2. faktura entity, `invoice.line`, M2).
+9. **Case-level replanning loop** (část 3) — observe → plan → immutable execution → nový stav → observe.
+10. Teprve **potom** další invoice-specific práce (2. faktura entity, `invoice.line`, M2) — **s výjimkou fact
+    scope pro >1 dokument v Case, které krok 3 (část 11) už řeší teď, ne tady** (to je přesně to, co externí
+    audit 18.9.2026 rozporoval: tenhle bod v původním pořadí odsouval fact-scope opravu až sem, za
+    `CurrentCaseProjection` — viz část 11).
 
 Žádný krok se nezačíná bez živého ověření kroku předchozího (stejná disciplína jako M0 D→C→A→B→E).
 
@@ -307,7 +315,7 @@ konfigurace cílů — nikdy centrální orchestrace.
 
 - **A — mail + faktura.** Živě ověřeno opakovaně (`80b6a8d`…`e127987`, `HANDOFF` #172–181): mail.ingest →
   fan-out → classify → (jen pro fakturu) extract → derived Artifact. Dnes běží přes `attachment-fanout.ts`
-  (část 7's dočasný kompromis) — po kroku 8 poběží přes obecnou smyčku beze změny výsledku.
+  (část 7's dočasný kompromis) — po kroku 9 poběží přes obecnou smyčku beze změny výsledku.
 - **B — Telegram: "jaké bude zítra počasí?"** Kanál (Telegram) ani doména (weather) dnes neexistují.
   **Nesmí vyžadovat `weather-driver.ts` ani `telegram-workflow.ts`.** Musí jít přidat jako: nový channel
   adapter (normalize() pro Telegram tvar), nová capability `weather.forecast` + `facts.json`, nový
@@ -326,19 +334,19 @@ Ekvivalent SEVERKA's M8.
 
 | Koncept | Stav | Poznámka |
 |---|---|---|
-| `NormalizedImpulse` | LIVE WIRED, LIVE VERIFIED | jen mail kanál (`createCaseForMailIntake()`), živě ověřeno dnešním testem |
-| `Case` + `aggregateCaseStatus()` | LIVE WIRED, LIVE VERIFIED | Commit 3, `e127987`; execution-status only (část 7) |
+| `NormalizedImpulse` | LIVE WIRED, LIVE VERIFIED | jen mail kanál (`createCaseForMailIntake()`); od `db5bc8b` (část 11) i `content?: ArtifactRef` — mail body konečně dosažitelné z Case, ne jen z journalu |
+| `Case` + `aggregateCaseStatus()` | LIVE WIRED, LIVE VERIFIED (execution-status, N≥1 cesta) / PRIMITIVE EXISTS (N=0) | Commit 3, `e127987`; execution-status only (část 7). Od `db5bc8b` (část 11) `newCase()`/`aggregateCaseStatus()` strukturálně zvládají i 0 instancí (`CaseStatus`'s nové `UNSTARTED`) — primitivum existuje, ale žádný živý producent ještě Case s 0 instancemi nevytváří (čeká na `/impulse`, část 5, pořád TARGET) |
 | `GET /case/:id.json` | LIVE WIRED, LIVE VERIFIED | řeší sub-instance lookup mezeru z živého testu 18.9. |
-| `FactAddress` | PRIMITIVE EXISTS | `fact-address.ts`, používá se v `entity-continuity.ts` i teď strukturálně na `Evidence.subject` (část 2) |
-| `EvidenceLedger` (D6, v3) | LIVE WIRED, LIVE VERIFIED (tenant-scoped) / PRIMITIVE EXISTS (case-scoped) | `forTenant()` beze změny živě ověřené; nové `forCase()` (část 2) implementováno + testováno lokálně 18.9.2026, zatím NEnasazeno (žádný commit/push/deploy v tomhle kroku) |
-| `Evidence.originCaseId`/`subject`/`reusePolicy` | PRIMITIVE EXISTS | implementováno + testováno lokálně 18.9.2026 (část 2, tenhle krok); NENÍ LIVE WIRED/VERIFIED — žádný commit/push/deploy proběhl, farm-bass443 dál běží na schema v2 |
+| `FactAddress` | PRIMITIVE EXISTS (obecně) / LIVE WIRED, LIVE VERIFIED (`document.type.invoiceConfirmed`) | `fact-address.ts`, používá se v `entity-continuity.ts` i strukturálně na `Evidence.subject` (část 2). Od `db5bc8b` (část 11) `document.type.invoiceConfirmed` skutečně používá `scope: "impulse.attachment"` + `entityId` živě — první reálný spotřebitel entity-scoped adresy mimo testy |
+| `EvidenceLedger` (D6, v3) | LIVE WIRED, LIVE VERIFIED | `forTenant()` beze změny živě ověřené; `forCase()` (část 2) nasazeno a vlastníkem potvrzeno `7971ede`; `attachment-fanout.ts`'s `classifiedAsInvoice()` od `db5bc8b` (část 11) čte přes `subject.scope`/`subject.entityId`, ne přes `workflowId`-koincidenci |
+| `Evidence.originCaseId`/`subject`/`reusePolicy` | LIVE WIRED, LIVE VERIFIED | nasazeno `7971ede`, vlastníkem potvrzeno živě 18.9.2026 (farm-bass443 běží na schema v3) |
 | `FactCatalog` / `plan()` | PRIMITIVE EXISTS | volané jen z testů a `attachment-fanout.ts` (úzký `goal`, část 7) |
 | `CurrentCaseProjection` | TARGET | část 4, nic neexistuje |
 | `impulse.intent` / `impulse.intent.resolved` | PRIMITIVE EXISTS (jen slovník) | `facts.v1.json`, žádný producent |
 | `intent.resolve` COW | TARGET | část 5 |
-| Intent → Goal mapping | TARGET | část 6 krok 6 |
-| `plan → WorkflowDef` compiler | TARGET | SEVERKA M3, část 6 krok 7 |
-| Case-level replanning loop | TARGET | část 3, 6 krok 8 |
+| Intent → Goal mapping | TARGET | část 6 krok 7 |
+| `plan → WorkflowDef` compiler | TARGET | SEVERKA M3, část 6 krok 8 |
+| Case-level replanning loop | TARGET | část 3, 6 krok 9 |
 | `/impulse` vstupní kontrakt | TARGET | část 5, aditivní, `/intake` zůstává |
 | `attachment-fanout.ts` | LIVE WIRED, LIVE VERIFIED | vědomě dočasný (část 7), nekopírovat |
 
@@ -356,3 +364,81 @@ Ekvivalent SEVERKA's M8.
 - **Nerozhoduje se dnes přesný název/tvar `/impulse` endpointu ani finální `reusePolicy` konfigurační
   mechanismus** — jen princip a výchozí hodnota (`CASE_ONLY`). Detaily patří do implementačního kroku, ne
   do tohoto ADR.
+
+---
+
+## 11. Tři P0 opravy primitiv před `CurrentCaseProjection` (externí audit, 18. 9. 2026, týž den jako commit
+`7971ede`)
+
+### Co audit zjistil
+
+Hned po `7971ede` (tenhle dokument + část 2) prošel projekt nezávislým, důkladným auditem, který proti živému
+`main` ověřil tři konkrétní tvrzení — všechna se potvrdila přesně tak, jak je audit formuloval, čtením
+skutečného kódu (ne jen GitHub diffů), a to i s upřesněními, která audit sám neměl k dispozici (viz níže u P0
+č. 3). Společný nález: ADR's vlastní **část 6** (Pořadí implementace) odsouvala opravu fact-scope pro >1
+dokument v Case až na úplný konec (dřívější krok 9, teď krok 10) — ZA `CurrentCaseProjection` (dřívější krok 3,
+teď krok 4). Kdyby se Projection postavila jako první, zabetonovala by implicitní předpoklad "jeden Case = jeden
+`document.type` = jedna faktura", který ADR's vlastní akceptační scénář C (část 8) už porušuje (mail s
+CONTRACT + INVOICE + OTHER v jednom impulsu). **Rozhodnutí: vložit tyhle tři opravy jako nový krok 3 (część 6),
+PŘED `CurrentCaseProjection` (teď krok 4), ne za ni.**
+
+### P0 č. 1 — `Case` nemohl existovat s 0 instancemi
+
+`newCase()` (`case.ts`) vždy vyžadoval `instance` a okamžitě naplnil `Case.instances`; `aggregateCaseStatus([])`
+házel `CaseError`. Skutečná závislost tak byla `WorkflowInstance → Case`, ne `Case → WorkflowInstance`, jak
+popisuje část 3's cílový pipeline. **Oprava:** `CaseStatus` má nový stav `UNSTARTED`; `aggregateCaseStatus([])`
+teď vrací `UNSTARTED` místo throw; `newCase()`'s `instance` je volitelný (chybí-li, `tenantId`/`createdAt`/
+`updatedAt` se berou z impulsu samotného — funkce zůstává pure, žádné I/O). **Vědomě NEřešeno tímhle krokem**
+(mimo scope, viz ADR's vlastní zámek na `/intake` v úvodu dokumentu): žádný živý producent Case s 0 instancemi
+ještě nevytváří — to je práce `/impulse` (část 5, pořád TARGET). Tenhle krok jen dělá primitivum SCHOPNÉ tenhle
+stav reprezentovat, až `/impulse` přijde.
+
+### P0 č. 2 — `NormalizedImpulse` ztrácel tělo mailu
+
+`createCaseForMailIntake()` (`apf-gateway/src/index.ts`) stavěl `impulse.artifacts` jen z `mail.ingest`'s
+`attachments[]` — nikdy z `mail.ingest`'s vlastního combined-text artefaktu (tělo + text každé přílohy
+dohromady, přesně to, co `document.classify` reálně čte). Existující komentář v kódu tvrdil, že "tělo mailu už
+žije jako svůj artefakt" — pravda, ale nikde v `Case`/`NormalizedImpulse` na něj nebyl odkaz, takže prostý mail
+bez přílohy ("Jaké bude zítra počasí v Brně?") stavěl Case s prázdnými `artifacts`, nedefinovaným `text` a jen
+`metadata.subject` — samotná otázka byla z Case nedosažitelná. **Oprava:** nové volitelné pole
+`NormalizedImpulse.content?: ArtifactRef`, naplněné v `createCaseForMailIntake()` z `mail.ingest`'s
+`payload.artifactId`. Teď-nepravdivý komentář opraven, aby popisoval skutečný stav.
+
+### P0 č. 3 — fact/evidence kontrakt neuměl >1 dokument v jednom Case
+
+`contracts/facts.v1.json` deklarovalo `document.type`/`document.type.validated`/`document.type.invoiceConfirmed`
+bez `scope` → `fact-catalog.ts`'s výchozí `CASE_SCOPE` je udělal per-Case singletony.
+`document-classifier/handler.ts`'s `seal()` natvrdo psal `scope: CASE_SCOPE`. `attachment-fanout.ts`'s
+`classifiedAsInvoice()` tohle maskoval dodatečným filtrem `e.workflowId === classifyWorkflowId` — přesně to,
+co część 7 tohohle dokumentu označuje jako "vědomě dočasný kompromis... NESMÍ se replikovat".
+
+**Co audit sám nevěděl** (četl jen GitHub, ne živý entity mechanismus): `fact-address.ts`/`fact-catalog.ts` už
+dnes podporují "many"-multiplicity entity s `entityId` a `contracts/facts.v1.json` už jednu takovou entitu
+deklaruje — `impulse.attachment` (identityFields sha256+name). Oprava tedy nebyla "postav multi-document podporu
+od nuly", ale menší: přeskopovat `document.type.invoiceConfirmed` na existující `impulse.attachment` entitu.
+**Oprava (záměrně úzká, jen tenhle jeden fact):** `document.type.invoiceConfirmed`'s evidence `subject` teď nese
+`scope: "impulse.attachment"` + `entityId`, mintovaný jednou za přílohu v `mail.ingest`'s handleru
+(`newEntityId()`), protažený přes `attachment-classify.v1.json`'s step inputs do `document-classifier`'s handleru.
+`attachment-fanout.ts`'s `classifiedAsInvoice()` teď čte `subject.scope`/`subject.entityId` místo
+`workflowId`-koincidence. **Nový test FANOUT-003** živě dokazuje akceptační scénář C: dvě faktury v jednom Case,
+každá se klasifikuje a extrahuje nezávisle, dvě odlišné zapečetěné evidence, žádné křížení.
+
+`document.type` a `document.type.validated` **zůstaly záměrně CASE_SCOPE** — mají živé konzumenty v
+whole-mail stamp/archive/notify pipeline (`document-validator`, `document-executor-host`, `email-executor`,
+`mail-intake.v3.json`'s netknutý top-level flow), které by přeskopování rozbilo, a scénář C je přes ně
+nevyžaduje (jen přes `document.type.invoiceConfirmed`, fan-out cestou). `invoice.number`/`invoice.totalGross`/
+`supplier.*` zůstávají CASE_SCOPE taky — vědomě odloženo jako samostatný budoucí krok (stejný gap o úroveň výš,
+menší, čeká až bude potřeba, "jeden krůček" princip).
+
+**Vedlejší, výslovně nahlášená změna chování:** top-level `classify` krok v `mail-intake.v3.json` (klasifikace
+CELÉHO mailu, ne jedné přílohy) už nezapečeťuje `document.type.invoiceConfirmed` vůbec (dřív ano, CASE_SCOPE) —
+ověřeno, že tuhle evidenci nic živé nečetlo (`invoice.extract` se váže jen na `attachment-classify` sub-instanci).
+
+### Status
+
+**LIVE WIRED, LIVE VERIFIED**, všechny tři. Implementováno v izolovaných git worktree (jeden branch na opravu),
+každý nezávisle otestován (`npm test`/`typecheck`/`arch` skutečně spuštěné, ne jen dry-run), pak mergnuto
+sekvenčně do `main` (`6ffe3f4` → `bc18955` → `db5bc8b`, bez konfliktů), znovu 687/687 testů + `npm run
+farm:check` na `main`, pushnuto a nasazeno na `farm-bass443` (`node scripts/farm-deploy.mjs farm-bass443`, všech
+6 workerů). Živé potvrzení gitSha přes `/farm/zlab.json` čeká na vlastníkovo přihlášení (endpoint je za
+Cloudflare Access).
