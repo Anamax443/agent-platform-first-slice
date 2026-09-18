@@ -62,11 +62,12 @@ import { FACT_CATALOG } from "./fact-catalog-bundle.js";
 import { COW_WORKSHOP, describeModels, gatewayCatalog, modelAdapterFor, wirePlatform, type Wiring } from "./platform-wiring.js";
 import { runSelfTest, requiredTestsFor, selfTestCapabilityForTick, SELF_TEST_CAPABILITIES, SELF_TEST_WORKFLOW_ID } from "./self-test.js";
 import { newSession, sendMessage, type WorkshopSession } from "./workshop.js";
-import { D1_AUDIT_DDL, D1_EVIDENCE_DDL, d1Sql, DDL, evidenceMirrorOf, evidenceStoreOf, SqliteArtifacts, SqliteAudit, SqliteCaseStore, SqliteJournal, SqliteReviewTaskStore } from "./store.js";
+import { D1_AUDIT_DDL, D1_EVIDENCE_DDL, D1_R2_REF_DDL, d1Sql, DDL, evidenceMirrorOf, evidenceStoreOf, r2RefCounterOf, SqliteArtifacts, SqliteAudit, SqliteCaseStore, SqliteJournal, SqliteReviewTaskStore } from "./store.js";
 import { registerDerived, type DerivedArtifactRegistration, type RegisterDerivedResult } from "./artifact-registration.js";
 import { createPrivateKey, createPublicKey } from "node:crypto";
 import { verifyEvidence, type Evidence } from "../../../../src/platform/evidence.js";
 import { mirrorEvidence } from "../../../../src/platform/evidence-mirror.js";
+import { registerR2Refs, releaseR2Ref } from "../../../../src/platform/r2-refcount.js";
 import type { SqliteEvidenceStore } from "../../../../src/platform/evidence-sqlite.js";
 import type { ZlabStats } from "./page.js";
 import { visuallyStamp } from "./visual-stamp.js";
@@ -564,6 +565,14 @@ const ensureD1Evidence = (db: D1Database): Promise<void> =>
   (ensureEvidence ??= oncePerIsolate(async () => {
     for (const stmt of D1_EVIDENCE_DDL) await db.prepare(stmt).run();
   }))();
+/**
+ * Shared D1 r2_ref table (Reliability Gate R0, commit 1d465dd — see src/platform/r2-refcount.ts's header): same
+ * once-per-isolate-but-never-a-cached-failure guard as ensureD1Audit/ensureD1Evidence just above, for the same
+ * reason (HANDOFF 166) — a rejected DDL promise cached forever would poison every later copyOut()/purge() call in
+ * this isolate's whole life.
+ */
+let ensureR2Ref: (() => Promise<void>) | undefined;
+const ensureD1R2Ref = (db: D1Database): Promise<void> => (ensureR2Ref ??= oncePerIsolate(async () => void (await db.prepare(D1_R2_REF_DDL).run())))();
 
 /** Žlab as seen from the shared D1 copy: counts and domains only — never a value, never a result. */
 async function zlabStats(env: Env): Promise<ZlabStats> {
@@ -1090,8 +1099,23 @@ export class WorkflowInstance extends DurableObject<Env> {
   }
 
   /**
-   * Remove the instance and every artifact it holds (retention, or test data on the owner's request): R2 objects,
-   * then the object's whole storage. The shared D1 trail keeps its append-only records and gets one more: PURGED.
+   * Remove the instance and every artifact it holds (retention, or test data on the owner's request): R2 objects
+   * this instance is the last remaining claimant of, then the object's whole storage. The shared D1 trail keeps
+   * its append-only records and gets one more: PURGED.
+   *
+   * Reliability Gate R0 (commit 1d465dd, src/platform/r2-refcount.ts): an R2 object is content-addressed
+   * (`${derived/originals}/${tenantId}/${sha256}`), and two Cases can come to share one — a forwarded email, a
+   * resent PDF — by design (the same key formula is independently computed at copyOut(), startIntake() pre-DO, and
+   * apf-document-host's relayDerivedArtifact()). Before this fix, purge() deleted every such object unconditionally,
+   * so purging one Case could silently delete evidence another, still-live Case still pointed at. Now each artifact
+   * releases this instance's own r2_ref claim first and only deletes the R2 object when releaseR2Ref() reports no
+   * other workflow still claims that key. Fail-safe on the release/lookup itself: any D1 error here (this is a
+   * rare, explicit, Cloudflare-Access-gated admin action — docs/POSUDKY.md — not a hot path, so a slightly delayed
+   * delete costs nothing) is caught and treated as "not safe to delete" — an admin action degrading to leaving an
+   * R2 object around a little longer is the right direction of failure, never over-eager deletion. Known residual
+   * gap, not closed here (see this commit's message): if D1's own DELETE inside release() throws, this instance's
+   * own r2_ref row can outlive this instance's ctx.storage.deleteAll() below, becoming a permanent (bounded,
+   * cosmetic — not data loss) orphan row that makes the shared key look referenced forever.
    */
   async purge(by: string, reason: string): Promise<{ workflowId: string; artifacts: number; r2Deleted: number }> {
     const inst = this.journal.list()[0];
@@ -1100,7 +1124,15 @@ export class WorkflowInstance extends DurableObject<Env> {
     let r2Deleted = 0;
     for (const a of artifacts) {
       const key = a.location ?? `${a.derivedFrom ? "derived" : "originals"}/${a.tenantId}/${a.sha256}`;
-      if (await this.env.ARTIFACTS.head(key)) {
+      let safeToDelete = true;
+      try {
+        await ensureD1R2Ref(this.env.AUDIT);
+        safeToDelete = (await releaseR2Ref(key, inst.workflowId, r2RefCounterOf(this.env.AUDIT))).safeToDelete;
+      } catch (e) {
+        console.error("purge: r2_ref release failed (fail-safe: leaving the R2 object in place)", e);
+        safeToDelete = false;
+      }
+      if (safeToDelete && (await this.env.ARTIFACTS.head(key))) {
         await this.env.ARTIFACTS.delete(key);
         r2Deleted += 1;
       }
@@ -1211,7 +1243,14 @@ export class WorkflowInstance extends DurableObject<Env> {
     return updated;
   }
 
-  /** Text artifacts to R2 (immutable, keyed by tenant + sha256), audit records and sealed evidence to the shared D1. Idempotent. */
+  /**
+   * Text artifacts to R2 (immutable, keyed by tenant + sha256), audit records and sealed evidence to the shared D1.
+   * Idempotent. Also re-registers every artifact this instance holds (not just newly-copied ones — see the r2_ref
+   * block below) as a claim on its R2 key in the shared D1 r2_ref table, so purge() (below) can tell a
+   * still-shared object from a truly orphaned one (Reliability Gate R0, commit 1d465dd: purge() used to delete an
+   * R2 object unconditionally, even when another Case's artifact still pointed at the same content-addressed key
+   * — src/platform/r2-refcount.ts's header has the full finding).
+   */
   private async copyOut(): Promise<void> {
     for (const a of this.artifacts.uncopied()) {
       const key = `${a.derivedFrom ? "derived" : "originals"}/${a.tenantId}/${a.sha256}`;
@@ -1239,6 +1278,33 @@ export class WorkflowInstance extends DurableObject<Env> {
     if (this.evidenceStore.unmirrored().length > 0) {
       await ensureD1Evidence(this.env.AUDIT);
       await mirrorEvidence(this.evidenceStore, evidenceMirrorOf(this.env.AUDIT));
+    }
+    // Reliability Gate R0 (commit 1d465dd, src/platform/r2-refcount.ts): register this instance's claim on every
+    // R2 key it holds. Deliberately `this.artifacts.list()` (ALL artifacts), not `.uncopied()` above — a binary
+    // original is stored already `copied = 1` (SqliteArtifacts.store(), store.ts) because it arrives already in
+    // R2 (location set), so it would never appear in the `.uncopied()` loop above and would otherwise never get a
+    // ref row at all. Re-registers on every copyOut() call, including ones where nothing above changed — that is
+    // intentional and cheap (INSERT OR IGNORE on the composite PK; see registerR2Refs's own doc comment), not a
+    // bug: it is what keeps this instance's claim alive in D1 without needing its own "did I already register
+    // this" bookkeeping. Best-effort and isolated behind its own try/catch: copyOut() itself is always called
+    // through ctx.waitUntil() (constructor/alarm/intake/mailIntake/decideReview, all above and below), so a D1
+    // hiccup here must degrade to "this instance's ref-claim is momentarily unregistered" and log, never surface
+    // as an uncaught rejection the platform would otherwise report as a worker error on an unrelated request path.
+    const inst = this.journal.list()[0];
+    if (inst) {
+      const entries = this.artifacts.list().map((a) => ({
+        r2Key: a.location ?? `${a.derivedFrom ? "derived" : "originals"}/${a.tenantId}/${a.sha256}`,
+        workflowId: inst.workflowId,
+        tenantId: a.tenantId,
+      }));
+      if (entries.length > 0) {
+        try {
+          await ensureD1R2Ref(this.env.AUDIT);
+          await registerR2Refs(entries, r2RefCounterOf(this.env.AUDIT));
+        } catch (e) {
+          console.error("copyOut: r2_ref registration failed (fail-safe: this instance's claim is unregistered until the next copyOut() call)", e);
+        }
+      }
     }
   }
 }
