@@ -282,8 +282,12 @@ export function signingKeyFor(profile: Installation["profile"], signingKeyPem: s
  * capability resolving to an available credential (modelTable — what buildAdapters()/buildExtractAdapters() throw
  * on), and mail.ingest's credential entry (credentialTable — what the ingestHost's CredentialResolver throws on).
  * Not covered, by design: the durable-idempotency gate (index.ts always passes a real SqliteIdempotencyStore; the
- * gate only ever fires for a caller that omits it) and the per-capability Router/policy registration (validated
- * at import by assembleInstallation()'s policyRefs cross-check, fail-closed before the Worker can even answer).
+ * gate only ever fires for a caller that omits it), the per-capability Router/policy registration (validated
+ * at import by assembleInstallation()'s policyRefs cross-check, fail-closed before the Worker can even answer),
+ * and Reliability Gate R4's trusted-provider gap (aresFor()/mojeDaneFor() below): that one is NOT a construction-
+ * time throw — deliberately, see the R4 comment — so nothing here can see it; index.ts reports it in
+ * /health/details as a non-required check instead (readiness.ts trustedProvidersCheck, fed by index.ts's own
+ * GATEWAY_WIRES_REAL_TRUSTED_PROVIDERS statement of what WorkflowInstance.wiring() passes).
  * Returns what a caller may want to report; throws with wirePlatform()'s own messages otherwise.
  */
 export function checkWiringPreconditions(o: { installation: Installation; secrets: SecretsSource; signingKeyPem: string | undefined }): { signing: Wiring["signing"]; models: Record<string, string> } {

@@ -63,7 +63,7 @@ import { buildOrchestrator, checkWiringPreconditions, COW_WORKSHOP, describeMode
 // RG2-E (2026-09-18): /live, /ready, /health/details — every decision is a pure function in readiness.ts (same
 // "index.ts cannot load under vitest" reason as alarm-scheduler.ts/fanout-retry.ts); this file only supplies the
 // I/O thunks (readinessProbes()/remoteHostProbes() below) and the three thin routes in fetch().
-import { assessReadiness, boundedRead, buildHealthDetails, missingBindings, runProbes, summarizeSelfTest, summarizeWatchdog, type ProbeSpec } from "./readiness.js";
+import { assessReadiness, boundedRead, buildHealthDetails, missingBindings, runProbes, summarizeSelfTest, summarizeWatchdog, trustedProvidersCheck, type ProbeSpec } from "./readiness.js";
 import { runSelfTest, requiredTestsFor, selfTestCapabilityForTick, SELF_TEST_CAPABILITIES, SELF_TEST_WORKFLOW_ID } from "./self-test.js";
 import { newSession, sendMessage, type WorkshopSession } from "./workshop.js";
 import { D1_AUDIT_DDL, D1_EVIDENCE_DDL, D1_R2_REF_DDL, d1Sql, DDL, evidenceMirrorOf, evidenceStoreOf, r2RefCounterOf, SqliteArtifacts, SqliteAudit, SqliteCaseStore, SqliteDurableJobStore, SqliteFanoutJobStore, SqliteIdempotencyStore, SqliteJournal, SqliteReviewTaskStore } from "./store.js";
@@ -208,9 +208,6 @@ const capabilitiesOf = async (fetcher: Fetcher, origin: string): Promise<{ ok: b
   }
 };
 
-/** Fixed-row idiom (same as self-test-state/certification-state below): /ready's D1 write probe replaces ONE row
- * with this id, so a polled /ready never grows the audit table. */
-const READINESS_PROBE_AUDIT_ID = "readiness-probe";
 /** R2 key /ready head()s — never written by anything; head() of an absent key answers null (reachable) and only
  * an unreachable bucket throws, so the probe is side-effect free. */
 const READINESS_PROBE_R2_KEY = "readiness-probe";
@@ -243,20 +240,22 @@ function readinessProbes(env: Env): ProbeSpec[] {
       },
     },
     {
-      // Read + write: `SELECT 1` proves the database answers, the fixed-row INSERT OR REPLACE proves it accepts
-      // writes (a read-only or quota-exhausted D1 would fail exactly the write copyOut() needs). Same idiom and
-      // column list as recordSelfTestSummary() below; the json is an AuditRecord-shaped object so the Deník
-      // renders it like any other row (toAuditLogRow). One row, replaced in place — no growth however often polled.
+      // READ-ONLY, deliberately: ensureD1Audit() (the DDL, cached after the first call) + `SELECT 1` prove the
+      // database binding answers within budget. The first cut of this probe also did a fixed-row INSERT OR REPLACE
+      // to prove D1 accepts writes; the RG2-E adversarial review (18.9.2026) showed why that cannot sit on a
+      // load-balancer-polled path: the row's fresh `at` on EVERY poll pinned it to the top of the Deník (auditLog()
+      // ORDER BY at DESC), re-emitted it on every /audit.json?after= live-tail poll and into every /audit.csv
+      // export, and cost one D1 write per poll (~17k writes/day per poller at 5 s against D1's 100k/day free
+      // quota) — the probe would have been the farm's single biggest writer. What a read-only probe CANNOT see
+      // (a quota-exhausted / read-only D1) is named as such in readiness.ts's NOT_OBSERVABLE_GLOBALLY rather
+      // than silently reported as fine; the first real write that fails surfaces per instance through that
+      // object's own copyOut() durable-job retries (RG2-A).
       name: "d1-audit",
       required: true,
       timeoutMs: READINESS_PROBE_TIMEOUT_MS,
       run: async () => {
         await ensureD1Audit(env.AUDIT);
         await env.AUDIT.prepare("SELECT 1").first();
-        const at = iso(new Date());
-        await env.AUDIT.prepare("INSERT OR REPLACE INTO audit (audit_id, at, kind, correlation_id, workflow_id, tenant_id, actor_id, capability, json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-          .bind(READINESS_PROBE_AUDIT_ID, at, "readiness-probe", null, null, null, "readiness", null, JSON.stringify({ kind: "readiness-probe", at, actorId: "readiness", details: { gitSha: env.GIT_SHA } }))
-          .run();
       },
     },
     {
@@ -305,10 +304,27 @@ function remoteHostProbes(env: Env): ProbeSpec[] {
   ];
 }
 
-/** /ready's answer (RG2-E): every required probe concurrently, assessed by readiness.ts. Never throws. */
+/** /ready's answer (RG2-E): every required probe concurrently, assessed by readiness.ts. Never throws. Runs the
+ * probes even while KILL_SWITCH=true (the switch is then the first blocker): every probe is read-only and cheap
+ * (one SELECT 1, one R2 head(), two synchronous checks), and an operator about to lift the switch wants
+ * /health/details to already say whether the farm would be ready once it is off. */
 async function readinessReport(env: Env) {
   return assessReadiness(await runProbes(readinessProbes(env)), { killSwitch: env.KILL_SWITCH === "true", gitSha: env.GIT_SHA, installation: INSTALLATION });
 }
+
+/**
+ * Reliability Gate R4's config gap, made visible (RG2-E adversarial review, 18.9.2026): WorkflowInstance.wiring()
+ * below passes NO `ares`/`mojeDane` adapter to wirePlatform() — the gateway has no real ARES / MOJE daně client
+ * yet — so on an installation whose profile has not opted into the fakes (allowUnconfiguredTrustedProviders)
+ * every cz.company.verify / cz.vat.verify dispatch FAILs TRUSTED_PROVIDER_NOT_CONFIGURED, permanently, by design
+ * (platform-wiring.ts's aresFor()/mojeDaneFor(): loud and named, never a fabricated answer; and never a
+ * construction-time throw, so checkWiringPreconditions() cannot and must not cover it). That is NOT a readiness
+ * blocker — a new Case is accepted and two capabilities degrade — so it is reported by /health/details only, as
+ * a non-required check (readiness.ts trustedProvidersCheck). The `false` here is the single source of truth for
+ * "no real adapter wired"; the day wiring() passes a real adapter, flip it in the same commit
+ * (tests/gw-readiness.test.ts traps wiring() against passing `ares:`/`mojeDane:` while this stays false).
+ */
+const GATEWAY_WIRES_REAL_TRUSTED_PROVIDERS = false;
 
 /** Merged across runs — owner's request 2026-09-09 ("nevím, jestli jsou zdravé, jen je zelené OK" / "kde
  * jsou slibované testy kraviček?" / "ale já chci vidět kontroly a i si je být schopen individuálně
@@ -2569,7 +2585,10 @@ export default {
     const url = new URL(request.url);
     // RG2-E: /live = the process is alive, nothing more. No I/O, no env lookups beyond vars, and deliberately
     // ABOVE the installation-mismatch check: a mis-deployed bundle is still a running process (that is /ready's
-    // and /health/details' problem to report — both sit below the check and fail closed with it).
+    // and /health/details' problem to report — both sit below the check and fail closed with it: a mismatched
+    // bundle answers BOTH with this 500 `{ error: "INSTALLATION_MISMATCH" }`, not a 503 with blockers and not
+    // /health/details' otherwise-always-200 report. Deliberate: a load balancer dropping the node on that 500 is
+    // the right outcome for a deployment that must not serve anything, and the body still names the cause).
     if (url.pathname === "/live") return Response.json({ ok: true, gitSha: env.GIT_SHA, installation: INSTALLATION });
     // Bundle and vars must name the same installation; anything else is a deployment mistake and stops here (fail-closed).
     if (env.INSTALLATION !== INSTALLATION) {
@@ -2597,6 +2616,11 @@ export default {
     // 200, it is a report, not a gate; reads only what is already persisted (last self-test, last watchdog
     // reconcile) plus a bounded /health of each remote host, and names what it CANNOT see (readiness.ts
     // NOT_OBSERVABLE_GLOBALLY). Neither runs a self-test or touches any WorkflowInstance.
+    // Both are unauthenticated exactly like /health and /version above, and both carry configuration detail a
+    // stranger should not read (blocker/reason strings are the raw internal messages — credential refs, model
+    // keys, D1 error text — plus open-incident texts and the git sha). That is acceptable ONLY because the whole
+    // hostname sits behind Cloudflare Access (wrangler.jsonc: a custom domain is the only way in); do NOT exempt
+    // these paths from Access for a load balancer or uptime prober — give it an Access service token instead.
     if (url.pathname === "/ready") {
       const report = await readinessReport(env);
       return Response.json(report, { status: report.ready ? 200 : 503 });
@@ -2608,7 +2632,8 @@ export default {
         boundedRead(() => latestSelfTestSummary(env), READINESS_PROBE_TIMEOUT_MS),
         boundedRead(() => allIncidents(env), READINESS_PROBE_TIMEOUT_MS),
       ]);
-      return Response.json(buildHealthDetails({ readiness, remoteHosts, lastSelfTest: summarizeSelfTest(selfTest), watchdog: summarizeWatchdog(incidents) }));
+      const trustedProviders = trustedProvidersCheck({ allowUnconfiguredTrustedProviders: installation.profile.allowUnconfiguredTrustedProviders, realAdaptersWired: GATEWAY_WIRES_REAL_TRUSTED_PROVIDERS });
+      return Response.json(buildHealthDetails({ readiness, remoteHosts, trustedProviders, lastSelfTest: summarizeSelfTest(selfTest), watchdog: summarizeWatchdog(incidents) }));
     }
     // Agent Registry (SEVERKA.md item 4): the descriptor's own declared endpoint (endpoints.capabilities), read-only,
     // no live Router round-trip needed — document.classify/document.validate/mail.ingest run in-process here.

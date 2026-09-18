@@ -5,6 +5,9 @@
 //                     Bounded and cheap.
 //   /health/details = why I am not ready / what is degraded. Always 200 (a report, not a gate). Honest about what
 //                     is NOT observable.
+// One exception to "always 200" and "503 with blockers", stated rather than hidden: index.ts's fetch() answers
+// EVERY route but /live with 500 `{ error: "INSTALLATION_MISMATCH" }` when the bundled installation and the vars
+// disagree — a mis-deployed bundle must serve nothing, and /ready and /health/details fail closed with it.
 // And the owner's guardrail for this item: "be careful that this does not turn into a giant monitoring project."
 //
 // Why its own file (same discipline as alarm-scheduler.ts/fanout-retry.ts): index.ts imports "cloudflare:workers"
@@ -114,15 +117,41 @@ export function assessReadiness(checks: readonly ProbeResult[], opts: { killSwit
  * fanout_job) and there is NO directory of instances — index.ts's rearmAlarm() doc comment says it verbatim:
  * "there is no directory of 'every WorkflowInstance currently WAITING(REVIEW)', each one is its own Durable
  * Object". The shared D1 audit trail only ever receives what each object chose to mirror (state transitions,
- * results), never its reservation/job tables. Anything below is therefore observable only from inside the one
+ * results), never its reservation/job tables. Everything below is therefore observable only from inside the one
  * object it belongs to (its own alarm() tick, or an operator opening its /workflow/<id> page) — not from here.
+ * The last entry is the one deliberate probe gap: /ready's d1-audit probe is read-only (index.ts says why a
+ * write per load-balancer poll was unacceptable), so D1 refusing writes is likewise seen first by an object.
  */
 export const NOT_OBSERVABLE_GLOBALLY: readonly { fact: string; reason: string }[] = [
   { fact: "pending durable_job / fanout_job rows", reason: "per-WorkflowInstance Durable Object SQLite (store.ts durable_job/fanout_job), no instance directory to enumerate" },
   { fact: "stale RESERVED idempotency rows", reason: "per-WorkflowInstance Durable Object SQLite (store.ts idempotency), reachable only by that object's own alarm()/reconcile (RG2-D)" },
   { fact: "oldest RUNNING step", reason: "each object's own journal table; D1 mirrors state transitions per instance but no global 'currently RUNNING' index exists" },
   { fact: "dead / gave-up fan-out jobs", reason: "fanout_job rows moved to DONE with lastError live only in their own object; the audited FAILED record is per instance, not aggregated" },
+  { fact: "D1 refusing writes (quota exhausted / read-only)", reason: "/ready's d1-audit probe is read-only by design (a write per poll would pin a probe row to the top of the Deník and burn D1's write quota); the first failing mirror write surfaces in its own object's copyOut() durable-job retries (RG2-A)" },
 ];
+
+/**
+ * Reliability Gate R4's config gap as a NON-required check, /health/details only (RG2-E adversarial review,
+ * 18.9.2026). wirePlatform() deliberately never throws over it (platform-wiring.ts aresFor()/mojeDaneFor():
+ * Approach B rejected — a throw would take every capability of the object down over a gap in two), so
+ * checkWiringPreconditions() cannot see it and /ready must not block on it: a new Case IS safely accepted, only
+ * cz.company.verify / cz.vat.verify degrade to FAILED/TRUSTED_PROVIDER_NOT_CONFIGURED. ok iff a real adapter is
+ * wired OR the installation has explicitly opted into the fakes (InstallationProfile.allowUnconfiguredTrustedProviders,
+ * what config/local-fakes sets on purpose). `realAdaptersWired` is index.ts's own statement about what its
+ * WorkflowInstance.wiring() passes — this function only reports it, it cannot verify it.
+ */
+export function trustedProvidersCheck(o: { allowUnconfiguredTrustedProviders: boolean | undefined; realAdaptersWired: boolean }): ProbeResult {
+  const name = "trusted-providers";
+  if (o.realAdaptersWired || o.allowUnconfiguredTrustedProviders === true) return { name, ok: true, required: false, ms: 0, timeoutMs: 0 };
+  return {
+    name,
+    ok: false,
+    required: false,
+    ms: 0,
+    timeoutMs: 0,
+    reason: "cz.company.verify / cz.vat.verify will FAIL TRUSTED_PROVIDER_NOT_CONFIGURED: no real ARES / MOJE daně adapter is wired and the installation has not opted into the fakes (profile.allowUnconfiguredTrustedProviders)",
+  };
+}
 
 /** Minimal shape of index.ts's SelfTestSummary (the `self-test-state` D1 row) this file needs — kept structural
  * so readiness.ts never imports index.ts. */
@@ -138,6 +167,9 @@ export type LastSelfTest = { at: string; passed: number; failed: number; skipped
 export function summarizeSelfTest(read: BoundedRead<SelfTestSummaryLike | undefined>): LastSelfTest {
   if (!read.ok) return { at: null, reason: `self-test-state row unreadable: ${read.reason}` };
   if (!read.value) return { at: null, reason: "self-test never ran on this farm (no self-test-state row)" };
+  // The row's JSON parsed (boundedRead guards that) but is not the shape recordSelfTestSummary() writes — a
+  // corrupted or hand-edited row. Report it; a throw here would be the one path that 500s /health/details.
+  if (!Array.isArray(read.value.fixtures)) return { at: null, reason: "self-test-state row malformed (no fixtures array)" };
   let passed = 0;
   let failed = 0;
   let skipped = 0;
@@ -152,25 +184,33 @@ export function summarizeSelfTest(read: BoundedRead<SelfTestSummaryLike | undefi
 export type OpenIncident = Pick<IncidentRecord, "key" | "level" | "text" | "firstSeenAt" | "lastSeenAt" | "occurrences"> & { acknowledgedAt?: string };
 
 export type WatchdogSummary =
-  | { level: WatchdogLevel; openIncidents: OpenIncident[]; asOf: string | null; source: string }
-  | { level: "UNKNOWN"; openIncidents: []; asOf: null; reason: string; source: string };
+  | { level: WatchdogLevel; effectiveLevel: WatchdogLevel; openIncidents: OpenIncident[]; asOf: string | null; source: string }
+  | { level: "UNKNOWN"; effectiveLevel: "UNKNOWN"; openIncidents: []; asOf: null; reason: string; source: string };
 
 const WATCHDOG_SOURCE =
-  "persisted watchdog-incident rows (D1) written by the last reconcile — every GET /farm render and every self-test cron tick; NOT recomputed here (computeWatchdog() needs the full FarmModel: ~17 D1/service-binding reads plus one Durable Object round trip per recent instance)";
+  "persisted watchdog-incident rows (D1) written by the last reconcile — every GET /farm render and every self-test cron tick; NOT recomputed here (computeWatchdog() needs the full FarmModel: ~17 D1/service-binding reads plus one Durable Object round trip per recent instance). `level` is the raw rule over every open incident (computeWatchdog(), what reconcile/alerting track); `effectiveLevel` ignores acknowledged ones (page.ts effectiveWatchdogLevel(), what a human sees on /farm)";
+
+/** The INCIDENT/DEGRADED/HEALTHY rule shared by computeWatchdog() and effectiveWatchdogLevel() (page.ts). */
+const levelOf = (open: readonly { level: OpenIncident["level"] }[]): WatchdogLevel => (open.some((i) => i.level === "INCIDENT") ? "INCIDENT" : open.length > 0 ? "DEGRADED" : "HEALTHY");
 
 /**
  * Argos's last persisted verdict, cheaply: the same INCIDENT/DEGRADED/HEALTHY rule computeWatchdog() (page.ts)
  * applies to live findings, applied to the still-open incidents reconcileIncidents() persisted from those
  * findings. Zero rows of any kind is honestly UNKNOWN (reconcile never ran), not HEALTHY. `asOf` is the newest
  * timestamp any row carries — the closest thing to "when Argos last looked" the rows can prove.
+ *
+ * Two levels, because the farm itself has two: `level` counts every open incident, acknowledged or not (the raw
+ * truth reconcileIncidents()/sendArgosAlerts() track); `effectiveLevel` drops acknowledged ones, exactly like
+ * page.ts's effectiveWatchdogLevel() that the /farm rollup shows — so a reader comparing this report with /farm
+ * is not left wondering why one says INCIDENT and the other DEGRADED. Same rule as page.ts, restated here
+ * (one line) rather than imported: readiness.ts keeps only type imports from page.js.
  */
 export function summarizeWatchdog(read: BoundedRead<readonly IncidentRecord[]>): WatchdogSummary {
-  if (!read.ok) return { level: "UNKNOWN", openIncidents: [], asOf: null, reason: `watchdog-incident rows unreadable: ${read.reason}`, source: WATCHDOG_SOURCE };
-  if (read.value.length === 0) return { level: "UNKNOWN", openIncidents: [], asOf: null, reason: "no watchdog-incident rows yet: Argos's reconcile has never run on this farm", source: WATCHDOG_SOURCE };
+  if (!read.ok) return { level: "UNKNOWN", effectiveLevel: "UNKNOWN", openIncidents: [], asOf: null, reason: `watchdog-incident rows unreadable: ${read.reason}`, source: WATCHDOG_SOURCE };
+  if (read.value.length === 0) return { level: "UNKNOWN", effectiveLevel: "UNKNOWN", openIncidents: [], asOf: null, reason: "no watchdog-incident rows yet: Argos's reconcile has never run on this farm", source: WATCHDOG_SOURCE };
   const open = read.value.filter((i) => !i.resolvedAt).map(({ key, level, text, firstSeenAt, lastSeenAt, occurrences, acknowledgedAt }) => ({ key, level, text, firstSeenAt, lastSeenAt, occurrences, ...(acknowledgedAt ? { acknowledgedAt } : {}) }));
-  const level: WatchdogLevel = open.some((i) => i.level === "INCIDENT") ? "INCIDENT" : open.length > 0 ? "DEGRADED" : "HEALTHY";
   const asOf = read.value.map((i) => i.resolvedAt ?? i.lastSeenAt).reduce<string | null>((max, at) => (max === null || at > max ? at : max), null);
-  return { level, openIncidents: open, asOf, source: WATCHDOG_SOURCE };
+  return { level: levelOf(open), effectiveLevel: levelOf(open.filter((i) => !i.acknowledgedAt)), openIncidents: open, asOf, source: WATCHDOG_SOURCE };
 }
 
 export interface HealthDetails {
@@ -182,13 +222,15 @@ export interface HealthDetails {
   /** Best-effort bounded GET of each bound Worker's own /health — reported, never a readiness blocker (see
    * index.ts's remoteHostProbes() doc comment for why). */
   remoteHosts: ProbeResult[];
+  /** Reliability Gate R4's config gap (trustedProvidersCheck above) — reported, never a readiness blocker. */
+  trustedProviders: ProbeResult;
   notObservableGlobally: readonly { fact: string; reason: string }[];
   gitSha: string;
   installation: string;
 }
 
 /** One plain object from injected observations — no I/O, always includes NOT_OBSERVABLE_GLOBALLY. */
-export function buildHealthDetails(o: { readiness: ReadinessReport; watchdog: WatchdogSummary; lastSelfTest: LastSelfTest; remoteHosts: readonly ProbeResult[] }): HealthDetails {
+export function buildHealthDetails(o: { readiness: ReadinessReport; watchdog: WatchdogSummary; lastSelfTest: LastSelfTest; remoteHosts: readonly ProbeResult[]; trustedProviders: ProbeResult }): HealthDetails {
   return {
     ready: o.readiness.ready,
     blockers: o.readiness.blockers,
@@ -196,6 +238,7 @@ export function buildHealthDetails(o: { readiness: ReadinessReport; watchdog: Wa
     watchdog: o.watchdog,
     lastSelfTest: o.lastSelfTest,
     remoteHosts: [...o.remoteHosts],
+    trustedProviders: o.trustedProviders,
     notObservableGlobally: NOT_OBSERVABLE_GLOBALLY,
     gitSha: o.readiness.gitSha,
     installation: o.readiness.installation,
