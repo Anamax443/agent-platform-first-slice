@@ -17,6 +17,7 @@ import type { IdempotencyRecord, IdempotencyStore } from "../../../../src/platfo
 import type { Instance, JournalStore } from "../../../../src/platform/journal.js";
 import type { ReviewTask, ReviewTaskStore } from "../../../../src/platform/review.js";
 import type { HandlerOutcome } from "../../../../src/platform/types.js";
+import type { FanoutJobRecord } from "./fanout-retry.js";
 
 /**
  * Durable Žlab (docs/M0-FACT-CONTRACT-V1.md část D, D-2): the platform's SqliteEvidenceStore runs unchanged over
@@ -84,6 +85,15 @@ export const DDL = [
   // dedup reservations on restart" — reusing ctx.storage.sql exactly as the tables above already do, no new
   // Durable Object class, binding or migration on a Worker that is processing live mail right now).
   "CREATE TABLE IF NOT EXISTS idempotency (dedup_key TEXT PRIMARY KEY, status TEXT NOT NULL, fingerprint TEXT NOT NULL, outcome_json TEXT, created_at TEXT NOT NULL)",
+  // Reliability Gate R3 (owner's second audit, 18.9.2026 — "background attachment fan-out relies on bare
+  // ctx.waitUntil(), not durable tracking"): the durable outbox fanOutAttachmentsIfAny() (index.ts) writes to
+  // before starting any AI-calling work and reads back on every alarm() tick, so an evicted-mid-fan-out object can
+  // find and resume the attachments it never finished instead of silently losing that work. PK is `workflow_id`,
+  // not a generated jobId — deliberate, see fanout-retry.ts's FanoutJobRecord doc comment for the full "why one
+  // row per object, not a generic multi-kind job table" reasoning. No CHECK constraint on `status`, matching every
+  // other status column in this DDL array (instance/case_record/review above) — validated at the TS layer only
+  // (fanout-retry.ts's FanoutJobRecord["status"] union), same discipline this file already holds throughout.
+  "CREATE TABLE IF NOT EXISTS fanout_job (workflow_id TEXT PRIMARY KEY, case_id TEXT NOT NULL, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, started_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_error TEXT)",
 ];
 
 /** Shared D1 trail: the same record shape, one row per audit record, insert-only. */
@@ -402,5 +412,44 @@ export class SqliteIdempotencyStore implements IdempotencyStore {
 
   async release(dedupKey: string): Promise<void> {
     this.sql.exec("DELETE FROM idempotency WHERE dedup_key = ?", dedupKey);
+  }
+}
+
+/**
+ * Durable backing for the R3 fan-out outbox (DDL comment above), same shape/placement convention as
+ * SqliteReviewTaskStore just above: one row per WorkflowInstance object (keyed by `workflow_id`, not a generated
+ * jobId — fanout-retry.ts's FanoutJobRecord doc comment explains why), replaced whole on every write.
+ * `get()`'s null -> undefined handling for `last_error` matches rowToArtifact()'s own convention above for
+ * `derived_from`/`producer`/etc. — a SQL NULL never becomes a `null` property on the returned object, it becomes
+ * an absent one, so FanoutJobRecord's `lastError?: string` stays an honest optional the way TypeScript expects.
+ */
+export class SqliteFanoutJobStore {
+  constructor(private readonly sql: SqlStorage) {}
+
+  get(workflowId: string): FanoutJobRecord | undefined {
+    const row = this.sql.exec("SELECT * FROM fanout_job WHERE workflow_id = ?", workflowId).toArray()[0];
+    if (!row) return undefined;
+    return {
+      workflowId: row.workflow_id as string,
+      caseId: row.case_id as string,
+      status: row.status as FanoutJobRecord["status"],
+      attempts: row.attempts as number,
+      startedAt: row.started_at as string,
+      updatedAt: row.updated_at as string,
+      ...(row.last_error ? { lastError: row.last_error as string } : {}),
+    };
+  }
+
+  set(job: FanoutJobRecord): void {
+    this.sql.exec(
+      "INSERT OR REPLACE INTO fanout_job (workflow_id, case_id, status, attempts, started_at, updated_at, last_error) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      job.workflowId,
+      job.caseId,
+      job.status,
+      job.attempts,
+      job.startedAt,
+      job.updatedAt,
+      job.lastError ?? null,
+    );
   }
 }
