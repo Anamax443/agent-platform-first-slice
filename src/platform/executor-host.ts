@@ -66,28 +66,60 @@ const SKEW_LOG_MS = 5_000;
  * router (§3.3 steps 1-4); effect-field validation and approval are §3.3 steps 5-6, the executor's own job per
  * the norm (F2: "Executor v kroku 5 řetězce odmítne command...") — never a router-level concern.
  */
+/**
+ * Full constructor shape. `idempotency` is REQUIRED here — the private constructor never defaults it — so the
+ * only way to get an in-memory fallback is to call `ExecutorHost.forTests()` explicitly (below), never silently.
+ */
+type ExecutorHostOpts = {
+  hostId: string;
+  clock: Clock;
+  audit: AuditTrail;
+  credentials: CredentialResolver;
+  /** Durable across the host's own restarts/evictions (Reliability Gate R1, then RG2-C: no more silent
+   * in-memory default — see ExecutorHost.production()/forTests() below). */
+  idempotency: IdempotencyStore;
+  /** Authority for §3.3 steps 5–6 (policy.ts's checkEffectFieldValidators/checkApproval). Optional so
+   * existing callers keep compiling; a capability with no policy.effectFieldValidators/approval.required
+   * is unaffected either way (both checks are no-ops when the policy doesn't declare them). */
+  policyFor?: (capability: string) => Policy;
+  /** Read-only lookup for resolving an approvalId (§3.3 step 6). Real callers pass ReviewService itself. */
+  reviewTasks?: { get(id: string): ReviewTask | undefined };
+};
+
 export class ExecutorHost {
   private readonly handlers = new Map<string, HostHandlerSpec>();
   private readonly idempotency: IdempotencyStore;
   readonly mutants: HostMutants = {};
   readonly skewLog: Array<{ messageId: string; skewMs: number }> = [];
 
-  constructor(
-    private readonly opts: {
-      hostId: string;
-      clock: Clock;
-      audit: AuditTrail;
-      credentials: CredentialResolver;
-      idempotency?: IdempotencyStore;
-      /** Authority for §3.3 steps 5–6 (policy.ts's checkEffectFieldValidators/checkApproval). Optional so
-       * existing callers keep compiling; a capability with no policy.effectFieldValidators/approval.required
-       * is unaffected either way (both checks are no-ops when the policy doesn't declare them). */
-      policyFor?: (capability: string) => Policy;
-      /** Read-only lookup for resolving an approvalId (§3.3 step 6). Real callers pass ReviewService itself. */
-      reviewTasks?: { get(id: string): ReviewTask | undefined };
-    },
-  ) {
-    this.idempotency = opts.idempotency ?? new InMemoryIdempotencyStore();
+  private constructor(private readonly opts: ExecutorHostOpts) {
+    this.idempotency = opts.idempotency;
+  }
+
+  /**
+   * RG2-C (2026-09-18 Reliability Gate audit): the only way to build an ExecutorHost for real production
+   * traffic. `idempotency` is required — no default, no fallback. This exact "optional idempotency, silent
+   * InMemoryIdempotencyStore fallback" shape already caused a real production gap TWICE: docs/POSUDKY.md's
+   * MAJOR 4 (apf-email-executor wired without it, silently non-durable) and R1 (mail.ingest's ExecutorHost
+   * inside platform-wiring.ts, fixed by explicitly threading a durable store through WiringOptions.idempotency).
+   * A comment documented the second near-miss; this factory makes a third occurrence a type error instead.
+   * Every real Cloudflare host (apf-document-host, apf-email-executor, and platform-wiring.ts's wirePlatform()
+   * for its ingest host when an installation supplies a durable store) must call this, never `forTests()`.
+   */
+  static production(opts: ExecutorHostOpts): ExecutorHost {
+    return new ExecutorHost(opts);
+  }
+
+  /**
+   * Explicit, greppable opt-in to RAM-only idempotency (or whatever store the caller does pass — most tests
+   * pass none and get the in-memory default). Plain unit tests and `src/slice.ts`'s test/reference composition
+   * are the normal callers; deploy/cloudflare/*'s own production hosts (apf-document-host, apf-email-executor)
+   * must never call this. The one named exception is platform-wiring.ts's wirePlatform(), whose ingestHost
+   * calls this only when an installation deliberately omits WiringOptions.idempotency (ephemeral/fakes-only
+   * installations) — see that call site's own doc comment for the full, deliberate rationale.
+   */
+  static forTests(opts: Omit<ExecutorHostOpts, "idempotency"> & { idempotency?: IdempotencyStore }): ExecutorHost {
+    return new ExecutorHost({ ...opts, idempotency: opts.idempotency ?? new InMemoryIdempotencyStore() });
   }
 
   private dedupKey(tenantId: string, handlerId: string, idempotencyKey: string): string {

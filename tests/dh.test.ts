@@ -94,7 +94,7 @@ function remoteHost(publicKeyPem: ReturnType<typeof generateKeyPair>["publicKey"
     { [host.STAMP_HANDLER_ID]: { [host.STAMP_CREDENTIAL]: "dms-secret" }, [archiveHandler.ARCHIVE_HANDLER_ID]: { [archiveHandler.ARCHIVE_CREDENTIAL]: "archive-secret" } },
     audit,
   );
-  const executor = new ExecutorHost({ hostId: host.descriptor.module, clock, audit, credentials });
+  const executor = ExecutorHost.forTests({ hostId: host.descriptor.module, clock, audit, credentials });
   executor.register(host.createStampHandler({ artifacts, dms: w.dms, credentials, clock }));
   executor.register(archiveHandler.createArchiveHandler({ artifacts, archive: w.archive, credentials, clock }));
   const grants = (capability: string): Policy => ({
@@ -453,7 +453,7 @@ function signedReceiver(w: ReturnType<typeof world>, artifacts: ArtifactWriter, 
     { [host.STAMP_HANDLER_ID]: { [host.STAMP_CREDENTIAL]: "dms-secret" }, [archiveHandler.ARCHIVE_HANDLER_ID]: { [archiveHandler.ARCHIVE_CREDENTIAL]: "archive-secret" } },
     audit,
   );
-  const executor = new ExecutorHost({ hostId: host.descriptor.module, clock, audit, credentials });
+  const executor = ExecutorHost.forTests({ hostId: host.descriptor.module, clock, audit, credentials });
   executor.register(host.createStampHandler({ artifacts, dms: w.dms, credentials, clock }));
   executor.register(archiveHandler.createArchiveHandler({ artifacts, archive: w.archive, credentials, clock }));
   const grants = (capability: string): Policy => ({

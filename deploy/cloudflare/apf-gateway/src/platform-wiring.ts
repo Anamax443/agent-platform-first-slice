@@ -216,11 +216,13 @@ export interface WiringOptions {
    */
   evidence?: { store: EvidenceStore; buildHash: string };
   /** R1 (Reliability Gate, 2026-09-18): backs mail.ingest's ExecutorHost dedup durably across this object's own
-   * restart. Absent = ExecutorHost's own `opts.idempotency ?? new InMemoryIdempotencyStore()` fallback
-   * (executor-host.ts:90) — every existing wirePlatform() caller that omits it (tests included) keeps compiling
-   * and behaving exactly as before. Does NOT dedup two independent deliveries of the same e-mail (each mints its
-   * own workflowId before any dedup key exists, index.ts's `startMailIntake()`) — that is a separate, deliberately
-   * out-of-scope gap (see store.ts's `idempotency` DDL comment). */
+   * restart. Absent = wirePlatform() itself calls `ExecutorHost.forTests()` for the ingest host instead of
+   * `.production()` (RG2-C, see that call site's own doc comment for the full rationale) — a fresh
+   * InMemoryIdempotencyStore per Wiring build, so every existing wirePlatform() caller that omits this option
+   * (tests included) keeps compiling and behaving exactly as before. Does NOT dedup two independent deliveries
+   * of the same e-mail (each mints its own workflowId before any dedup key exists, index.ts's
+   * `startMailIntake()`) — that is a separate, deliberately out-of-scope gap (see store.ts's `idempotency` DDL
+   * comment). */
   idempotency?: IdempotencyStore;
 }
 
@@ -371,7 +373,25 @@ export function wirePlatform(o: WiringOptions): Wiring {
   // `idempotency: o.idempotency` (R1, 2026-09-18): previously never passed, so this host's dedup ran on
   // ExecutorHost's own in-memory fallback and lost every RESERVED reservation across a restart of this object —
   // see the WiringOptions.idempotency doc comment above and store.ts's `idempotency` DDL comment for the trail.
-  const ingestHost = new ExecutorHost({ hostId: ingest.descriptor.module, clock: o.clock, audit: o.audit, credentials: ingestCredentials, policyFor: policy, idempotency: o.idempotency });
+  //
+  // RG2-C (2026-09-18): ExecutorHost's constructor no longer defaults idempotency at all — `production()`
+  // requires a real store, `forTests()` is the only place an in-memory one still appears, and it must be called
+  // by name. This is the ONE call site in the whole codebase that deliberately still allows the ephemeral,
+  // ExecutorHost.forTests()-style non-durable path in something that is not a plain unit test: wirePlatform()
+  // itself supports installations that opt into ephemeral dedup for the ingest host by omitting
+  // WiringOptions.idempotency (fakes/local installations) — a NAMED, visible exception, made explicit right
+  // here, not a silent default buried in ExecutorHost's constructor. tests/gw-platform-wiring-fanout.test.ts's
+  // "without a passed-in idempotency store (every pre-existing call site's shape), two independently-built
+  // wirings do NOT dedup — the pre-existing behavior is unchanged" test is what proves this branch is real,
+  // tested, intentional behavior, not an oversight — it must keep passing. In practice neither real installation
+  // takes this branch today: both farm-bass443 and local-fakes always pass a real store via
+  // deploy/cloudflare/apf-gateway/src/index.ts's own wirePlatform() call (`idempotency: this.idempotency`, a
+  // real SqliteIdempotencyStore) — verified by grepping every wirePlatform() call site in this repo, there is
+  // exactly one, and it always supplies `idempotency`. So this `else` branch exists for wirePlatform()'s own
+  // generality (a future caller, or this test file) rather than any live installation actually needing it.
+  const ingestHost = o.idempotency
+    ? ExecutorHost.production({ hostId: ingest.descriptor.module, clock: o.clock, audit: o.audit, credentials: ingestCredentials, policyFor: policy, idempotency: o.idempotency })
+    : ExecutorHost.forTests({ hostId: ingest.descriptor.module, clock: o.clock, audit: o.audit, credentials: ingestCredentials, policyFor: policy });
   // Same extractor as document.extract (below, Podatelna's binary uploads) — one implementation of "binary ->
   // readable text" regardless of which channel handed the farm the attachment.
   ingestHost.register(ingest.createIngestHandler({ artifacts: o.artifacts, clock: o.clock, extractor: new WorkersAiExtractor(o.ai) }));
