@@ -7,7 +7,7 @@
 // downstream never learns any of this happened — it keeps reading whatever artifact `$steps.ingest.payload
 // .artifactId` points to, exactly as it always has, for every channel.
 import { capabilityError, newEntityId, parseMimeMessage, StorageFull } from "../../platform/api.js";
-import type { ArtifactWriter, Clock, EntityId, FieldValue, HandlerOutcome, HostHandlerSpec } from "../../platform/api.js";
+import type { ArtifactWriter, Clock, EntityId, FieldValue, HandlerOutcome, HostHandlerSpec, ReconcileResult } from "../../platform/api.js";
 import type { DocumentExtractor, ExtractResult } from "../../adapters/extract.js";
 import descriptor from "./descriptor.json" with { type: "json" };
 import inputSchema from "./input.schema.json" with { type: "json" };
@@ -160,5 +160,43 @@ export function createIngestHandler(deps: IngestDeps): HostHandlerSpec {
         provenance: { producerComponent: descriptor.module, producerVersion: descriptor.componentVersion, derivedFrom: [stored.artifactId] },
       };
     },
+
+    /**
+     * RG2-D (2026-09-18, "stale RESERVED reconciliation"): ExecutorHost writes a RESERVED idempotency row before
+     * run() above executes (executor-host.ts's execute(), step 8) and only clears it (resolve/release) if run()
+     * returns normally (executor-host.ts, ~step 9-10). If the process is evicted/crashes between those two points,
+     * the row stays RESERVED forever — store.ts's own comment already says created_at is written but read by
+     * nothing — so every future retry under that key gets IDEMPOTENCY_IN_FLIGHT with no recovery path. This is the
+     * capability-specific half of the fix; orchestrator.ts's recover()/reconcile() (§5.1: bounded reconciliation,
+     * never a blind resend, then a real ReviewService task) already exists and is already invoked every alarm tick
+     * (deploy/cloudflare/apf-gateway/src/index.ts's alarm() -> runAlarmCycle()) — it just had nothing registered
+     * for "mail.ingest" (platform-wiring.ts's Wiring.reconcilers, see that file's own doc comment for the wiring
+     * half of this same fix).
+     *
+     * This reconciler is honestly, deliberately ALWAYS UNKNOWN — never SUCCEEDED, never FAILED, and never a
+     * TTL-based "assume it's fine after N minutes" guess (explicitly rejected: that cannot tell "the write never
+     * started" from "still safely in flight elsewhere" from "it happened and we just don't know it"). Contrast
+     * with email-executor/handler.ts's reconcile, which CAN return SUCCEEDED/FAILED because the external SMTP
+     * provider is an independent source of truth it can query by client reference (deps.smtp.status()). mail.ingest
+     * has no such independent witness: its only record of what it wrote is the ArtifactStore itself, and
+     * artifacts.ts's put()/derive() mint a brand-new artifactId on every call (ids.ts's newId("art")) — there is no
+     * content-addressed "find the artifact this idempotencyKey already produced" lookup anywhere in
+     * ArtifactReader/ArtifactWriter today (artifacts.ts, only get(artifactId) by an id you'd already have to
+     * already know). Building that lookup is real, separate architectural work (a content-addressed artifact
+     * layer) — deliberately not built here; this reconciler's permanent UNKNOWN is exactly the "cannot establish
+     * truth" rung of the owner's own recovery ladder (release on proven-not-happened / resolve-as-DONE on
+     * proven-happened / escalate on cannot-establish), not a placeholder that forgot the other two branches.
+     *
+     * What this turns the bug into: once the alarm-triggered recover() reaches this step, orchestrator.ts's
+     * reconcile() consults this reconciler `reconciliationBudget` times (default 3) back-to-back inside that ONE
+     * call — all attempts land in a single alarm tick, not one per tick — and then creates a real, visible, audited
+     * ReviewService task (reasonCode UNKNOWN_OUTCOME_UNRESOLVED) a human can
+     * act on — orchestrator.ts's resumeAfterReview() already lets a human's APPROVE there ("I confirmed by hand
+     * this mail was ingested") correctly resume the workflow. The idempotency row itself stays RESERVED even after
+     * that human resolution (reconcilerFor() only resolves/releases on SUCCEEDED/FAILED, never on UNKNOWN) — a
+     * documented, bounded residual risk (idempotency keys are workflow-instance-scoped, so a stuck row can never
+     * collide with a different instance), not something a future change to this function needs to fix.
+     */
+    reconcile: async (): Promise<ReconcileResult> => ({ status: "UNKNOWN" }),
   };
 }
