@@ -946,15 +946,22 @@ tento impuls znamená a zda vyžaduje další akci"). Discovery goal je běžný
 plán. LLM přijde **jen uvnitř krávy `intent.resolve`**, po žebříku vlastníka (pravidla → free → Haiku → silnější),
 nikdy ve Farmáři jako plánovači — deterministický `plan()` stojí 0 tokenů.
 
-**Ověřeno proti kódu 16. 9. 2026 — dnes invariant neplatí:** `apf-gateway/src/index.ts:672` mail → `mail-intake`
-natvrdo, `:1317` schránka R2 → `document-intake`, `:1746` formulář → pole `workflow` (kanál **vybírá** workflow);
-`contracts/facts.v1.json` má kanálově vázané klíče `mail.raw`/`mail.sender`/`mail.subject`; `index.ts:612/670`
-objekt instance = přesně jedno workflow (`already exists`) — **Case = WorkflowInstance zůstává dnešní produkční
-zjednodušení**: `src/platform/case.ts` (primitivum `Case`/`NormalizedImpulse`) od 16. 9. 2026 existuje a je
-testované (HANDOFF 175), ale žádná živá intake cesta jím zatím neprochází — `mailIntake()`/`intake()` pořád tvoří
-přímo `WorkflowInstance`, ne `Case`. Co už sedí: `### Canonical vstup/výstup` (IncomingArtifact stejný pro všechny vstupy),
-`Artifact.receivedFrom` (zárodek metadat kanálu), `mail.ingest` je de facto ingress adaptér. Návrh, co s tím a co
-dnešní slovník/planner/Žlab unesou: `docs/M0-FACT-CONTRACT-V1.md` část 0 (krůček 5).
+**Ověřeno proti kódu 16. 9. 2026 — invariant tehdy neplatil, `mailIntake()` (Commit 3, 18. 9. 2026) už Case staví:**
+`apf-gateway/src/index.ts:672` mail → `mail-intake` natvrdo, `:1317` schránka R2 → `document-intake`, `:1746`
+formulář → pole `workflow` (kanál **vybírá** workflow, beze změny — Case wiring na to nesahá); `contracts/facts.v1.json`
+má kanálově vázané klíče `mail.raw`/`mail.sender`/`mail.subject`; `index.ts:612/670` objekt instance = přesně jedno
+workflow (`already exists`), beze změny. **Case dnes žije vedle `WorkflowInstance`, ne místo něj**: `mailIntake()`
+po úspěšném `mail.ingest` staví `NormalizedImpulse` + `newCase()` synchronně (`createCaseForMailIntake()`),
+`fanOutAttachmentsIfAny()` každou spuštěnou `attachment-classify`/`attachment-extract` instanci přidá do stejného
+Case (`growCaseWithFanout()`, `addInstance()`, best-effort per příloha) a přepočítá agregovaný `Case.status`
+(`aggregateCaseStatus()` — RUNNING/WAITING dominují, jinak SUCCEEDED/PARTIAL/FAILED/CANCELLED nad statusy všech
+instancí). Úložiště je DO-lokální SQLite (`SqliteCaseStore`, `store.ts`), stejně jednoduché jako `instance`, bez
+D1 zrcadla (Case žije v témže objektu jako své instance — nic k dorovnávání napříč objekty). Čtení zvenčí:
+`GET /case/:id.json` (`:id` = workflowId mail-intake instance, ne `caseId` — Case úložiště je DO-lokální, není
+externí index `caseId → objekt`). `intake()`'s (Podatelna/formulář) cesta Case pořád netvoří — to je svůj vlastní
+budoucí krok. Co už sedí: `### Canonical vstup/výstup` (IncomingArtifact stejný pro všechny vstupy),
+`Artifact.receivedFrom` (zárodek metadat kanálu), `mail.ingest` je de facto ingress adaptér. Návrh:
+`docs/M0-FACT-CONTRACT-V1.md` část 0 (krůček 5).
 
 ## Roadmapa M0–M8 — od first-slice k prvnímu autonomně skládanému případu (15. 9. 2026)
 
@@ -972,7 +979,7 @@ a ověřeno živě (`gitSha`), ne jen `npm test`. „Prošlo unit testem" ≠ ho
 
 | M | Název | Hlavní exit | `## Pořadí` |
 |---|---|---|---|
-| **M0** | **Fact Contract v1** | `FactAddress` (klíč, scope, entityId mimo klíč), `EntityHash` s kontinuitou id podle obsahu, `AuthorityGrant` (domény v `authorities.json`, `EvidenceWriter` razítkuje, Dojička podle domény, TTL per doména), **durable Žlab** (DO SQLite synchronně + D1 insert-only zrcadlo, důvěra jen z podpisu). Návrh: **`docs/M0-FACT-CONTRACT-V1.md`** — čtyři části (invarianty, datový tvar, validace, adversarial), **schválen 15. 9. 2026** po čtyřech krůčcích. **Část D (durable Žlab) hotová a živě ověřená 15. 9. 2026** (HANDOFF 162–166: evidence v2 s domain separation, `SqliteEvidenceStore`, D1 zrcadlo + lookup referencí, import s lineage, živé zapojení — záznamy přežily restart objektu, D1 se dorovnává samo, dvě chyby chytil až živý test). **C/A/B/E hotové jako testované primitivy** (HANDOFF 169–175, 16. 9. 2026: C-1/C-2 autority, A-1/A-2/A-3 FactAddress+`impulse.*`, B-1 EntityHash, E-1 `Case`+`NormalizedImpulse`); zbývá živé zapojení `Case` do reálných intake cest | Posudek 16 punch list: durable Žlab ✅, domain separation (P1-12) ✅, TTL z policy (P1-10) → část C |
+| **M0** | **Fact Contract v1** | `FactAddress` (klíč, scope, entityId mimo klíč), `EntityHash` s kontinuitou id podle obsahu, `AuthorityGrant` (domény v `authorities.json`, `EvidenceWriter` razítkuje, Dojička podle domény, TTL per doména), **durable Žlab** (DO SQLite synchronně + D1 insert-only zrcadlo, důvěra jen z podpisu). Návrh: **`docs/M0-FACT-CONTRACT-V1.md`** — čtyři části (invarianty, datový tvar, validace, adversarial), **schválen 15. 9. 2026** po čtyřech krůčcích. **Část D (durable Žlab) hotová a živě ověřená 15. 9. 2026** (HANDOFF 162–166: evidence v2 s domain separation, `SqliteEvidenceStore`, D1 zrcadlo + lookup referencí, import s lineage, živé zapojení — záznamy přežily restart objektu, D1 se dorovnává samo, dvě chyby chytil až živý test). **C/A/B/E hotové jako testované primitivy** (HANDOFF 169–175, 16. 9. 2026: C-1/C-2 autority, A-1/A-2/A-3 FactAddress+`impulse.*`, B-1 EntityHash, E-1 `Case`+`NormalizedImpulse`); **Commit 3 (18. 9. 2026, HANDOFF nejnovější): `Case` živě zapojen do mail intake cesty** — `mailIntake()` staví `NormalizedImpulse`+`Case` po `mail.ingest`, fan-out přidává každou `attachment-classify`/`attachment-extract` instanci (`addInstance()`), nový agregovaný `Case.status` (`aggregateCaseStatus()`), `SqliteCaseStore` (DO-lokální, bez D1 zrcadla), čtení přes `GET /case/:id.json`; zbývá stejné zapojení pro `intake()` (Podatelna/formulář) | Posudek 16 punch list: durable Žlab ✅, domain separation (P1-12) ✅, TTL z policy (P1-10) → část C |
 | **M1** | **AI Credential & Usage Layer** | sjednotit cestu credentialů (`modelTable()` → `CredentialResolver`), `response.usage` do auditu, tier mapování v profilu; krok 0 = vlastník nastaví `ANTHROPIC_API_KEY`. Exit: přepnout provider/model bez změny krávy (dnes částečně přes `profile.json`). **Nález 15. 9. 2026 (HANDOFF 157):** klíč nastaven, organizace bez kreditu → 400 z API se mapuje na retryable `MODEL_UNAVAILABLE`, 3× retry, FAILED celé instance, **žádný fallback na free model** — M1 musí chyby klasifikovat (400/401/403 = konfigurační, neretryovatelné; 429/5xx = dependency) a při konfigurační chybě viditelně přepnout na fallback model. **Pravidlo vlastníka 15. 9. 2026 (definice tier mappingu):** primární model je **vždy bezplatný Workers AI**; placený (Claude Haiku, pak jiný levný nebo silnější LLM) jen jako **eskalace, když výsledek nestačí** — QUALITY chyba, neúplná extrakce, později skutečná confidence (dnes konstanta). Při selhání placeného zpět na free, viditelně v auditu. Žebřík žije v `profile.json` per capability, ne ve workflow ani v kódu krávy | Posudek 17 1-2/1-3/1-4 |
 | **M2** | **Invoice Understanding v2** | `invoice.extract/2`: hlavička, dodavatel, částky, `invoice.line × N` s identitou z M0; ISDOC deterministická strategie (jistota 1,0 + zlatý standard pro totéž PDF); `forEach` bounded krok; anonymizovaný korpus 30–50 faktur mimo repo (R2); metriky v `MEASUREMENT.md`. Exit: Žlab má správný canonical invoice včetně řádků a původu každého faktu | nová kráva → Admission Gate (3, 4) |
 | **M3** | **No-n8n Gate** | compile `plan → WorkflowDef`, `available` počítané ze Žlabu (hash + TTL + doména), živě. **Killer test bez BC:** (1) Žlab bez platné evidence `cz.company.verify` → plán obsahuje verify; (2) čerstvá evidence správné domény → verify z plánu zmizí; (3) prošlá / cizí tenant / špatná doména → verify se vrátí. Bez editace jediného workflow. Adversarial: podvržené `available` klíče | 5, 6 (skutečná `HttpAresAdapter`/`HttpMojeDaneAdapter` volání) |

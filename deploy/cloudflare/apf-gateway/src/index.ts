@@ -18,7 +18,8 @@ import type { SecretsSource } from "../../../../src/installation.js";
 import type { AuditRecord } from "../../../../src/platform/audit.js";
 import { auditRowsToCsv, type AuditCsvRow } from "../../../../src/platform/audit-csv.js";
 import { sha256Bytes, type Artifact } from "../../../../src/platform/artifacts.js";
-import { fanOutAttachments, summarizeFanoutOutcomes, type MailIngestAttachmentOutcome } from "../../../../src/platform/attachment-fanout.js";
+import { fanOutAttachments, summarizeFanoutOutcomes, type AttachmentFanoutOutcome, type MailIngestAttachmentOutcome } from "../../../../src/platform/attachment-fanout.js";
+import { addInstance, aggregateCaseStatus, newCase, type Case, type NormalizedImpulse } from "../../../../src/platform/case.js";
 import { iso, SystemClock, type Clock } from "../../../../src/platform/clock.js";
 import { platformError } from "../../../../src/platform/errors.js";
 import { newId } from "../../../../src/platform/ids.js";
@@ -27,7 +28,7 @@ import type { CapabilityRecord } from "../../../../src/platform/registry.js";
 import { Orchestrator, type WorkflowDef } from "../../../../src/platform/orchestrator.js";
 import { CertificationRegistry, deriveLifecycleStatus, type CertificationRecord, type LifecycleStatus } from "../../../../src/platform/certification.js";
 import { IdentityProvider } from "../../../../src/platform/gateway.js";
-import type { Instance } from "../../../../src/platform/journal.js";
+import type { Instance, InstanceStatus } from "../../../../src/platform/journal.js";
 import { ReviewService, type Decision } from "../../../../src/platform/review.js";
 import type { MessageEnvelope, ResultEnvelope } from "../../../../src/platform/types.js";
 import { WORKFLOW_NAMES, workflowDef } from "../../../../src/platform/workflow.js";
@@ -61,7 +62,7 @@ import { FACT_CATALOG } from "./fact-catalog-bundle.js";
 import { COW_WORKSHOP, describeModels, gatewayCatalog, modelAdapterFor, wirePlatform, type Wiring } from "./platform-wiring.js";
 import { runSelfTest, requiredTestsFor, selfTestCapabilityForTick, SELF_TEST_CAPABILITIES, SELF_TEST_WORKFLOW_ID } from "./self-test.js";
 import { newSession, sendMessage, type WorkshopSession } from "./workshop.js";
-import { D1_AUDIT_DDL, D1_EVIDENCE_DDL, d1Sql, DDL, evidenceMirrorOf, evidenceStoreOf, SqliteArtifacts, SqliteAudit, SqliteJournal, SqliteReviewTaskStore } from "./store.js";
+import { D1_AUDIT_DDL, D1_EVIDENCE_DDL, d1Sql, DDL, evidenceMirrorOf, evidenceStoreOf, SqliteArtifacts, SqliteAudit, SqliteCaseStore, SqliteJournal, SqliteReviewTaskStore } from "./store.js";
 import { registerDerived, type DerivedArtifactRegistration, type RegisterDerivedResult } from "./artifact-registration.js";
 import { createPrivateKey, createPublicKey } from "node:crypto";
 import { verifyEvidence, type Evidence } from "../../../../src/platform/evidence.js";
@@ -581,6 +582,9 @@ export class WorkflowInstance extends DurableObject<Env> {
   private readonly reviewStore: SqliteReviewTaskStore;
   /** Durable Žlab of this object (M0 D-5): sealed evidence in the same SQLite, mirrored to D1 by copyOut(). */
   private readonly evidenceStore: SqliteEvidenceStore;
+  /** Case wiring (Commit 3): groups this object's own mail-intake instance with its fanned-out attachment-
+   * classify/attachment-extract instances — DO-local only, same as `journal`, no D1 mirror (store.ts's DDL comment). */
+  private readonly caseStore: SqliteCaseStore;
   private wiringCache: Wiring | undefined;
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -591,6 +595,7 @@ export class WorkflowInstance extends DurableObject<Env> {
     this.artifacts = new SqliteArtifacts(ctx.storage.sql, this.clock);
     this.reviewStore = new SqliteReviewTaskStore(ctx.storage.sql);
     this.evidenceStore = evidenceStoreOf(ctx.storage.sql);
+    this.caseStore = new SqliteCaseStore(ctx.storage.sql);
   }
 
   /** Built on first use so that a broken wiring (missing secret) fails the intake with a message, not the object. */
@@ -689,10 +694,134 @@ export class WorkflowInstance extends DurableObject<Env> {
       details: { status: "RUNNING", receivedFrom: input.receivedFrom, signing: wiring.signing, keyId: wiring.keyId },
     });
     await orchestrator.run(inst.workflowId);
+    // Case wiring (Commit 3): synchronous, unlike fan-out below — building the NormalizedImpulse and the fresh
+    // Case is pure local SQLite work (no AI call, no remote host), so there is no reason to defer it to
+    // ctx.waitUntil() and risk GET /case/:id.json 404ing for a window after mailIntake() already answered.
+    this.createCaseForMailIntake(inst.workflowId, inst.tenantId);
     this.ctx.waitUntil(this.copyOut());
     this.ctx.waitUntil(this.fanOutAttachmentsIfAny(inst.workflowId, inst.tenantId, inst.correlationId, wiring));
     await this.rearmReviewAlarm();
     return this.view() as InstanceView;
+  }
+
+  /**
+   * mail.ingest's own step result (payload shape: src/components/mail-ingest/handler.ts), read out of the journal
+   * the same way recordClassifyResult() reads document.classify's — the payload lives only in this instance's own
+   * journal entry, there is no other channel for it. Shared by createCaseForMailIntake() (called synchronously,
+   * right after mail.ingest succeeds) and fanOutAttachmentsIfAny() (called later, in the background): one parsing
+   * implementation for the same journal read, not two independently-drifting copies of the same field list.
+   * Returns undefined when mail.ingest itself never reached SUCCEEDED — there is nothing to group or fan out yet.
+   */
+  private mailIngestPayload(workflowId: string): { sender?: string; subject?: string; attachmentArtifactIds: string[]; attachments: MailIngestAttachmentOutcome[] } | undefined {
+    const inst = this.journal.get(workflowId);
+    const step = inst?.steps.find((s) => s.capability === "mail.ingest" && s.status === "SUCCEEDED");
+    const payload = step?.result?.payload as { attachmentArtifactIds?: unknown; attachments?: unknown; sender?: { value?: unknown }; subject?: unknown } | undefined;
+    if (!payload) return undefined;
+    return {
+      ...(typeof payload.sender?.value === "string" ? { sender: payload.sender.value } : {}),
+      ...(typeof payload.subject === "string" ? { subject: payload.subject } : {}),
+      attachmentArtifactIds: Array.isArray(payload.attachmentArtifactIds) ? (payload.attachmentArtifactIds as string[]) : [],
+      attachments: Array.isArray(payload.attachments) ? (payload.attachments as MailIngestAttachmentOutcome[]) : [],
+    };
+  }
+
+  /**
+   * Case creation (Commit 3, M0-FACT-CONTRACT-V1.md część 0/E follow-up): builds the NormalizedImpulse every
+   * ingress channel is meant to normalize into (case.ts's own hard invariant — structurally no workflow/goal/
+   * intent field) and a fresh Case wrapping it plus this mail-intake instance as its first member. Deliberately
+   * unconditional on attachments existing (unlike fan-out below, which has nothing to do for a plain attachment-
+   * less mail) — a Case exists for every inbound e-mail, so "show me everything for this one impulse" always has
+   * an answer, even when there is nothing yet to grow it with.
+   *
+   * `impulse.artifacts` is one ArtifactRef per SUCCEEDED entry of mail.ingest's own `attachments[]` — the raw
+   * files the sender actually attached — NOT mail.ingest's own combined-text artifact (body + every attachment's
+   * extracted text concatenated into one document for document.classify to read): that combined artifact is this
+   * ONE channel's own processing convenience, not something "the impulse carries" in a channel-agnostic sense — a
+   * future Telegram message's NormalizedImpulse would carry its own N media files the same way, with no combined-
+   * text equivalent to include, and a future folder/batch upload's would carry its own N documents the same way.
+   * Keeping `artifacts` == "the discrete things the sender actually sent" (never a channel's own derived synthesis
+   * of them) is what keeps this construction read as a template another channel could copy, not mail-specific
+   * logic that happens to also produce a NormalizedImpulse.
+   *
+   * `text` is left unset on purpose (mail's closest equivalent — the subject line — goes into `metadata.subject`
+   * instead, a small channel-specific extra never used as an input into workflow choice per case.ts's own doc
+   * comment): NormalizedImpulse.text reads as short inline content the sender typed (a chat message's own text),
+   * and mail's actual body text already lives as its own artifact (mail.ingest's combined-text one) rather than
+   * needing a second, duplicate inline copy here.
+   */
+  private createCaseForMailIntake(workflowId: string, tenantId: string): void {
+    const ingest = this.mailIngestPayload(workflowId);
+    if (!ingest) return;
+    const inst = this.journal.get(workflowId);
+    if (!inst) return;
+    const impulse: NormalizedImpulse = {
+      impulseId: newId("imp"),
+      tenantId,
+      channel: "mail",
+      ...(ingest.sender ? { sender: ingest.sender } : {}),
+      receivedAt: iso(this.clock.now()),
+      artifacts: ingest.attachments.filter((a) => a.status === "SUCCEEDED" && typeof a.artifactId === "string").map((a) => ({ artifactId: a.artifactId as string })),
+      metadata: ingest.subject ? { subject: ingest.subject } : {},
+    };
+    const c = newCase({
+      caseId: newId("case"),
+      impulse,
+      instance: { workflowId: inst.workflowId, tenantId: inst.tenantId, status: inst.status, createdAt: inst.createdAt, updatedAt: inst.updatedAt },
+    });
+    this.caseStore.put(c);
+  }
+
+  /**
+   * Grows the mail-intake instance's own Case with every attachment-classify/attachment-extract instance
+   * fanOutAttachments() actually started (Commit 3) — best-effort PER ATTACHMENT, same discipline the fan-out
+   * driver itself already holds (one attachment's own failure never stops the others): a single addInstance()
+   * throwing (e.g. a duplicate workflowId, which should not happen but must never silently wipe out the rest of
+   * this loop's work if it somehow does) is caught and logged, never allowed to drop instances already added in
+   * this same pass. Recomputes the real Case-level aggregate status (aggregateCaseStatus()) over every member
+   * instance's CURRENT journal status once, after the whole batch — not the addInstance()-internal "status =
+   * last-added instance" simplification (case.ts's own doc comment on Case.status explains why that alone is not
+   * enough once a Case has more than one instance).
+   */
+  private growCaseWithFanout(workflowId: string, outcomes: readonly AttachmentFanoutOutcome[]): void {
+    const existing = this.caseStore.byWorkflowId(workflowId);
+    if (!existing) return; // createCaseForMailIntake() found nothing to build a Case from (mail.ingest never succeeded) — nothing to grow
+    let current = existing;
+    for (const outcome of outcomes) {
+      for (const member of [outcome.classify, outcome.extract]) {
+        if (!member) continue;
+        try {
+          current = addInstance(current, { workflowId: member.workflowId, tenantId: member.tenantId, status: member.status, updatedAt: member.updatedAt });
+        } catch (e) {
+          console.error(`[apf-gateway] case fan-out addInstance failed case=${current.caseId} workflowId=${member.workflowId}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+    }
+    const statuses = current.instances.map((wid): InstanceStatus => this.journal.get(wid)?.status ?? "RUNNING");
+    this.caseStore.put({ ...current, status: aggregateCaseStatus(statuses), updatedAt: iso(this.clock.now()) });
+  }
+
+  /**
+   * Read-only Case view for GET /case/:id.json (Commit 3): `workflowId` is the mail-intake instance's own id —
+   * the SAME "wf-..." id GET /workflow/:id.json accepts, already the name this Durable Object was created under
+   * (env.WORKFLOW.idFromName(workflowId) in startMailIntake()) — NOT the Case's own caseId. Case storage is
+   * DO-local only (no D1 mirror, store.ts's DDL comment), so there is no external caseId -> Durable Object index
+   * to route a bare caseId to the right object without building one (out of scope here); routing by the
+   * mail-intake workflowId the caller already has (shown throughout /farm, /workflow/:id, the audit trail) needs
+   * none. Every instance this Case has grown to (fan-out sub-instances included) lives in THIS SAME object's own
+   * journal, so unlike GET /workflow/:id.json asked for a SUB-instance's own workflowId (which 404s today — a
+   * live test 18.9.2026 confirmed it looks up a different, nonexistent object), building each instance's brief
+   * view here needs no further idFromName() round-trip at all, just this.journal.get() per id.
+   */
+  caseView(workflowId: string): { case: Case; instances: Array<{ workflowId: string; workflow?: string; workflowVersion?: string; status: InstanceStatus | "UNKNOWN"; createdAt?: string; updatedAt?: string }> } | null {
+    const c = this.caseStore.byWorkflowId(workflowId);
+    if (!c) return null;
+    const instances = c.instances.map((wid) => {
+      const i = this.journal.get(wid);
+      return i
+        ? { workflowId: i.workflowId, workflow: i.workflow, workflowVersion: i.workflowVersion, status: i.status, createdAt: i.createdAt, updatedAt: i.updatedAt }
+        : { workflowId: wid, status: "UNKNOWN" as const };
+    });
+    return { case: c, instances };
   }
 
   /**
@@ -719,11 +848,9 @@ export class WorkflowInstance extends DurableObject<Env> {
    * rearmReviewAlarm() call already ran.
    */
   private async fanOutAttachmentsIfAny(workflowId: string, tenantId: string, correlationId: string, wiring: Wiring): Promise<void> {
-    const inst = this.journal.get(workflowId);
-    const step = inst?.steps.find((s) => s.capability === "mail.ingest" && s.status === "SUCCEEDED");
-    const payload = step?.result?.payload as { attachmentArtifactIds?: unknown; attachments?: unknown } | undefined;
-    const attachmentArtifactIds = Array.isArray(payload?.attachmentArtifactIds) ? (payload.attachmentArtifactIds as string[]) : [];
-    const attachments = Array.isArray(payload?.attachments) ? (payload.attachments as MailIngestAttachmentOutcome[]) : [];
+    const ingest = this.mailIngestPayload(workflowId);
+    const attachmentArtifactIds = ingest?.attachmentArtifactIds ?? [];
+    const attachments = ingest?.attachments ?? [];
     if (attachments.length === 0) return;
     if (!wiring.evidence) {
       // WiringOptions.evidence absent (no durable Žlab for this installation) — fan-out has no evidence to plan()
@@ -741,6 +868,15 @@ export class WorkflowInstance extends DurableObject<Env> {
         },
         { tenantId, attachmentArtifactIds, correlationId },
       );
+      // Case wiring (Commit 3): group every attachment-classify/attachment-extract instance fanOutAttachments()
+      // just started into the same Case createCaseForMailIntake() built for this mail-intake instance. Its own
+      // failure must never corrupt or skip the fan-out audit summary right below — this method's real job — so
+      // it gets its own try/catch, not the outer one.
+      try {
+        this.growCaseWithFanout(workflowId, outcomes);
+      } catch (e) {
+        console.error(`[apf-gateway] case growth failed workflowId=${workflowId}: ${e instanceof Error ? e.message : String(e)}`);
+      }
       // Aggregate status is a genuine summary, not an optimistic default: SUCCEEDED only when every attachment
       // ingested AND every classify step succeeded — a mail where 2 of 3 attachments classified fine and 1
       // genuinely failed reports PARTIAL, not an unqualified SUCCEEDED (owner, 18.9.2026, after live external
@@ -2120,6 +2256,20 @@ export default {
       const view = await stub.view();
       if (!view) return Response.json({ error: "NOT_FOUND", workflowId: m[1] }, { status: 404 });
       return m[2] ? Response.json(view) : html(renderInstance(view));
+    }
+
+    // Case wiring (Commit 3): read-only observability over a whole mail impulse — the Case grouping mail-intake
+    // with every attachment-classify/attachment-extract instance it fanned out into, closing the gap a live test
+    // confirmed 18.9.2026 (a fan-out sub-instance's own workflowId 404s off GET /workflow/:id.json — it looks up
+    // a separate, nonexistent Durable Object by that id). `:id` is the mail-intake instance's own "wf-..."
+    // workflowId, same id GET /workflow/:id.json above accepts (caseView()'s own doc comment explains why: Case
+    // storage is DO-local, so routing needs the id that already names this object, not the Case's own caseId).
+    const caseRoute = /^\/case\/(wf-[A-Za-z0-9]+)\.json$/.exec(url.pathname);
+    if (caseRoute && request.method === "GET") {
+      const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(caseRoute[1] as string));
+      const view = await stub.caseView(caseRoute[1] as string);
+      if (!view) return Response.json({ error: "NOT_FOUND", workflowId: caseRoute[1] }, { status: 404 });
+      return Response.json(view);
     }
 
     if (url.pathname === "/audit.json" && request.method === "GET") {

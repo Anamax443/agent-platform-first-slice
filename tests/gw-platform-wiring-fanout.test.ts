@@ -179,20 +179,36 @@ describe("mailIntake() actually reaches fanOutAttachments() now (Gap 1) — sour
   // mailIntake() itself was actually wired to call it, not just that the pieces work in isolation. It is
   // deliberately a source-level assertion, not a runtime one — documented as such rather than dressed up as an
   // integration test it is not.
+  //
+  // Commit 3 (Case wiring) factored the mail.ingest journal read that used to sit inline in fanOutAttachmentsIfAny()
+  // out into its own mailIngestPayload() helper, shared with the new createCaseForMailIntake() — so the read
+  // itself is checked in mailIngestPayload()'s own body below, and fanOutAttachmentsIfAny()'s body is checked for
+  // calling into it (`this.mailIngestPayload(`) instead of containing the read inline.
   it("mailIntake()'s method body calls fanOutAttachments(...) and reads mail.ingest's own journaled step", () => {
     const src = readFileSync(join(__dirname, "..", "deploy", "cloudflare", "apf-gateway", "src", "index.ts"), "utf8");
     const start = src.indexOf("async mailIntake(");
     expect(start, "mailIntake() method not found in index.ts").toBeGreaterThan(-1);
+
+    const mailIngestPayloadStart = src.indexOf("\n  private mailIngestPayload(", start);
+    expect(mailIngestPayloadStart, "mailIngestPayload() not found after mailIntake()").toBeGreaterThan(start);
+    const mailIngestPayloadEnd = src.indexOf("\n  /**", mailIngestPayloadStart + 1);
+    const mailIngestPayloadBody = src.slice(mailIngestPayloadStart, mailIngestPayloadEnd > 0 ? mailIngestPayloadEnd : undefined);
+    expect(mailIngestPayloadBody).toContain('s.capability === "mail.ingest"');
+    expect(mailIngestPayloadBody).toContain("attachmentArtifactIds");
+
     const nextMethod = src.indexOf("\n  private async fanOutAttachmentsIfAny(", start);
     expect(nextMethod, "fanOutAttachmentsIfAny() not found after mailIntake()").toBeGreaterThan(start);
     const mailIntakeBody = src.slice(start, nextMethod);
     expect(mailIntakeBody).toContain("this.fanOutAttachmentsIfAny(");
+    // Commit 3: mailIntake() also creates the Case synchronously, before the fan-out background task starts.
+    expect(mailIntakeBody).toContain("this.createCaseForMailIntake(");
 
     const fanOutMethodEnd = src.indexOf("\n  /**", nextMethod + 1);
     const fanOutBody = src.slice(nextMethod, fanOutMethodEnd > 0 ? fanOutMethodEnd : undefined);
-    expect(fanOutBody).toContain('s.capability === "mail.ingest"');
-    expect(fanOutBody).toContain("attachmentArtifactIds");
+    expect(fanOutBody).toContain("this.mailIngestPayload(");
     expect(fanOutBody).toContain("fanOutAttachments(");
     expect(fanOutBody).toContain("FACT_CATALOG");
+    // Commit 3: every attachment-classify/attachment-extract instance actually started gets grouped into the Case.
+    expect(fanOutBody).toContain("this.growCaseWithFanout(");
   });
 });

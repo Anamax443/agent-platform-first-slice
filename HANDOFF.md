@@ -2,6 +2,83 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-18 (181) — Commit 3 (vlastníkovo "Case wiring"): `Case` živě zapojen do mail intake cesty, agregovaný `Case.status`, `SqliteCaseStore`, `GET /case/:id.json`
+
+**Co se zapojuje:** `src/platform/case.ts`'s `Case`/`NormalizedImpulse` (E-1, HANDOFF 175, testovaný primitiv) byl
+od 16. 9. 2026 hotový, ale žádná živá intake cesta jím neprocházela — case.ts's vlastní doc comment to říkal
+doslova ("apf-gateway's intake paths... still create a bare Instance directly; nothing here is wired into them
+yet"). Tenhle commit to zapojuje do `mail-intake` cesty (ne do `intake()`/Podatelny — to zůstává svůj vlastní
+budoucí krok, netknuto).
+
+**`deploy/cloudflare/apf-gateway/src/index.ts`**`mailIntake()` po úspěšném `mail.ingest` staví (synchronně, ne
+`ctx.waitUntil()` — čistá lokální SQLite práce, žádné AI volání) `NormalizedImpulse` (`channel: "mail"`, `sender`
+z `attachments[]`'s `sender.value`, `metadata.subject` z předmětu, `text` záměrně nevyplněno — tělo mailu už žije
+jako svůj vlastní artefakt) a `newCase()` (`createCaseForMailIntake()`, nová `mailIngestPayload()` sdílí čtení
+`mail.ingest`'s journal stepu s `fanOutAttachmentsIfAny()`, žádný druhý parse stejného payloadu). `impulse.artifacts`
+je **jeden `ArtifactRef` na každou SUCCEEDED položku `attachments[]`** — syrové přílohy, které odesílatel skutečně
+poslal — NE mail.ingest's vlastní `combinedText` artefakt (tenhle je čistě tohohle jednoho kanálu zpracovatelská
+pomůcka pro `document.classify`, ne něco, co "impuls nese" kanálově agnosticky); stejný tvar by beze změny
+zkopíroval budoucí Telegram (N médií) nebo dávkový upload složky (N dokumentů) — žádný kód navíc per kanál.
+`fanOutAttachmentsIfAny()` pak každou skutečně spuštěnou `attachment-classify`/`attachment-extract` instanci přidá
+do stejného Case (`growCaseWithFanout()`, `addInstance()` z case.ts, best-effort per příloha — jeden `addInstance()`
+throw nikdy nezahodí ostatní přidané instance v téže dávce, vlastní `try/catch` v cyklu) a přepočítá **agregovaný**
+`Case.status` nad statusy VŠECH členů z journalu (ne jen naposledy dotčenou instanci).
+
+**Agregovaný Case-level status** (`src/platform/case.ts`, nová `aggregateCaseStatus(statuses: readonly
+InstanceStatus[]): CaseStatus` — čistá, bez I/O, stejná disciplína jako `attachment-fanout.ts`'s
+`summarizeFanoutOutcomes()`) — `CaseStatus = InstanceStatus | "PARTIAL"`: znovupoužívá `InstanceStatus`'s vlastní
+slovník (RUNNING/WAITING/SUCCEEDED/FAILED/CANCELLED) beze změny a přidává přesně jednu novou hodnotu, `PARTIAL`,
+pro jediný agregovaný výsledek, který jedna instance nikdy mít nemůže (část uspěla, část selhala). Priorita:
+**RUNNING** vyhrává i nad už-FAILED sourozencem (Case ještě běží, verdikt počká), pak **WAITING** (nikdo neběží,
+někdo čeká na review), pak nad zbylými čistě terminálními statusy: všechny SUCCEEDED → **SUCCEEDED**, mix
+SUCCEEDED+FAILED/CANCELLED → **PARTIAL**, žádné SUCCEEDED → **FAILED** (nebo **CANCELLED**, jen když je
+CANCELLED doslova každá jedna instance). `Case.status`'s pole samo teď má typ `CaseStatus` místo `InstanceStatus`;
+`newCase()`/`addInstance()` samy (čisté funkce, bez přístupu do journalu) beze změny — jen ten, kdo journal má
+(`growCaseWithFanout()`), po dávce přepočítá skutečný agregát a uloží ho zpět přes `CaseStore.put()`.
+
+**`CaseStore`** (`src/platform/case.ts`, interface + `MemoryCaseStore`, stejný vzor jako `JournalStore`/`Journal`):
+`get`/`put`/`list` plus `byWorkflowId(workflowId)` — `fanOutAttachmentsIfAny()` zná jen mail-intake instance's
+vlastní workflowId, ne Case's `caseId`, a potřebuje najít "Case, kam tahle instance patří". **`SqliteCaseStore`**
+(`deploy/cloudflare/apf-gateway/src/store.ts`) přesně kopíruje `SqliteJournal`'s vzor — DO-lokální SQLite, dvě
+nové tabulky v `DDL` (`case_record`: `case_id` PK/`tenant_id`/`status`/`updated_at`/`json`; `case_instance_index`:
+`workflow_id` PK → `case_id`, indexovaný point-read lookup místo scanu přes `json`). **Bez D1 zrcadla** — stejný
+jednodušší vzor jako `instance` (Case žije v témže Durable Objectu jako všechny svoje instance, není co
+dorovnávat napříč objekty). Zapojeno jako `this.caseStore` vedle `this.journal`/`this.audit` v konstruktoru.
+
+**`GET /case/:id.json`** (nová route, styl/auth/error-handling přesně podle `GET /workflow/:id.json`): `:id` je
+**mail-intake instance's vlastní `wf-...` workflowId** (stejné id jako `/workflow/:id.json`), ne `caseId` —
+Case úložiště je DO-lokální bez D1 indexu, takže neexistuje externí `caseId → objekt` mapování bez stavby dalšího
+indexu (mimo rozsah tohohle commitu); routing přes workflowId, který volající už má (vidí ho všude — `/farm`,
+`/workflow/:id`, audit trail), žádný takový index nepotřebuje. Vrací `{ case: Case, instances: [...] }` — pro
+každou `instances[]` workflowId čte `this.journal.get()` LOKÁLNĚ (fan-out sub-instance žije ve stejném objektu
+jako svůj rodič — žádný další `idFromName()` lookup, na rozdíl od `/workflow/:id.json` na sub-instance's vlastní
+id, které dneska 404uje, protože hledá jiný, neexistující objekt — živě potvrzeno testem 18. 9. 2026).
+
+**Testy:** nový `tests/case-aggregate.test.ts` (13 testů) — `aggregateCaseStatus()` (9 testů: všechny RUNNING,
+všechny SUCCEEDED, mix SUCCEEDED+FAILED → PARTIAL, jednoinstanční Case pro každý status, RUNNING vs. FAILED
+sourozenec, WAITING dominance, jen-FAILED/CANCELLED mix, jen-CANCELLED, prázdný seznam odmítnut), `MemoryCaseStore`
+(1 test), a **CASE-GROUP-001** (3 testy) — skutečný scénář přes reálné `newCase()`/`addInstance()`/
+`fanOutAttachments()`/`aggregateCaseStatus()` nad reálným `Orchestrator`/`Journal` z `createSlice()` (žádný mock):
+INVOICE příloha klasifikuje, zapečetí evidenci, `plan()` vybere `invoice.extract`, výsledný Case agreguje na
+SUCCEEDED; mix SUCCEEDED + neexistující artefakt (BUSINESS chyba → `onFailed: review` → skutečný WAITING)
+agreguje na WAITING; `addInstance()` throw na jednu přílohu nezahodí ostatní přidané v téže dávce. `index.ts`'s
+vlastní `createCaseForMailIntake()`/`growCaseWithFanout()` nejdou natáhnout pod plain-Node vitest (DO třída,
+`"cloudflare:workers"` na module scope — stejné omezení, jaké si `tests/gw-platform-wiring-fanout.test.ts`'s
+poslední `describe()` blok už dokumentuje) — místo toho rozšířený zdrojový test v tomtéž souboru ověřuje, že
+`mailIntake()` volá `this.createCaseForMailIntake(`, `fanOutAttachmentsIfAny()` volá `this.mailIngestPayload(`
+i `this.growCaseWithFanout(`.
+
+**Mimo rozsah (vlastníkovo explicitní odložení, nedotčeno):** výběr/start workflow pro mail (mail-intake.v3.json,
+fan-out driver's `plan()`-based gating), jakákoliv goal-resolution/intent logika nebo "Current Case Projection"
+(vlastníkův budoucí Commit 4/5), Telegram/folder ingest kanál (žádný takový v kódu neexistuje, jen aby konstrukce
+`NormalizedImpulse` četla jako obecný vzor), Žlab tenant-vs-case scoping (EvidenceLedger zůstává přesně tak
+tenant-scoped jako dnes), `intake()`'s (Podatelna/formulář) vlastní Case zapojení.
+
+**Výsledek:** `npm test` 675/675 (dřív 662/662, +13 nových testů — 1 existující zdrojový test upraven kvůli
+refaktoru sdíleného čtení, ne kvůli zeslabení kontroly), `npm run typecheck` čistě, `npm run farm:check` čistě
+(včetně `tsc -p deploy/cloudflare/tsconfig.json`). Jen lokální change set — **žádný commit, push ani deploy**
+(explicitně mimo rozsah téhle úlohy).
+
 ## 2026-09-18 (180) — Commit 2B (vlastníkův schválený návrh, po živém externím posudku): ztracená příloha přestává být tichá — `attachments[]` kontrakt, agregovaný fan-out status, dvě zastaralé dokumentační mezery
 
 **Problém, který se opravuje:** `mail-ingest/handler.ts`'s příloha smyčka (řádky ~79–98 před touto změnou) při

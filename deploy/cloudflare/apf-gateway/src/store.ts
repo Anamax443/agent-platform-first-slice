@@ -6,6 +6,7 @@
 // the object keeps their metadata plus the text derived from them.
 import type { AuditKind, AuditRecord, AuditTrail } from "../../../../src/platform/audit.js";
 import { sha256, type Artifact, type ArtifactWriter } from "../../../../src/platform/artifacts.js";
+import type { Case, CaseStore } from "../../../../src/platform/case.js";
 import type { Clock } from "../../../../src/platform/clock.js";
 import { iso } from "../../../../src/platform/clock.js";
 import { newId } from "../../../../src/platform/ids.js";
@@ -38,6 +39,14 @@ export const evidenceMirrorOf = (db: D1Database): SqliteEvidenceMirror => new Sq
 export const DDL = [
   ...EVIDENCE_DDL,
   "CREATE TABLE IF NOT EXISTS instance (workflow_id TEXT PRIMARY KEY, status TEXT NOT NULL, updated_at TEXT NOT NULL, json TEXT NOT NULL)",
+  // Case (Commit 3, M0-FACT-CONTRACT-V1.md część 0/E follow-up): DO-local SQLite only, same simpler pattern as
+  // `instance` above — unlike Audit/Evidence, Instance has no D1 mirror, and a Case is 1:1 with the same object
+  // that already holds its member instances' own journal rows, so there is nothing to reconcile across objects
+  // that a mirror would earn its keep on. `case_instance_index` is the workflowId -> caseId lookup CaseStore's
+  // own interface calls for (byWorkflowId()) — kept as its own tiny table rather than a query over `json` so the
+  // lookup stays an indexed point read, not a per-call JSON scan.
+  "CREATE TABLE IF NOT EXISTS case_record (case_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL, json TEXT NOT NULL)",
+  "CREATE TABLE IF NOT EXISTS case_instance_index (workflow_id TEXT PRIMARY KEY, case_id TEXT NOT NULL)",
   "CREATE TABLE IF NOT EXISTS audit (seq INTEGER PRIMARY KEY AUTOINCREMENT, audit_id TEXT NOT NULL UNIQUE, at TEXT NOT NULL, kind TEXT NOT NULL, correlation_id TEXT, workflow_id TEXT, json TEXT NOT NULL, mirrored INTEGER NOT NULL DEFAULT 0)",
   "CREATE TABLE IF NOT EXISTS artifact (artifact_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, sha256 TEXT NOT NULL, received_at TEXT NOT NULL, received_from TEXT NOT NULL, derived_from TEXT, producer TEXT, content_type TEXT, byte_length INTEGER, location TEXT, name TEXT, bytes TEXT NOT NULL, copied INTEGER NOT NULL DEFAULT 0)",
   // Found 2026-09-08 (docs/OPONENTURA-BEZPECNOST-STABILITA.md #1): ReviewService's in-memory Map meant a decision
@@ -72,6 +81,46 @@ export class SqliteJournal implements JournalStore {
 
   list(): Instance[] {
     return this.sql.exec("SELECT json FROM instance ORDER BY updated_at").toArray().map((r) => parseJson<Instance>(r));
+  }
+}
+
+/**
+ * Durable Case store (Commit 3), exactly mirroring SqliteJournal's own constructor/pattern above: one object,
+ * one SQLite connection, no cross-object reconciliation. `put()` re-indexes every one of `c.instances` into
+ * `case_instance_index` on every call — c.instances is small (mail-intake plus a handful of fanned-out
+ * attachment-classify/attachment-extract instances, not hundreds), so re-writing the whole index on each growth
+ * step is simpler than diffing against what was indexed last time, and INSERT OR REPLACE makes it idempotent.
+ */
+export class SqliteCaseStore implements CaseStore {
+  constructor(private readonly sql: SqlStorage) {}
+
+  get(caseId: string): Case | undefined {
+    const row = this.sql.exec("SELECT json FROM case_record WHERE case_id = ?", caseId).toArray()[0];
+    return row ? parseJson<Case>(row) : undefined;
+  }
+
+  put(c: Case): void {
+    this.sql.exec(
+      "INSERT OR REPLACE INTO case_record (case_id, tenant_id, status, updated_at, json) VALUES (?, ?, ?, ?, ?)",
+      c.caseId,
+      c.tenantId,
+      c.status,
+      c.updatedAt,
+      JSON.stringify(c),
+    );
+    for (const workflowId of c.instances) {
+      this.sql.exec("INSERT OR REPLACE INTO case_instance_index (workflow_id, case_id) VALUES (?, ?)", workflowId, c.caseId);
+    }
+  }
+
+  list(): Case[] {
+    return this.sql.exec("SELECT json FROM case_record ORDER BY updated_at").toArray().map((r) => parseJson<Case>(r));
+  }
+
+  byWorkflowId(workflowId: string): Case | undefined {
+    const row = this.sql.exec("SELECT case_id FROM case_instance_index WHERE workflow_id = ?", workflowId).toArray()[0];
+    if (!row) return undefined;
+    return this.get(row.case_id as string);
   }
 }
 
