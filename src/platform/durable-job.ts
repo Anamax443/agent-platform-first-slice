@@ -81,3 +81,71 @@ export function jobNextWakeAt(job: JobStaleness | undefined, opts: { graceMs: nu
   if (!job || job.status === "DONE") return undefined;
   return Date.parse(job.updatedAt) + opts.graceMs;
 }
+
+/**
+ * Adversarial-review fix (2026-09-18, findings 2/3/5 against this same day's RG2-A change): the actual
+ * give-up-prevention decision for the copyout job, pulled out of index.ts's WorkflowInstance.recordCopyoutOutcome()
+ * so it is a pure function this repo's plain-Node vitest suite can call directly — index.ts imports
+ * "cloudflare:workers" and cannot be loaded there at all (this file's own header), so before this extraction
+ * recordCopyoutOutcome() was untested: a regression that reintroduced a give-up/cap branch directly inside it
+ * would have passed every test in the suite (durable-job.test.ts's existing "never gives up" cases only exercise
+ * jobRetryDecision()/jobNextWakeAt() above, which the FAN-OUT job uses via fanoutRetryDecision() — never this
+ * function).
+ *
+ * Two bugs this same extraction fixes, not just relocates:
+ *   - (finding 3, BLOCKING) `outcome.passFailed` — true whenever copyOut()'s own try block threw ANYWHERE, not
+ *     only from a ref-claim — now forces `outstanding` true on its own. Before, a D1 outage in copyOut()'s
+ *     ensureD1R2Ref() bootstrap call (thrown before copyOutArtifacts() even runs, so `anyRefClaimFailed` stays
+ *     `false`) on a pass where every held artifact was already `copied=1` computed `outstanding=false` — "nothing
+ *     to do" — even though this pass never actually confirmed a single r2_ref claim. rearmAlarm() then reads this
+ *     same fresh DONE/no-row state and can delete the instance's only remaining alarm, so the D1 outage is never
+ *     retried: exactly the C5 data-loss scenario this whole change exists to close.
+ *   - (finding 2, SHOULD_FIX) `lastError` used to be populated ONLY for a ref-claim failure, so a persistent
+ *     non-ref-claim failure (a thrown ensureD1Audit/AUDIT.batch/mirrorEvidence call) left the row's `lastError`
+ *     absent while `attempts` climbed — indistinguishable from ordinary healthy backoff. `passFailedError` now
+ *     fills `lastError` for that case too.
+ *
+ * Never gives up (contrast fanoutRetryDecision()'s own attempts cap, fanout-retry.ts): `attempts` only ever climbs
+ * and is carried forward unconditionally — no value of it, however large, makes `outstanding` false on its own.
+ * Returns `undefined` when there is nothing outstanding and no row already exists — the same "a fully clean
+ * instance that has never had trouble gets no row at all" contract the pre-extraction code had.
+ */
+export function nextCopyoutJobRecord(
+  existing: DurableJobRecord | undefined,
+  workflowId: string,
+  kind: string,
+  now: string,
+  outcome: {
+    /** At least one artifact's r2_ref claim threw this pass (copyOutArtifacts()'s own result). */
+    anyRefClaimFailed: boolean;
+    /** copyOut()'s own try block threw for ANY reason this pass — including before copyOutArtifacts() ever ran,
+     * or after it returned normally (an audit-mirror or evidence-mirror failure). Deliberately independent of
+     * `anyRefClaimFailed`: either can be true without the other. */
+    passFailed: boolean;
+    /** e.message (or String(e)) from the exception that set `passFailed` — surfaced via `lastError` when present
+     * and `anyRefClaimFailed` did not already claim that field for its own, more specific message. */
+    passFailedError?: string;
+    /** True when this instance still locally reports pending work regardless of this pass's own outcome — an
+     * uncopied artifact, an unmirrored audit row, or an unmirrored evidence row. */
+    outstandingWork: boolean;
+  },
+): DurableJobRecord | undefined {
+  const outstanding = outcome.anyRefClaimFailed || outcome.passFailed || outcome.outstandingWork;
+  if (!outstanding) {
+    return existing ? { ...existing, status: "DONE", updatedAt: now } : undefined;
+  }
+  const lastError = outcome.anyRefClaimFailed
+    ? "r2_ref claim failed for at least one artifact this pass"
+    : outcome.passFailed
+    ? `copyOut pass failed: ${outcome.passFailedError ?? "unknown error"}`
+    : undefined;
+  return {
+    workflowId,
+    kind,
+    status: "PENDING",
+    attempts: (existing?.attempts ?? 0) + 1,
+    startedAt: existing?.startedAt ?? now,
+    updatedAt: now,
+    ...(lastError ? { lastError } : {}),
+  };
+}

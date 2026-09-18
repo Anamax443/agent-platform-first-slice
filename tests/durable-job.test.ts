@@ -4,7 +4,7 @@
 // tested exactly once rather than twice. Style mirrors tests/gw-fanout-retry.test.ts's own fanoutRetryDecision()
 // tests, minus the give-up branch this file's own type (JobRetryDecision) has no room for.
 import { describe, expect, it } from "vitest";
-import { jobNextWakeAt, jobRetryDecision, type JobStaleness } from "../src/platform/durable-job.js";
+import { jobNextWakeAt, jobRetryDecision, nextCopyoutJobRecord, type DurableJobRecord, type JobStaleness } from "../src/platform/durable-job.js";
 
 const NOW = Date.parse("2026-09-18T12:00:00.000Z");
 const GRACE_MS = 60_000;
@@ -69,5 +69,120 @@ describe("jobNextWakeAt — the shared wake-time half of fanoutNextWakeAt(), no 
     // still satisfies it, proving jobNextWakeAt() cannot see (and so cannot be tripped by) that field.
     const wideRecord = { status: "PENDING" as const, updatedAt: new Date(NOW).toISOString(), attempts: 999_999 };
     expect(jobNextWakeAt(wideRecord, { graceMs: GRACE_MS })).toBe(NOW + GRACE_MS);
+  });
+});
+
+/**
+ * Adversarial-review fix (2026-09-18, finding 5 against RG2-A): nextCopyoutJobRecord() is the actual give-up
+ * decision index.ts's WorkflowInstance.recordCopyoutOutcome() delegates to — extracted here specifically so it has
+ * a direct test. Before this extraction, no test anywhere called it (it lived inline in index.ts, which imports
+ * "cloudflare:workers" and cannot be loaded under vitest at all), so a hypothetical regression reintroducing a
+ * give-up/cap branch directly into that decision would have passed the whole suite; the "never gives up" tests
+ * above only cover jobRetryDecision()/jobNextWakeAt(), which the FAN-OUT job uses, not this one.
+ */
+describe("nextCopyoutJobRecord — the copyout job's own give-up decision (never gives up, unlike fan-out's)", () => {
+  const NOW_ISO = new Date(NOW).toISOString();
+  const existingRow = (overrides: Partial<DurableJobRecord> = {}): DurableJobRecord => ({
+    workflowId: "wf-A",
+    kind: "copyout",
+    status: "PENDING",
+    attempts: 3,
+    startedAt: new Date(NOW - 5 * GRACE_MS).toISOString(),
+    updatedAt: new Date(NOW - GRACE_MS).toISOString(),
+    ...overrides,
+  });
+
+  it("nothing outstanding, no existing row -> undefined (a fully clean instance never gets a row at all)", () => {
+    const result = nextCopyoutJobRecord(undefined, "wf-A", "copyout", NOW_ISO, {
+      anyRefClaimFailed: false,
+      passFailed: false,
+      outstandingWork: false,
+    });
+    expect(result).toBeUndefined();
+  });
+
+  it("nothing outstanding, an existing PENDING row -> flips to DONE, attempts untouched", () => {
+    const existing = existingRow();
+    const result = nextCopyoutJobRecord(existing, "wf-A", "copyout", NOW_ISO, {
+      anyRefClaimFailed: false,
+      passFailed: false,
+      outstandingWork: false,
+    });
+    expect(result).toEqual({ ...existing, status: "DONE", updatedAt: NOW_ISO });
+  });
+
+  it("outstandingWork alone (an uncopied artifact, no failure this pass) -> stays PENDING, attempts increments, no lastError", () => {
+    const existing = existingRow({ attempts: 7 });
+    const result = nextCopyoutJobRecord(existing, "wf-A", "copyout", NOW_ISO, {
+      anyRefClaimFailed: false,
+      passFailed: false,
+      outstandingWork: true,
+    });
+    expect(result).toEqual({ workflowId: "wf-A", kind: "copyout", status: "PENDING", attempts: 8, startedAt: existing.startedAt, updatedAt: NOW_ISO });
+    expect(result?.lastError).toBeUndefined();
+  });
+
+  it("anyRefClaimFailed -> PENDING with the r2_ref-specific lastError message, even though outstandingWork is false", () => {
+    const result = nextCopyoutJobRecord(undefined, "wf-A", "copyout", NOW_ISO, {
+      anyRefClaimFailed: true,
+      passFailed: false,
+      outstandingWork: false,
+    });
+    expect(result).toEqual({ workflowId: "wf-A", kind: "copyout", status: "PENDING", attempts: 1, startedAt: NOW_ISO, updatedAt: NOW_ISO, lastError: "r2_ref claim failed for at least one artifact this pass" });
+  });
+
+  it("finding 3: passFailed alone (e.g. a D1 outage in ensureD1R2Ref(), thrown before any ref claim could even run) forces PENDING even though outstandingWork and anyRefClaimFailed are both false — this is the exact case that used to compute DONE and let rearmAlarm() delete the instance's last alarm", () => {
+    const result = nextCopyoutJobRecord(undefined, "wf-A", "copyout", NOW_ISO, {
+      anyRefClaimFailed: false,
+      passFailed: true,
+      passFailedError: "D1 unavailable",
+      outstandingWork: false,
+    });
+    expect(result?.status).toBe("PENDING");
+    expect(result?.lastError).toBe("copyOut pass failed: D1 unavailable");
+  });
+
+  it("finding 2: passFailed populates lastError even when it is the only signal (no ref-claim failure, no outstandingWork) — no longer indistinguishable from healthy backoff", () => {
+    const existing = existingRow({ attempts: 40, lastError: undefined });
+    const result = nextCopyoutJobRecord(existing, "wf-A", "copyout", NOW_ISO, {
+      anyRefClaimFailed: false,
+      passFailed: true,
+      passFailedError: "AUDIT.batch rejected",
+      outstandingWork: false,
+    });
+    expect(result?.attempts).toBe(41);
+    expect(result?.lastError).toBe("copyOut pass failed: AUDIT.batch rejected");
+  });
+
+  it("anyRefClaimFailed takes precedence over passFailed's lastError text when both are true in the same pass", () => {
+    const result = nextCopyoutJobRecord(undefined, "wf-A", "copyout", NOW_ISO, {
+      anyRefClaimFailed: true,
+      passFailed: true,
+      passFailedError: "some other error",
+      outstandingWork: false,
+    });
+    expect(result?.lastError).toBe("r2_ref claim failed for at least one artifact this pass");
+  });
+
+  it("never gives up no matter how large `attempts` already is — there is no cap branch here at all, unlike fanoutRetryDecision()'s FANOUT_MAX_ATTEMPTS", () => {
+    const existing = existingRow({ attempts: 999_999 });
+    const result = nextCopyoutJobRecord(existing, "wf-A", "copyout", NOW_ISO, {
+      anyRefClaimFailed: false,
+      passFailed: true,
+      passFailedError: "still failing",
+      outstandingWork: true,
+    });
+    expect(result?.status).toBe("PENDING"); // never "DONE" purely because attempts is huge, and there is no "gave up" status to return
+    expect(result?.attempts).toBe(1_000_000);
+  });
+
+  it("startedAt is preserved from the existing row, never reset, across repeated PENDING passes", () => {
+    const existing = existingRow({ startedAt: "2020-01-01T00:00:00.000Z" });
+    const result = nextCopyoutJobRecord(existing, "wf-A", "copyout", NOW_ISO, {
+      anyRefClaimFailed: true,
+      passFailed: false,
+      outstandingWork: false,
+    });
+    expect(result?.startedAt).toBe("2020-01-01T00:00:00.000Z");
   });
 });

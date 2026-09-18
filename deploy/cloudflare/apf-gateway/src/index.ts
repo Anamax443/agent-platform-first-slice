@@ -82,7 +82,7 @@ import { releaseR2Ref } from "../../../../src/platform/r2-refcount.js";
 // its own file rather than a private WorkflowInstance method (same "cannot load cloudflare:workers under vitest"
 // reason fanout-retry.ts/alarm-scheduler.ts already are).
 import { copyOutArtifacts } from "../../../../src/platform/copyout-artifacts.js";
-import type { DurableJobRecord } from "../../../../src/platform/durable-job.js";
+import { nextCopyoutJobRecord } from "../../../../src/platform/durable-job.js";
 import type { SqliteEvidenceStore } from "../../../../src/platform/evidence-sqlite.js";
 import type { ZlabStats } from "./page.js";
 import { visuallyStamp } from "./visual-stamp.js";
@@ -1705,11 +1705,26 @@ export class WorkflowInstance extends DurableObject<Env> {
    *   "An orphaned reference-claim, or a blob nobody deletes because a stale claim says it's still used, is a
    *   bounded, cosmetic leak. A live reference pointing at a blob some OTHER Case's purge() has already deleted is
    *   unbounded, undetectable data loss. Every ordering decision in this file resolves in favor of the leak."
+   *
+   * Adversarial-review fix (2026-09-18, finding 1, BLOCKING): this method used to `return` immediately when this
+   * object has no journal instance ("nothing to claim/copy on behalf of — every real call site already has an
+   * instance by now"). That was false for two real call sites: selfTest() (below) and copyOutNow() (the operator's
+   * `/farm/zlab/mirror` endpoint) both call this method specifically because the FIXED self-test Durable Object
+   * (SELF_TEST_WORKFLOW_ID) has no journal entry by design (self-test.ts's own comment: "no journal entry, no
+   * workflow instance created") while still holding real content-addressed artifacts (self-test.ts:235) and sealed
+   * evidence that need exactly this ordering-safe claim/copy/mirror path. The early return made both call sites
+   * silently no-op — the r2_ref claim this whole file exists to make durable was never even attempted for that
+   * instance, and `/farm/zlab/mirror` always reported an unchanged count instead of "the answer, or the error".
+   * A journal-less instance falls back to SELF_TEST_WORKFLOW_ID as its own identity here — the same fixed id
+   * self-test.ts already stamps on every message for artifacts this instance receives, so the r2_ref claim and the
+   * durable_job row are attributed to the identity that will actually be looked up under.
    */
   private async copyOut(): Promise<void> {
     const inst = this.journal.list()[0];
-    if (!inst) return; // nothing to claim/copy on behalf of — every real call site already has an instance by now
+    const workflowId = inst?.workflowId ?? SELF_TEST_WORKFLOW_ID;
     let anyRefClaimFailed = false;
+    let passFailed = false;
+    let passFailedError: string | undefined;
     try {
       const artifacts = this.artifacts.list();
       if (artifacts.length > 0) {
@@ -1722,11 +1737,16 @@ export class WorkflowInstance extends DurableObject<Env> {
             markCopied: (artifactId) => this.artifacts.markCopied(artifactId),
             onClaimFailed: (artifactId, e) =>
               console.error(
-                `[apf-gateway] copyOut: r2_ref claim failed artifactId=${artifactId} workflowId=${inst.workflowId} (ordering invariant: blob-write/markCopied skipped this pass, retried by the durable copyout job)`,
+                `[apf-gateway] copyOut: r2_ref claim failed artifactId=${artifactId} workflowId=${workflowId} (ordering invariant: blob-write/markCopied skipped this pass, retried by the durable copyout job)`,
+                e,
+              ),
+            onBlobWriteFailed: (artifactId, e) =>
+              console.error(
+                `[apf-gateway] copyOut: blob write failed artifactId=${artifactId} workflowId=${workflowId} (r2_ref claim already landed; artifact stays uncopied, retried by the durable copyout job)`,
                 e,
               ),
           },
-          { workflowId: inst.workflowId, artifacts, uncopiedIds },
+          { workflowId, artifacts, uncopiedIds },
         );
         anyRefClaimFailed = result.anyRefClaimFailed;
       }
@@ -1752,9 +1772,21 @@ export class WorkflowInstance extends DurableObject<Env> {
       // RG2-A: a failure anywhere above (a thrown R2 put(), a D1 batch() rejection) must not skip
       // recordCopyoutOutcome() below — that write is what keeps this pass's failure durably visible to the next
       // alarm tick instead of silently vanishing the way a bare, unguarded ctx.waitUntil() rejection would.
-      console.error(`[apf-gateway] copyOut: pass failed workflowId=${inst.workflowId} (durable copyout job stays PENDING; alarm() retries)`, e instanceof Error ? (e.stack ?? e.message) : String(e));
+      //
+      // Adversarial-review fix (2026-09-18, finding 3, BLOCKING): `passFailed` is set for ANY throw here, not only
+      // a ref-claim failure. Without it, a D1 outage in ensureD1R2Ref()'s bootstrap call above — thrown before
+      // copyOutArtifacts() ever runs, so `anyRefClaimFailed` stays its default `false` — on a pass where every
+      // held artifact was already `copied=1` computed "nothing outstanding": recordCopyoutOutcome() would flip
+      // this job DONE (or never create a row), rearmAlarm() would then delete this instance's only remaining
+      // alarm, and the never-actually-reconfirmed r2_ref claim would never be retried — reproducing the exact C5
+      // data-loss scenario this whole change exists to close. `passFailedError` also fixes finding 2 (SHOULD_FIX):
+      // a persistent non-ref-claim failure otherwise left `lastError` absent forever, indistinguishable in the row
+      // from ordinary healthy backoff.
+      passFailed = true;
+      passFailedError = e instanceof Error ? e.message : String(e);
+      console.error(`[apf-gateway] copyOut: pass failed workflowId=${workflowId} (durable copyout job stays PENDING; alarm() retries)`, e instanceof Error ? (e.stack ?? e.message) : String(e));
     } finally {
-      this.recordCopyoutOutcome(inst.workflowId, anyRefClaimFailed);
+      this.recordCopyoutOutcome(workflowId, { anyRefClaimFailed, passFailed, passFailedError });
       // Same discipline as fanOutAttachmentsIfAny()'s own trailing rearmAlarm() call (R3): a background task that
       // just durably changed a job row this object's alarm cares about must re-arm itself, rather than relying on
       // a caller that scheduled it via ctx.waitUntil() (and so already returned before this line ever runs).
@@ -1775,25 +1807,19 @@ export class WorkflowInstance extends DurableObject<Env> {
    * refs, the audit trail, the evidence mirror) — there is no acceptable give-up outcome, so `attempts` here is
    * observability only (surfaced via this row's own `lastError`/`attempts` if an operator ever inspects it),
    * never compared against a cap the way FanoutJobRecord.attempts is in fanoutRetryDecision().
+   *
+   * Adversarial-review fix (2026-09-18, finding 5): the actual give-up-prevention decision now lives in
+   * nextCopyoutJobRecord() (durable-job.ts) — a pure function, extracted specifically so it is testable under
+   * plain-Node vitest (this file imports "cloudflare:workers" and cannot be loaded there at all; see that
+   * function's own doc comment for why the pre-extraction code was architecturally untestable). This method is now
+   * just the thin I/O wrapper: gather this instance's own live counts, delegate the PENDING/DONE/no-row decision,
+   * and write whatever comes back.
    */
-  private recordCopyoutOutcome(workflowId: string, anyRefClaimFailedThisPass: boolean): void {
-    const outstanding = anyRefClaimFailedThisPass || this.artifacts.uncopied().length > 0 || this.audit.unmirrored().length > 0 || this.evidenceStore.unmirrored().length > 0;
+  private recordCopyoutOutcome(workflowId: string, outcome: { anyRefClaimFailed: boolean; passFailed: boolean; passFailedError?: string }): void {
     const existing = this.copyoutJobStore.get(workflowId, WorkflowInstance.COPYOUT_JOB_KIND);
-    const now = iso(this.clock.now());
-    if (outstanding) {
-      const job: DurableJobRecord = {
-        workflowId,
-        kind: WorkflowInstance.COPYOUT_JOB_KIND,
-        status: "PENDING",
-        attempts: (existing?.attempts ?? 0) + 1,
-        startedAt: existing?.startedAt ?? now,
-        updatedAt: now,
-        ...(anyRefClaimFailedThisPass ? { lastError: "r2_ref claim failed for at least one artifact this pass" } : {}),
-      };
-      this.copyoutJobStore.set(job);
-    } else if (existing) {
-      this.copyoutJobStore.set({ ...existing, status: "DONE", updatedAt: now });
-    }
+    const outstandingWork = this.artifacts.uncopied().length > 0 || this.audit.unmirrored().length > 0 || this.evidenceStore.unmirrored().length > 0;
+    const next = nextCopyoutJobRecord(existing, workflowId, WorkflowInstance.COPYOUT_JOB_KIND, iso(this.clock.now()), { ...outcome, outstandingWork });
+    if (next) this.copyoutJobStore.set(next);
   }
 }
 

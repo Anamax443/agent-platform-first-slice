@@ -18,6 +18,16 @@
 // whose claim throws is left exactly as it was (still `.uncopied()` if it was) for the NEXT copyOut() pass to
 // retry; this function never swallows a failed claim and proceeds to put()/markCopied() for that same artifact the
 // way the pre-RG2-A code effectively did (by registering refs only at the very end, after every put already ran).
+//
+// Adversarial-review fix (2026-09-18, finding 4 against this same file): the head()/put() step used to sit outside
+// any try/catch of its own, so an exception there (a real R2 outage, or a permanently-bad object) aborted this
+// entire `for` loop via the unhandled rejection — silently starving every artifact still to come in this same pass
+// of its own ref-claim attempt, even though each artifact's ordering is supposed to be independent of every
+// other's (this file's own per-artifact contract, above). head()/put()/markCopied() are now their own try/catch,
+// exactly mirroring the ref-claim one: a blob-write failure leaves that one artifact exactly as it was (still
+// `.uncopied()`, so the NEXT pass retries it — the same fate it already had before this fix) and `continue`s the
+// loop rather than propagating, so a bad artifact anywhere in the array can never mask an un-landed ref claim for
+// an artifact ordered after it.
 // The governing invariant, verbatim (index.ts's copyOut() doc comment, durable-job.ts's own header):
 //
 //   "An orphaned reference-claim, or a blob nobody deletes because a stale claim says it's still used, is a
@@ -43,6 +53,11 @@ export interface CopyOutArtifactsDeps {
    * claim degrades that one artifact to "retried next pass", it must never abort the artifacts still to come in
    * this same loop (each artifact's ordering is independent of every other's). */
   onClaimFailed: (artifactId: string, err: unknown) => void;
+  /** Observability only: called once per artifact whose blob-write step (head()/put()/markCopied()) threw this
+   * pass, AFTER its own r2_ref claim already landed. Never rethrown, same contract as onClaimFailed above — this
+   * artifact simply stays `.uncopied()` for the next pass to retry, and the loop continues to the next artifact
+   * (finding 4, 2026-09-18: this step used to be unguarded, so its exception aborted the whole remaining loop). */
+  onBlobWriteFailed: (artifactId: string, err: unknown) => void;
 }
 
 export interface CopyOutArtifactsResult {
@@ -75,13 +90,19 @@ export async function copyOutArtifacts(deps: CopyOutArtifactsDeps, input: { work
       continue; // ordering invariant: do not treat this key as "in use" (put/markCopied) until its claim durably lands
     }
     if (!input.uncopiedIds.has(a.artifactId)) continue; // already copied (binary original, or a prior pass)
-    if (!(await deps.blobs.head(key))) {
-      await deps.blobs.put(key, a.bytes, {
-        httpMetadata: { contentType: a.contentType ?? "text/plain; charset=utf-8" },
-        customMetadata: { artifactId: a.artifactId, receivedFrom: a.receivedFrom, receivedAt: a.receivedAt, ...(a.derivedFrom ? { derivedFrom: a.derivedFrom } : {}) },
-      });
+    try {
+      if (!(await deps.blobs.head(key))) {
+        await deps.blobs.put(key, a.bytes, {
+          httpMetadata: { contentType: a.contentType ?? "text/plain; charset=utf-8" },
+          customMetadata: { artifactId: a.artifactId, receivedFrom: a.receivedFrom, receivedAt: a.receivedAt, ...(a.derivedFrom ? { derivedFrom: a.derivedFrom } : {}) },
+        });
+      }
+      deps.markCopied(a.artifactId);
+    } catch (e) {
+      deps.onBlobWriteFailed(a.artifactId, e);
+      continue; // this artifact's ref claim already landed above; it just stays `.uncopied()` for the next pass —
+      // a bad artifact here must never starve the ref-claim attempts still to come for the rest of this array
     }
-    deps.markCopied(a.artifactId);
   }
   return { anyRefClaimFailed };
 }

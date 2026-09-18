@@ -53,21 +53,60 @@ describe("copyOutArtifacts — ordering invariant: claim the r2_ref BEFORE treat
     const blobs = fakeBlobs({ putThrows: true });
     const a = artifact();
     const markCopiedCalls: string[] = [];
+    const blobWriteFailures: string[] = [];
 
-    await expect(
-      copyOutArtifacts(
-        { refCounter: f.counter, blobs, markCopied: (id) => markCopiedCalls.push(id), onClaimFailed: () => { throw new Error("must not be called: the claim itself must succeed in this scenario"); } },
-        { workflowId: "wf-A", artifacts: [a], uncopiedIds: new Set([a.artifactId]) },
-      ),
-    ).rejects.toThrow("blob put failed");
+    // Finding 4 (2026-09-18): a blob-write failure no longer aborts the whole call — it is caught per artifact,
+    // just like a ref-claim failure, and the call resolves normally so the loop can continue to any artifacts
+    // still to come after this one in the same pass.
+    const result = await copyOutArtifacts(
+      {
+        refCounter: f.counter,
+        blobs,
+        markCopied: (id) => markCopiedCalls.push(id),
+        onClaimFailed: () => { throw new Error("must not be called: the claim itself must succeed in this scenario"); },
+        onBlobWriteFailed: (id) => blobWriteFailures.push(id),
+      },
+      { workflowId: "wf-A", artifacts: [a], uncopiedIds: new Set([a.artifactId]) },
+    );
 
+    expect(result.anyRefClaimFailed).toBe(false); // the ref claim itself succeeded — this is a blob-write failure, not a claim failure
+    expect(blobWriteFailures).toEqual([a.artifactId]);
     // The invariant this test exists to prove, verbatim from copyout-artifacts.ts's own header: even though the
-    // OVERALL call rejected (the blob write threw), the ref claim that ran BEFORE it already committed to D1 — a
-    // sibling Case releasing its own claim on the same key must still see this workflow's row and refuse to
-    // delete the shared blob (releaseR2Ref()'s safeToDelete would be false, not true).
+    // blob write threw, the ref claim that ran BEFORE it already committed to D1 — a sibling Case releasing its
+    // own claim on the same key must still see this workflow's row and refuse to delete the shared blob
+    // (releaseR2Ref()'s safeToDelete would be false, not true).
     expect(await f.counter.hasAny(r2KeyOf(a))).toBe(true);
     // And precisely because the write never finished, this artifact is correctly NOT marked copied — the next
     // copyOut() pass must still see it as uncopied and retry the blob write.
+    expect(markCopiedCalls).toEqual([]);
+    f.close();
+  });
+
+  it("finding 4: a blob-write failure for one artifact must not starve a LATER artifact's own ref-claim attempt in the same pass", async () => {
+    const f = await realRefCounter();
+    const blobs = fakeBlobs({ putThrows: true }); // every put() throws — the failing artifact stands in for a real R2 outage
+    const bad = artifact({ artifactId: "art-bad", sha256: "bad-sha" });
+    const good = artifact({ artifactId: "art-good", sha256: "good-sha" });
+    const markCopiedCalls: string[] = [];
+    const blobWriteFailures: string[] = [];
+
+    const result = await copyOutArtifacts(
+      {
+        refCounter: f.counter,
+        blobs,
+        markCopied: (id) => markCopiedCalls.push(id),
+        onClaimFailed: () => { throw new Error("must not be called: both claims succeed in this scenario"); },
+        onBlobWriteFailed: (id) => blobWriteFailures.push(id),
+      },
+      { workflowId: "wf-A", artifacts: [bad, good], uncopiedIds: new Set([bad.artifactId, good.artifactId]) },
+    );
+
+    expect(result.anyRefClaimFailed).toBe(false);
+    expect(blobWriteFailures).toEqual([bad.artifactId, good.artifactId]); // both blob writes fail, but BOTH were attempted
+    // The regression this test guards against: before the fix, `bad`'s unguarded put() throwing aborted the loop
+    // via an unhandled rejection, so `good`'s ref claim was never even attempted this pass.
+    expect(await f.counter.hasAny(r2KeyOf(bad))).toBe(true);
+    expect(await f.counter.hasAny(r2KeyOf(good))).toBe(true);
     expect(markCopiedCalls).toEqual([]);
     f.close();
   });
@@ -86,7 +125,7 @@ describe("copyOutArtifacts — ordering invariant: claim the r2_ref BEFORE treat
     const claimFailures: string[] = [];
 
     const result = await copyOutArtifacts(
-      { refCounter: throwingCounter, blobs, markCopied: (id) => markCopiedCalls.push(id), onClaimFailed: (id) => claimFailures.push(id) },
+      { refCounter: throwingCounter, blobs, markCopied: (id) => markCopiedCalls.push(id), onClaimFailed: (id) => claimFailures.push(id), onBlobWriteFailed: () => { throw new Error("must not be called"); } },
       { workflowId: "wf-A", artifacts: [a], uncopiedIds: new Set([a.artifactId]) },
     );
 
@@ -106,7 +145,7 @@ describe("copyOutArtifacts — ordering invariant: claim the r2_ref BEFORE treat
     const markCopiedCalls: string[] = [];
 
     const result = await copyOutArtifacts(
-      { refCounter: f.counter, blobs, markCopied: (id) => markCopiedCalls.push(id), onClaimFailed: () => { throw new Error("must not be called"); } },
+      { refCounter: f.counter, blobs, markCopied: (id) => markCopiedCalls.push(id), onClaimFailed: () => { throw new Error("must not be called"); }, onBlobWriteFailed: () => { throw new Error("must not be called"); } },
       { workflowId: "wf-A", artifacts: [a], uncopiedIds: new Set([a.artifactId]) },
     );
 
@@ -124,7 +163,7 @@ describe("copyOutArtifacts — ordering invariant: claim the r2_ref BEFORE treat
     const markCopiedCalls: string[] = [];
 
     const result = await copyOutArtifacts(
-      { refCounter: f.counter, blobs, markCopied: (id) => markCopiedCalls.push(id), onClaimFailed: () => { throw new Error("must not be called"); } },
+      { refCounter: f.counter, blobs, markCopied: (id) => markCopiedCalls.push(id), onClaimFailed: () => { throw new Error("must not be called"); }, onBlobWriteFailed: () => { throw new Error("must not be called"); } },
       { workflowId: "wf-A", artifacts: [a], uncopiedIds: new Set() }, // deliberately NOT in uncopiedIds
     );
 
