@@ -12,6 +12,7 @@ import { iso } from "../../../../src/platform/clock.js";
 import { newId } from "../../../../src/platform/ids.js";
 import { EVIDENCE_MIRROR_DDL, SqliteEvidenceMirror, type AsyncSql } from "../../../../src/platform/evidence-mirror.js";
 import { EVIDENCE_DDL, SqliteEvidenceStore } from "../../../../src/platform/evidence-sqlite.js";
+import { R2_REF_DDL, SqliteR2RefCounter } from "../../../../src/platform/r2-refcount.js";
 import type { Instance, JournalStore } from "../../../../src/platform/journal.js";
 import type { ReviewTask, ReviewTaskStore } from "../../../../src/platform/review.js";
 
@@ -35,6 +36,15 @@ export const d1Sql = (db: D1Database): AsyncSql => ({
 });
 
 export const evidenceMirrorOf = (db: D1Database): SqliteEvidenceMirror => new SqliteEvidenceMirror(d1Sql(db));
+
+/**
+ * Shared D1 reference count for R2 objects two Cases can come to share by content hash (Reliability Gate R0, found
+ * 2026-09-18 at commit 1d465dd: purge() deleted a shared R2 object with zero reference check — see
+ * src/platform/r2-refcount.ts's own header for the full finding and why this module is modeled on evidenceMirrorOf
+ * just above rather than on artifact-registration.ts's ambient-type split). Same one-line factory pattern.
+ */
+export const D1_R2_REF_DDL: string = R2_REF_DDL;
+export const r2RefCounterOf = (db: D1Database): SqliteR2RefCounter => new SqliteR2RefCounter(d1Sql(db));
 
 export const DDL = [
   ...EVIDENCE_DDL,
