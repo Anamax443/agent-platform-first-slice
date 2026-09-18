@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { checkEscapeHatches } from "../scripts/arch-dep.mjs";
 import { TENANT_A, tmpDir } from "./harness/index.js";
 import { projectRoot } from "./harness/paths.js";
 
@@ -66,5 +67,22 @@ describe("ARCH-DEP-001", () => {
     expect(r.out).toContain(`installation value "${TENANT_A}"`);
     expect(r.out).toContain("e-mail address");
     expect(r.out).toContain("public hostname");
+  });
+
+  it("the real config/ has no escape-hatch flag (allowUnconfiguredTrustedProviders, allowEphemeralIdempotency) set on any installation other than local-fakes", () => {
+    expect(checkEscapeHatches()).toEqual([]);
+  });
+
+  it("checkEscapeHatches flags a real installation opting into a fake-provider or ephemeral-idempotency escape hatch, but not local-fakes doing the same", () => {
+    const dir = tmpDir();
+    mkdirSync(join(dir, "farm-bass443"), { recursive: true });
+    writeFileSync(join(dir, "farm-bass443", "profile.json"), JSON.stringify({ allowUnconfiguredTrustedProviders: true, allowEphemeralIdempotency: true }));
+    mkdirSync(join(dir, "local-fakes"), { recursive: true });
+    writeFileSync(join(dir, "local-fakes", "profile.json"), JSON.stringify({ allowUnconfiguredTrustedProviders: true, allowEphemeralIdempotency: true }));
+    const violations = checkEscapeHatches(dir);
+    expect(violations).toHaveLength(2);
+    expect(violations.join("\n")).toContain('config/farm-bass443/profile.json: "allowUnconfiguredTrustedProviders": true');
+    expect(violations.join("\n")).toContain('config/farm-bass443/profile.json: "allowEphemeralIdempotency": true');
+    expect(violations.join("\n")).not.toContain("local-fakes/profile.json");
   });
 });

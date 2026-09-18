@@ -137,6 +137,36 @@ export function checkTree(srcDir, values = new Map()) {
   return violations;
 }
 
+/**
+ * Escape-hatch profile flags (owner rule, 18.9.2026, RG2-C adversarial-review follow-up): a boolean opt-in that
+ * tells wirePlatform()/platform-wiring.ts to accept something less safe than the fail-closed default (a fake
+ * trusted provider instead of TRUSTED_PROVIDER_NOT_CONFIGURED, an ephemeral non-durable idempotency store instead
+ * of a construction-time throw) exists only so config/local-fakes/ can BE the fakes. Nothing before this check
+ * stopped someone from flipping one "temporarily" on a real installation a year from now and it silently staying
+ * that way — this makes that a hard config-time failure instead of a code-review hope.
+ */
+const ESCAPE_HATCH_FLAGS = ["allowUnconfiguredTrustedProviders", "allowEphemeralIdempotency"];
+const ESCAPE_HATCH_ALLOWED_INSTALLATION = "local-fakes";
+
+/** Pure check over config/<installation>/profile.json files. Returns violations as strings; empty means clean. */
+export function checkEscapeHatches(configDir = join(repoRoot, "config")) {
+  const out = [];
+  if (!existsSync(configDir)) return out;
+  for (const name of readdirSync(configDir)) {
+    const dir = join(configDir, name);
+    if (!statSync(dir).isDirectory()) continue;
+    const profileFile = join(dir, "profile.json");
+    if (!existsSync(profileFile)) continue;
+    const p = JSON.parse(readFileSync(profileFile, "utf8"));
+    for (const flag of ESCAPE_HATCH_FLAGS) {
+      if (p[flag] === true && name !== ESCAPE_HATCH_ALLOWED_INSTALLATION) {
+        out.push(`config/${name}/profile.json: "${flag}": true, but only config/${ESCAPE_HATCH_ALLOWED_INSTALLATION}/ may set it (it exists to BE the fakes) — a real installation must stay fail-closed`);
+      }
+    }
+  }
+  return out;
+}
+
 /** Base wrangler configs are code: no routes (they come from config/<installation>/farm.json) and no installation literal. */
 export function checkWranglerConfigs(farmDir, values = new Map()) {
   const out = [];
@@ -164,7 +194,10 @@ if (invokedDirectly) {
     ? [explicit]
     : [join(repoRoot, "src"), ...(existsSync(farmDir) ? readdirSync(farmDir).map((d) => join(farmDir, d, "src")).filter((d) => existsSync(d)) : [])];
   const violations = trees.flatMap((t) => checkTree(t, values));
-  if (!explicit) violations.push(...checkWranglerConfigs(farmDir, values));
+  if (!explicit) {
+    violations.push(...checkWranglerConfigs(farmDir, values));
+    violations.push(...checkEscapeHatches());
+  }
   if (violations.length) {
     console.error(`ARCH-DEP-001 FAILED (${violations.length}):`);
     for (const v of violations) console.error("  " + v);
