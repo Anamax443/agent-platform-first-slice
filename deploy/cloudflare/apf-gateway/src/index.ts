@@ -711,15 +711,23 @@ export class WorkflowInstance extends DurableObject<Env> {
    * right after mail.ingest succeeds) and fanOutAttachmentsIfAny() (called later, in the background): one parsing
    * implementation for the same journal read, not two independently-drifting copies of the same field list.
    * Returns undefined when mail.ingest itself never reached SUCCEEDED — there is nothing to group or fan out yet.
+   *
+   * Also surfaces `artifactId` — mail.ingest's own combined-text artifact (handler.ts's `combinedText`: the mail
+   * body plus every attachment's extracted text, joined into one document) — as of Commit 4 (18.9.2026, response
+   * to a live external audit; see case.ts's `NormalizedImpulse.content` doc comment for the full "why"). Before
+   * this change `payload.artifactId` was read only by document.classify/invoice.extract's own capability inputs
+   * ("$steps.ingest.payload.artifactId", channel-agnostic by handler.ts's own design) — this method itself never
+   * surfaced it, so createCaseForMailIntake() below had no way to put it on the Case at all.
    */
-  private mailIngestPayload(workflowId: string): { sender?: string; subject?: string; attachmentArtifactIds: string[]; attachments: MailIngestAttachmentOutcome[] } | undefined {
+  private mailIngestPayload(workflowId: string): { sender?: string; subject?: string; artifactId?: string; attachmentArtifactIds: string[]; attachments: MailIngestAttachmentOutcome[] } | undefined {
     const inst = this.journal.get(workflowId);
     const step = inst?.steps.find((s) => s.capability === "mail.ingest" && s.status === "SUCCEEDED");
-    const payload = step?.result?.payload as { attachmentArtifactIds?: unknown; attachments?: unknown; sender?: { value?: unknown }; subject?: unknown } | undefined;
+    const payload = step?.result?.payload as { artifactId?: unknown; attachmentArtifactIds?: unknown; attachments?: unknown; sender?: { value?: unknown }; subject?: unknown } | undefined;
     if (!payload) return undefined;
     return {
       ...(typeof payload.sender?.value === "string" ? { sender: payload.sender.value } : {}),
       ...(typeof payload.subject === "string" ? { subject: payload.subject } : {}),
+      ...(typeof payload.artifactId === "string" ? { artifactId: payload.artifactId } : {}),
       attachmentArtifactIds: Array.isArray(payload.attachmentArtifactIds) ? (payload.attachmentArtifactIds as string[]) : [],
       attachments: Array.isArray(payload.attachments) ? (payload.attachments as MailIngestAttachmentOutcome[]) : [],
     };
@@ -741,13 +749,19 @@ export class WorkflowInstance extends DurableObject<Env> {
    * text equivalent to include, and a future folder/batch upload's would carry its own N documents the same way.
    * Keeping `artifacts` == "the discrete things the sender actually sent" (never a channel's own derived synthesis
    * of them) is what keeps this construction read as a template another channel could copy, not mail-specific
-   * logic that happens to also produce a NormalizedImpulse.
+   * logic that happens to also produce a NormalizedImpulse. (Now reachable, instead, via NormalizedImpulse's own
+   * `content` field — see case.ts.)
    *
-   * `text` is left unset on purpose (mail's closest equivalent — the subject line — goes into `metadata.subject`
-   * instead, a small channel-specific extra never used as an input into workflow choice per case.ts's own doc
-   * comment): NormalizedImpulse.text reads as short inline content the sender typed (a chat message's own text),
-   * and mail's actual body text already lives as its own artifact (mail.ingest's combined-text one) rather than
-   * needing a second, duplicate inline copy here.
+   * `text` is left unset on purpose — not because the body has nowhere to go (it does now, see below), but
+   * because mail has no short inline sender-typed message the way a chat channel would: the closest equivalent,
+   * the subject line, stays in `metadata.subject`, never promoted to `text` (case.ts's own doc comment reads
+   * `text` as "short inline content the sender typed directly", which a subject line is not). Until Commit 4
+   * (18.9.2026) this comment claimed the body was merely "reachable elsewhere, not duplicated here" — true but
+   * incomplete, since "elsewhere" meant only the mail-intake instance's own journal entry, not the Case itself; a
+   * live external audit flagged that gap (case.ts's `NormalizedImpulse.content` doc comment has the full story).
+   * As of this change, the actual body+attachments content (mail.ingest's own combined-text artifact,
+   * `ingest.artifactId` below) is reachable from the Case via the new `content` field, not only through the
+   * mail-intake instance's own journal entry as before.
    */
   private createCaseForMailIntake(workflowId: string, tenantId: string): void {
     const ingest = this.mailIngestPayload(workflowId);
@@ -761,6 +775,7 @@ export class WorkflowInstance extends DurableObject<Env> {
       ...(ingest.sender ? { sender: ingest.sender } : {}),
       receivedAt: iso(this.clock.now()),
       artifacts: ingest.attachments.filter((a) => a.status === "SUCCEEDED" && typeof a.artifactId === "string").map((a) => ({ artifactId: a.artifactId as string })),
+      ...(ingest.artifactId ? { content: { artifactId: ingest.artifactId } } : {}),
       metadata: ingest.subject ? { subject: ingest.subject } : {},
     };
     const c = newCase({

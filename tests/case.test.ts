@@ -68,8 +68,29 @@ describe("CASE-002 addInstance is append-only", () => {
 
 describe("CASE-003 NormalizedImpulse structurally carries no workflow/goal/intent field", () => {
   it("the only fields on an impulse are the ones part 0 named — no route/workflow/goal key exists to smuggle a decision through", () => {
-    const i = impulse({ sender: "a@b.cz", text: "hello", thread: "t-1", metadata: { foo: "bar" } });
-    expect(Object.keys(i).sort()).toEqual(["artifacts", "channel", "impulseId", "metadata", "receivedAt", "sender", "tenantId", "text", "thread"].sort());
+    const i = impulse({ sender: "a@b.cz", text: "hello", thread: "t-1", metadata: { foo: "bar" }, content: { artifactId: "art-1" } });
+    expect(Object.keys(i).sort()).toEqual(["artifacts", "channel", "content", "impulseId", "metadata", "receivedAt", "sender", "tenantId", "text", "thread"].sort());
+  });
+});
+
+// Commit 4 (18.9.2026, live external audit finding — see case.ts's NormalizedImpulse.content doc comment and
+// index.ts's createCaseForMailIntake()/mailIngestPayload() for the full "why"): `content` is the one new field
+// this commit adds, a single optional ArtifactRef distinct from `artifacts` (the discrete things the sender
+// actually sent) — these two tests close the exact test-surface gap the audit's own evidence chain flagged (no
+// existing test exercised impulse.content construction end-to-end): that it is genuinely optional, and that it
+// round-trips through newCase() unchanged, mirroring how CASE-001 already asserts the impulse round-trips.
+describe("CASE-004 content, when present, is a plain ArtifactRef distinct from artifacts", () => {
+  it("an impulse built with no override has content undefined — the field is optional, not silently defaulted", () => {
+    const i = impulse();
+    expect(i.content).toBeUndefined();
+  });
+
+  it("when supplied, content round-trips through newCase() unchanged, alongside an unrelated non-empty artifacts[]", () => {
+    const withContent = impulse({ artifacts: [{ artifactId: "art-attachment-1" }], content: { artifactId: "art-combined-1" } });
+    const c = newCase({ caseId: "case-1", impulse: withContent, instance: instance() });
+    expect(c.impulse.content).toEqual({ artifactId: "art-combined-1" });
+    expect(c.impulse.artifacts).toEqual([{ artifactId: "art-attachment-1" }]);
+    expect(c.impulse).toEqual(withContent);
   });
 });
 
