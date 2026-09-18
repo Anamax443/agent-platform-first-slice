@@ -22,6 +22,18 @@ export interface ArtifactRef {
  * impulse, it never determines intent/goal/workflow). Structurally has no workflow/goal/intent field — an
  * ingress adapter cannot smuggle a routing decision through it even by mistake (same defense as EvidenceClaim
  * having no tenantId field for a cow to fill in).
+ *
+ * `content`, when a channel populates it, is that channel's own single normalized full-text representation of
+ * this impulse's readable content, when the channel needs to derive one — distinct from `artifacts` (the
+ * discrete things the sender actually sent) and from `text` (short inline content the sender typed directly,
+ * e.g. a chat message body). A channel that derives a combined/joined document from several inputs (mail: body
+ * + every attachment's extracted text, one artifact) points `content` at that artifact instead of duplicating
+ * it into `text` or smuggling it into `artifacts`. Added 18.9.2026 (Commit 4, in response to a live external
+ * audit's finding that the mail channel's own combined-body-and-attachments artifact — mail.ingest's
+ * payload.artifactId, handler.ts's `combinedText` — was reachable only via the mail-intake instance's own
+ * journal entry, not from the Case/NormalizedImpulse itself, forcing any future channel-agnostic consumer such
+ * as intent.resolve or CurrentCaseProjection back into per-instance journal parsing that case.ts/index.ts's own
+ * design explicitly tries to keep out of the channel-agnostic layer).
  */
 export interface NormalizedImpulse {
   readonly impulseId: string;
@@ -31,6 +43,7 @@ export interface NormalizedImpulse {
   readonly receivedAt: string;
   readonly text?: string;
   readonly artifacts: readonly ArtifactRef[];
+  readonly content?: ArtifactRef;
   readonly thread?: string;
   readonly metadata: Readonly<Record<string, string>>;
 }

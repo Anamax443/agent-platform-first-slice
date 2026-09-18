@@ -195,9 +195,23 @@ describe("mailIntake() actually reaches fanOutAttachments() now (Gap 1) — sour
     const mailIngestPayloadBody = src.slice(mailIngestPayloadStart, mailIngestPayloadEnd > 0 ? mailIngestPayloadEnd : undefined);
     expect(mailIngestPayloadBody).toContain('s.capability === "mail.ingest"');
     expect(mailIngestPayloadBody).toContain("attachmentArtifactIds");
+    // Commit 4 (18.9.2026, live external audit finding, see case.ts's NormalizedImpulse.content doc comment):
+    // mailIngestPayload() must actually read the combined-text artifact id out of mail.ingest's own payload —
+    // otherwise createCaseForMailIntake() below has nothing to put on NormalizedImpulse.content.
+    expect(mailIngestPayloadBody).toContain("typeof payload.artifactId");
+
+    // createCaseForMailIntake()'s own body — the next method after mailIngestPayload() — must in turn read
+    // `ingest.artifactId` (mailIngestPayload()'s newly-surfaced field) into the impulse literal it builds, or
+    // the wiring added above is dead: mailIngestPayload() would know the artifact id but nothing downstream
+    // would ever put it on the Case.
+    const createCaseStart = src.indexOf("\n  private createCaseForMailIntake(", mailIngestPayloadEnd);
+    expect(createCaseStart, "createCaseForMailIntake() not found after mailIngestPayload()").toBeGreaterThan(mailIngestPayloadEnd);
 
     const nextMethod = src.indexOf("\n  private async fanOutAttachmentsIfAny(", start);
     expect(nextMethod, "fanOutAttachmentsIfAny() not found after mailIntake()").toBeGreaterThan(start);
+    const createCaseForMailIntakeBody = src.slice(createCaseStart, nextMethod);
+    expect(createCaseForMailIntakeBody).toContain("ingest.artifactId");
+
     const mailIntakeBody = src.slice(start, nextMethod);
     expect(mailIntakeBody).toContain("this.fanOutAttachmentsIfAny(");
     // Commit 3: mailIntake() also creates the Case synchronously, before the fan-out background task starts.
