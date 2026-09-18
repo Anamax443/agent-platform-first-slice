@@ -8,7 +8,7 @@
 // .artifactId` points to, exactly as it always has, for every channel.
 import { capabilityError, parseMimeMessage, StorageFull } from "../../platform/api.js";
 import type { ArtifactWriter, Clock, FieldValue, HandlerOutcome, HostHandlerSpec } from "../../platform/api.js";
-import type { DocumentExtractor } from "../../adapters/extract.js";
+import type { DocumentExtractor, ExtractResult } from "../../adapters/extract.js";
 import descriptor from "./descriptor.json" with { type: "json" };
 import inputSchema from "./input.schema.json" with { type: "json" };
 import outputSchema from "./output.schema.json" with { type: "json" };
@@ -26,6 +26,18 @@ export interface IngestDeps {
   clock: Clock;
   extractor: DocumentExtractor;
 }
+
+/** Non-silent per-attachment outcome (owner, 18.9.2026, after live external review: a failed attachment must be
+ * a visible, structured Case-level fact, not a silent gap someone has to notice by counting). Reuses
+ * ExtractResult's own error vocabulary (adapters/extract.ts) for the ok:false branch rather than inventing a
+ * parallel one; STORAGE_FULL/UNEXPECTED_ERROR cover the two catch{} cases the loop below already distinguished
+ * only in a comment. attachmentArtifactIds[] stays a DERIVED/compatibility view over this array (see handler
+ * below) — nothing that already reads it changes. */
+type ExtractErrorCode = Extract<ExtractResult, { ok: false }>["code"];
+export type AttachmentErrorCode = ExtractErrorCode | "STORAGE_FULL" | "UNEXPECTED_ERROR";
+export type AttachmentOutcome =
+  | { index: number; filename: string; contentType: string; status: "SUCCEEDED"; artifactId: string }
+  | { index: number; filename: string; contentType: string; status: "FAILED"; errorCode: AttachmentErrorCode };
 
 /** Deterministic header parse: first blank line ends the headers; only From and Subject are read, everything stays data. */
 export function parseHeaders(rawMail: string): { from?: string; subject?: string } {
@@ -74,28 +86,41 @@ export function createIngestHandler(deps: IngestDeps): HostHandlerSpec {
       // bytes stay reachable on the immutable original regardless (GET /workflow/:id/attachment/:n re-parses it).
       // Owner's principle 17.9.2026: "co nejvíce převést do MDfile a dle toho hledat" — the invoice content usually
       // lives in the attachment, not the one-line cover note in the body, so classification (and later extraction)
-      // needs the fullest available text, not just the body. Each attachment's extracted text is kept as its own
-      // artifact too (attachmentArtifactIds) — informational, e.g. for a future "N attachments, converted" display.
-      const attachmentArtifactIds: string[] = [];
+      // needs the fullest available text, not just the body.
+      // Owner, 18.9.2026 (after live external review): best-effort-per-attachment stays exactly as is — one bad
+      // attachment must never fail the whole mail — but a failure must become a visible, structured Case-level
+      // fact instead of a silent gap someone has to notice by counting. Every parsed attachment therefore gets
+      // exactly one entry in `attachments` below, SUCCEEDED or FAILED; attachmentArtifactIds/attachmentTexts are
+      // still populated only for the SUCCEEDED ones (same values, same order as before this change).
+      const attachments: AttachmentOutcome[] = [];
       const attachmentTexts: { name: string; text: string }[] = [];
       for (const a of parsed.attachments) {
+        const name = a.filename ?? `attachment-${a.index}`;
         try {
-          const name = a.filename ?? `attachment-${a.index}`;
           if (isTextish(a.contentType)) {
             const text = new TextDecoder().decode(a.bytes);
-            attachmentArtifactIds.push(deps.artifacts.derive(stored.artifactId, text, "mail-ingest:parseMimeMessage").artifactId);
+            const artifactId = deps.artifacts.derive(stored.artifactId, text, "mail-ingest:parseMimeMessage").artifactId;
             attachmentTexts.push({ name, text });
+            attachments.push({ index: a.index, filename: name, contentType: a.contentType, status: "SUCCEEDED", artifactId });
             continue;
           }
           const extracted = await deps.extractor.extract({ name, bytes: a.bytes, contentType: a.contentType });
           if (extracted.ok) {
-            attachmentArtifactIds.push(deps.artifacts.derive(stored.artifactId, extracted.text, "mail-ingest:workers-ai-toMarkdown").artifactId);
+            const artifactId = deps.artifacts.derive(stored.artifactId, extracted.text, "mail-ingest:workers-ai-toMarkdown").artifactId;
             attachmentTexts.push({ name, text: extracted.text });
+            attachments.push({ index: a.index, filename: name, contentType: a.contentType, status: "SUCCEEDED", artifactId });
+          } else {
+            attachments.push({ index: a.index, filename: name, contentType: a.contentType, status: "FAILED", errorCode: extracted.code });
           }
-        } catch {
-          // StorageFull or an extractor throw on ONE attachment: skip it, the message itself must still get through.
+        } catch (e) {
+          // StorageFull or an extractor throw on ONE attachment: skip it, the message itself must still get
+          // through — but record WHY, not just that it's absent.
+          const errorCode: AttachmentErrorCode = e instanceof StorageFull ? "STORAGE_FULL" : "UNEXPECTED_ERROR";
+          attachments.push({ index: a.index, filename: name, contentType: a.contentType, status: "FAILED", errorCode });
         }
       }
+      // Compatibility/derived view: same values, same order as when this array was independently pushed to.
+      const attachmentArtifactIds = attachments.filter((x): x is Extract<AttachmentOutcome, { status: "SUCCEEDED" }> => x.status === "SUCCEEDED").map((x) => x.artifactId);
 
       // The channel-agnostic contract downstream (document.classify, eventually invoice.extract) always just reads
       // "$steps.ingest.payload.artifactId" — same as every other channel — so it must already BE the fullest text,
@@ -116,6 +141,7 @@ export function createIngestHandler(deps: IngestDeps): HostHandlerSpec {
           sha256: combined.sha256,
           originalArtifactId: stored.artifactId,
           attachmentArtifactIds,
+          attachments,
           receivedFrom: p.receivedFrom,
           sender,
           subject: (headers.subject ?? "").slice(0, SUBJECT_MAX),

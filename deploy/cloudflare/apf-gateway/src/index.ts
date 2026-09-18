@@ -18,7 +18,7 @@ import type { SecretsSource } from "../../../../src/installation.js";
 import type { AuditRecord } from "../../../../src/platform/audit.js";
 import { auditRowsToCsv, type AuditCsvRow } from "../../../../src/platform/audit-csv.js";
 import { sha256Bytes, type Artifact } from "../../../../src/platform/artifacts.js";
-import { fanOutAttachments } from "../../../../src/platform/attachment-fanout.js";
+import { fanOutAttachments, summarizeFanoutOutcomes, type MailIngestAttachmentOutcome } from "../../../../src/platform/attachment-fanout.js";
 import { iso, SystemClock, type Clock } from "../../../../src/platform/clock.js";
 import { platformError } from "../../../../src/platform/errors.js";
 import { newId } from "../../../../src/platform/ids.js";
@@ -721,9 +721,10 @@ export class WorkflowInstance extends DurableObject<Env> {
   private async fanOutAttachmentsIfAny(workflowId: string, tenantId: string, correlationId: string, wiring: Wiring): Promise<void> {
     const inst = this.journal.get(workflowId);
     const step = inst?.steps.find((s) => s.capability === "mail.ingest" && s.status === "SUCCEEDED");
-    const payload = step?.result?.payload as { attachmentArtifactIds?: unknown } | undefined;
+    const payload = step?.result?.payload as { attachmentArtifactIds?: unknown; attachments?: unknown } | undefined;
     const attachmentArtifactIds = Array.isArray(payload?.attachmentArtifactIds) ? (payload.attachmentArtifactIds as string[]) : [];
-    if (attachmentArtifactIds.length === 0) return;
+    const attachments = Array.isArray(payload?.attachments) ? (payload.attachments as MailIngestAttachmentOutcome[]) : [];
+    if (attachments.length === 0) return;
     if (!wiring.evidence) {
       // WiringOptions.evidence absent (no durable Žlab for this installation) — fan-out has no evidence to plan()
       // against and would only ever see CAPABILITY_GAP; skipping is honest, not a silent no-op (still audited).
@@ -740,13 +741,18 @@ export class WorkflowInstance extends DurableObject<Env> {
         },
         { tenantId, attachmentArtifactIds, correlationId },
       );
+      // Aggregate status is a genuine summary, not an optimistic default: SUCCEEDED only when every attachment
+      // ingested AND every classify step succeeded — a mail where 2 of 3 attachments classified fine and 1
+      // genuinely failed reports PARTIAL, not an unqualified SUCCEEDED (owner, 18.9.2026, after live external
+      // review). summarizeFanoutOutcomes() is the pure, separately-unit-tested function (attachment-fanout.ts) —
+      // this method itself cannot be loaded under plain-Node vitest (imports "cloudflare:workers").
       this.audit.append({
         kind: "state",
         workflowId,
         tenantId,
         correlationId,
         capability: "attachment-fanout",
-        details: { status: "SUCCEEDED", attachments: outcomes.length, extracted: outcomes.filter((o) => o.extract?.status === "SUCCEEDED").length },
+        details: { ...summarizeFanoutOutcomes(attachments, outcomes) },
       });
     } catch (e) {
       console.error(`[apf-gateway] attachment fan-out failed workflowId=${workflowId}: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);

@@ -325,6 +325,29 @@ describe("mail.ingest attachment splitting (owner, 17.9.2026: 'je jedno jestli j
     expect(ingest.attachmentArtifactIds).toHaveLength(1); // only the csv (text, no extractor needed) made it; the pdf did not
   });
 
+  it("a failed attachment is a visible, structured fact in attachments[], not a silent gap — attachmentArtifactIds stays unchanged (backward compat), the mail still completes SUCCEEDED (best-effort-per-attachment preserved)", async () => {
+    const slice = createSlice({ extractor: new FakeExtractor("failed") });
+    const instance = await runMailIntake(slice, { rawMail: bigMail, stampText: "VALIDATED INVOICE" });
+    expect(instance.status).toBe("SUCCEEDED"); // best-effort-per-attachment: one failed attachment never fails the whole mail
+    const ingest = instance.steps.find((s) => s.stepId === "ingest")?.result?.payload as {
+      attachmentArtifactIds: string[];
+      attachments: { index: number; filename: string; contentType: string; status: string; artifactId?: string; errorCode?: string }[];
+    };
+    // attachmentArtifactIds: byte-for-byte unchanged — same one value (the csv), same order, as before this change.
+    expect(ingest.attachmentArtifactIds).toHaveLength(1);
+    // attachments[]: nothing is ever silently dropped — every parsed attachment (pdf AND csv) gets exactly one entry.
+    expect(ingest.attachments).toHaveLength(2);
+    const pdfEntry = ingest.attachments.find((a) => a.filename === "invoice.pdf");
+    expect(pdfEntry).toMatchObject({ status: "FAILED", errorCode: "EXTRACTION_FAILED" });
+    expect(pdfEntry?.artifactId).toBeUndefined();
+    const csvEntry = ingest.attachments.find((a) => a.filename === "note.csv");
+    expect(csvEntry).toMatchObject({ status: "SUCCEEDED" });
+    expect(csvEntry?.artifactId).toBeTruthy();
+    // The FAILED entry's artifactId is absent, exactly as it is absent from attachmentArtifactIds — same fact, now named.
+    expect(ingest.attachmentArtifactIds).not.toContain(pdfEntry?.artifactId);
+    expect(ingest.attachmentArtifactIds).toEqual([csvEntry?.artifactId]);
+  });
+
   it("a plain mail with no attachments carries an empty attachmentArtifactIds, never undefined", async () => {
     const slice = createSlice();
     const instance = await runMailIntake(slice, { rawMail: INVOICE_MAIL, stampText: "VALIDATED INVOICE" });

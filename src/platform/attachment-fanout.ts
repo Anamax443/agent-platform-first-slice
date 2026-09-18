@@ -58,6 +58,63 @@ export interface AttachmentFanoutInput {
   correlationId?: string;
 }
 
+/** Structural shape of mail.ingest's own `attachments[]` payload entries (src/components/mail-ingest/handler.ts's
+ * exported `AttachmentOutcome`) — re-declared here rather than imported: platform/* stays free of a
+ * src/components/* import (ARCH-DEP-001), the same discipline this file's own CLASSIFY_* constants above already
+ * follow for their shared literals. Only the fields summarizeFanoutOutcomes() actually reads are kept. */
+export interface MailIngestAttachmentOutcome {
+  index: number;
+  filename: string;
+  contentType: string;
+  status: "SUCCEEDED" | "FAILED";
+  artifactId?: string;
+  errorCode?: string;
+}
+
+/** Aggregate status this driver's own audit record (index.ts's fanOutAttachmentsIfAny) reports for one mail's
+ * whole attachment fan-out — owner, 18.9.2026, after live external review: the audit line was always an
+ * unqualified "SUCCEEDED" once fanOutAttachments() itself didn't throw, regardless of whether individual
+ * attachments' ingest or classify steps actually succeeded (2-of-3-classified mail read exactly like 3-of-3). */
+export type FanoutStatus = "SUCCEEDED" | "PARTIAL" | "FAILED";
+
+export interface FanoutSummary {
+  status: FanoutStatus;
+  /** Every attachment mail.ingest saw, SUCCEEDED and FAILED alike — attachments.length. */
+  total: number;
+  /** Failed at the mail.ingest stage itself (extraction failed or threw) — these never got an artifactId, so they
+   * never even reach fanOutAttachments()/outcomes below. A real, distinct failure mode from a classify failure. */
+  ingestFailed: number;
+  /** Attachments whose classify step reached SUCCEEDED. */
+  classified: number;
+  /** Attachments that were ingested (have an artifactId) but whose classify step did NOT reach SUCCEEDED. */
+  classificationFailed: number;
+  /** Attachments for which invoice.extract actually ran and reached SUCCEEDED. */
+  invoiceExtracted: number;
+}
+
+/**
+ * Pure aggregate over mail.ingest's own `attachments[]` (every parsed attachment, ingest outcome included) and
+ * this driver's own `outcomes` (one per successfully-ingested attachment, from fanOutAttachments() above) — no
+ * I/O, so it is unit-testable under plain Node vitest even though the caller (deploy/cloudflare/apf-gateway/src/
+ * index.ts's fanOutAttachmentsIfAny(), inside a Durable Object class importing "cloudflare:workers") is not.
+ * `status` is SUCCEEDED only when every attachment ingested AND every classify step succeeded (ingestFailed===0
+ * && classificationFailed===0 — equivalently classified===total); FAILED when literally everything failed
+ * (classified===0 && total>0 — a caller whose own fanOutAttachments() call threw should treat that the same way,
+ * that decision stays index.ts's job, not this function's); PARTIAL otherwise, the common real-world case.
+ */
+export function summarizeFanoutOutcomes(attachments: readonly MailIngestAttachmentOutcome[], outcomes: readonly AttachmentFanoutOutcome[]): FanoutSummary {
+  const total = attachments.length;
+  const ingestFailed = attachments.filter((a) => a.status === "FAILED").length;
+  const classified = outcomes.filter((o) => o.classify.status === "SUCCEEDED").length;
+  const classificationFailed = outcomes.length - classified;
+  const invoiceExtracted = outcomes.filter((o) => o.extract?.status === "SUCCEEDED").length;
+
+  const failed = ingestFailed + classificationFailed;
+  const status: FanoutStatus = failed === 0 ? "SUCCEEDED" : total > 0 && failed === total ? "FAILED" : "PARTIAL";
+
+  return { status, total, ingestFailed, classified, classificationFailed, invoiceExtracted };
+}
+
 export interface AttachmentFanoutOutcome {
   artifactId: string;
   classify: Instance;

@@ -2,12 +2,33 @@
   "$id": "mail.ingest.output.v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["artifactId", "sha256", "originalArtifactId", "attachmentArtifactIds", "receivedFrom", "sender", "subject"],
+  "required": ["artifactId", "sha256", "originalArtifactId", "attachmentArtifactIds", "attachments", "receivedFrom", "sender", "subject"],
   "properties": {
-    "artifactId": { "type": "string", "minLength": 1, "maxLength": 128, "description": "The derived body-text artifact — what document.classify/validate/stamp actually read, same as any other channel." },
+    "artifactId": { "type": "string", "minLength": 1, "maxLength": 128, "description": "The derived combined-text artifact — since commit 1111d39 (17.9.2026) this is the e-mail body PLUS every successfully-extracted attachment's text, combined ('=== TĚLO E-MAILU ===' then '=== PŘÍLOHA: ... ===' per attachment), not the body alone. What document.classify/validate/stamp actually read, same as any other channel." },
     "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "originalArtifactId": { "type": "string", "minLength": 1, "maxLength": 128, "description": "The immutable raw MIME message, unchanged — evidence/audit and GET /workflow/:id/attachment/:n, never a capability's input." },
-    "attachmentArtifactIds": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 128 }, "description": "One derived text artifact per e-mail attachment that could be read (best-effort — a failed one is simply absent here, not zeroed out)." },
+    "attachmentArtifactIds": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 128 }, "description": "DERIVED/compatibility view over `attachments`: artifactId of every attachment with status SUCCEEDED, in original attachment order. Kept for callers that read only this field — for the non-silent per-attachment outcome (including WHY a failed one is absent here) read `attachments`." },
+    "attachments": {
+      "type": "array",
+      "description": "One entry per parsed e-mail attachment, in original order — nothing is ever silently dropped here, unlike attachmentArtifactIds (best-effort per attachment still applies: one FAILED attachment never fails the whole message).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["index", "filename", "contentType", "status"],
+        "properties": {
+          "index": { "type": "integer", "minimum": 0 },
+          "filename": { "type": "string", "minLength": 1 },
+          "contentType": { "type": "string", "minLength": 1 },
+          "status": { "type": "string", "enum": ["SUCCEEDED", "FAILED"] },
+          "artifactId": { "type": "string", "minLength": 1, "maxLength": 128, "description": "Present iff status is SUCCEEDED." },
+          "errorCode": {
+            "type": "string",
+            "enum": ["EXTRACTION_UNAVAILABLE", "EXTRACTION_FAILED", "EXTRACTION_EMPTY", "STORAGE_FULL", "UNEXPECTED_ERROR"],
+            "description": "Present iff status is FAILED. EXTRACTION_UNAVAILABLE/EXTRACTION_FAILED/EXTRACTION_EMPTY are adapters/extract.ts's own ExtractResult codes (ok:false); STORAGE_FULL is a caught StorageFull from deps.artifacts.derive(); UNEXPECTED_ERROR is any other caught throw."
+          }
+        }
+      }
+    },
     "receivedFrom": { "type": "string", "minLength": 1, "maxLength": 128 },
     "sender": {
       "type": "object",

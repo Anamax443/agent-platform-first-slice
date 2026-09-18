@@ -3,7 +3,8 @@
 // planner.plan() — genuinely, never a hardcoded conditional — whether invoice.extract is next. Acceptance
 // scenario exactly as the owner specified: one e-mail, three attachments (CONTRACT, INVOICE, a photo/OTHER).
 import { describe, expect, it } from "vitest";
-import { fanOutAttachments, type AttachmentFanoutOutcome } from "../src/platform/attachment-fanout.js";
+import { fanOutAttachments, summarizeFanoutOutcomes, type AttachmentFanoutOutcome, type MailIngestAttachmentOutcome } from "../src/platform/attachment-fanout.js";
+import type { Instance } from "../src/platform/journal.js";
 import { plan } from "../src/platform/planner.js";
 import { command, CONTRACT_CZ, createSlice, dispatch, INVOICE_CZ, NEWSLETTER, TENANT_A, type Slice } from "./harness/index.js";
 import { realCatalog } from "./harness/facts.js";
@@ -130,5 +131,54 @@ describe("FANOUT-002 the driver's decision genuinely comes from plan(), not a ha
     const r = plan({ goal, available: ["document.original", "document.type.invoiceConfirmed"] }, catalog);
     expect(r.status).toBe("PLANNED");
     if (r.status === "PLANNED") expect(r.steps.map((s) => s.capability)).toEqual(["invoice.extract"]);
+  });
+});
+
+// FANOUT-SUMMARY (Commit 2B, 18.9.2026): summarizeFanoutOutcomes() is the pure aggregate the audit line at
+// deploy/cloudflare/apf-gateway/src/index.ts's fanOutAttachmentsIfAny() now writes instead of a hardcoded
+// unqualified "SUCCEEDED" — plain vitest, no Workers pool needed, because it takes data in and returns data out.
+function ingested(index: number, artifactId: string): MailIngestAttachmentOutcome {
+  return { index, filename: `a${index}`, contentType: "text/plain", status: "SUCCEEDED", artifactId };
+}
+function ingestFailure(index: number): MailIngestAttachmentOutcome {
+  return { index, filename: `a${index}`, contentType: "application/pdf", status: "FAILED", errorCode: "EXTRACTION_FAILED" };
+}
+function classifyOutcome(artifactId: string, classifyStatus: Instance["status"], extractStatus?: Instance["status"]): AttachmentFanoutOutcome {
+  const classify = { status: classifyStatus } as unknown as Instance;
+  const extract = extractStatus === undefined ? undefined : ({ status: extractStatus } as unknown as Instance);
+  return { artifactId, classify, extract };
+}
+
+describe("FANOUT-SUMMARY summarizeFanoutOutcomes() (Commit 2B)", () => {
+  it("every attachment ingested and every classify succeeded -> SUCCEEDED", () => {
+    const attachments = [ingested(0, "a0"), ingested(1, "a1")];
+    const outcomes = [classifyOutcome("a0", "SUCCEEDED"), classifyOutcome("a1", "SUCCEEDED", "SUCCEEDED")];
+    const summary = summarizeFanoutOutcomes(attachments, outcomes);
+    expect(summary).toEqual({ status: "SUCCEEDED", total: 2, ingestFailed: 0, classified: 2, classificationFailed: 0, invoiceExtracted: 1 });
+  });
+
+  it("one ingest failure among three -> PARTIAL, ingestFailed counted, never reaches an outcome", () => {
+    const attachments = [ingestFailure(0), ingested(1, "a1"), ingested(2, "a2")];
+    const outcomes = [classifyOutcome("a1", "SUCCEEDED"), classifyOutcome("a2", "SUCCEEDED")];
+    const summary = summarizeFanoutOutcomes(attachments, outcomes);
+    expect(summary).toEqual({ status: "PARTIAL", total: 3, ingestFailed: 1, classified: 2, classificationFailed: 0, invoiceExtracted: 0 });
+  });
+
+  it("one classify failure among otherwise-successful ingests -> PARTIAL", () => {
+    const attachments = [ingested(0, "a0"), ingested(1, "a1")];
+    const outcomes = [classifyOutcome("a0", "SUCCEEDED"), classifyOutcome("a1", "FAILED")];
+    const summary = summarizeFanoutOutcomes(attachments, outcomes);
+    expect(summary).toEqual({ status: "PARTIAL", total: 2, ingestFailed: 0, classified: 1, classificationFailed: 1, invoiceExtracted: 0 });
+  });
+
+  it("everything failing (ingest and classify alike) -> FAILED", () => {
+    const attachments = [ingestFailure(0), ingested(1, "a1")];
+    const outcomes = [classifyOutcome("a1", "FAILED")];
+    const summary = summarizeFanoutOutcomes(attachments, outcomes);
+    expect(summary).toEqual({ status: "FAILED", total: 2, ingestFailed: 1, classified: 0, classificationFailed: 1, invoiceExtracted: 0 });
+  });
+
+  it("no attachments at all -> vacuously SUCCEEDED, zero everywhere", () => {
+    expect(summarizeFanoutOutcomes([], [])).toEqual({ status: "SUCCEEDED", total: 0, ingestFailed: 0, classified: 0, classificationFailed: 0, invoiceExtracted: 0 });
   });
 });

@@ -2,6 +2,79 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-18 (180) — Commit 2B (vlastníkův schválený návrh, po živém externím posudku): ztracená příloha přestává být tichá — `attachments[]` kontrakt, agregovaný fan-out status, dvě zastaralé dokumentační mezery
+
+**Problém, který se opravuje:** `mail-ingest/handler.ts`'s příloha smyčka (řádky ~79–98 před touto změnou) při
+selhání jedné přílohy — `extracted.ok === false`, nebo cokoliv shozené v `catch{}` (`StorageFull` z
+`deps.artifacts.derive()`, nebo libovolný jiný throw) — přílohu prostě **vynechala** ze `attachmentArtifactIds[]`,
+beze stopy. `output.schema.json`'s vlastní popis to doslova dokumentoval jako záměr ("a failed one is simply
+absent here, not zeroed out"). Vlastník po živém externím posudku: best-effort-per-attachment zůstává (jedna
+špatná příloha nesmí nikdy shodit celý e-mail), ale selhání musí být viditelný, strukturovaný fakt na úrovni
+Case, ne mezera, kterou musí někdo objevit počítáním.
+
+**Nový aditivní kontrakt `attachments[]`** (`src/components/mail-ingest/handler.ts`, `output.schema.json`) — vedle
+existujícího `attachmentArtifactIds[]`, který zůstává a je teď **odvozené/kompatibilní pole**:
+```ts
+type AttachmentOutcome =
+  | { index: number; filename: string; contentType: string; status: "SUCCEEDED"; artifactId: string }
+  | { index: number; filename: string; contentType: string; status: "FAILED";
+      errorCode: "EXTRACTION_UNAVAILABLE" | "EXTRACTION_FAILED" | "EXTRACTION_EMPTY" | "STORAGE_FULL" | "UNEXPECTED_ERROR" };
+```
+Přepsaná smyčka: každá `parsed.attachments` položka dostane přesně jeden záznam (nic se nikdy tiše nezahodí);
+`errorCode` znovupoužívá `adapters/extract.ts`'s vlastní `ExtractResult` slovník pro větev `ok:false`
+(`EXTRACTION_*`), `STORAGE_FULL` pro chycený `StorageFull`, `UNEXPECTED_ERROR` pro cokoliv jiného — žádný nový
+paralelní slovník. `attachmentArtifactIds` je teď **odvozeno** jednou řádkou:
+`attachments.filter(a => a.status === "SUCCEEDED").map(a => a.artifactId)` — stejné hodnoty, stejné pořadí jako
+dřív (`attachmentArtifactIds` value/pořadí je byte-for-byte beze změny, ověřeno testem). `output.schema.json`
+dostal `attachments` do `required`, `additionalProperties:false` disciplína zachovaná; opravený i vedlejší
+zastaralý popis `artifactId` (viz dokumentační mezera 1 níže).
+
+**Agregovaný fan-out status** (`src/platform/attachment-fanout.ts`, nová `summarizeFanoutOutcomes()`) — čistá,
+samostatně testovaná funkce (žádné I/O), protože `deploy/cloudflare/apf-gateway/src/index.ts`'s
+`fanOutAttachmentsIfAny()` žije v DO třídě importující `"cloudflare:workers"` a nejde natáhnout pod plain-Node
+vitest. Signatura: `summarizeFanoutOutcomes(attachments: readonly MailIngestAttachmentOutcome[], outcomes: readonly
+AttachmentFanoutOutcome[]): FanoutSummary` kde `FanoutSummary = { status: "SUCCEEDED"|"PARTIAL"|"FAILED"; total;
+ingestFailed; classified; classificationFailed; invoiceExtracted }`. `MailIngestAttachmentOutcome` je strukturální
+přepis mail-ingest's `AttachmentOutcome` (znovu deklarovaný, ne importovaný — `platform/*` zůstává bez
+`src/components/*` importu, `ARCH-DEP-001`, stejná kázeň jako `CLASSIFY_*` konstanty o pár řádků výš v témže
+souboru). `status`: `SUCCEEDED` jen když `ingestFailed===0 && classificationFailed===0`; `FAILED` jen když
+doslova všechno selhalo (`classified===0 && total>0` — vlastníkovo pravidlo, že shozené volání celého
+`fanOutAttachments()` se má chovat stejně, zůstává rozhodnutím `index.ts`, ne téhle funkce); jinak `PARTIAL` —
+běžný reálný případ (vlastníkův příklad: 2 ze 3 příloh klasifikovaly OK, 1 fakticky selhala → dřív nepodmíněné
+`"SUCCEEDED"` v auditu, teď `PARTIAL` se správnými počty). `index.ts`'s `fanOutAttachmentsIfAny()` (řádky ~721–753)
+teď volá tuhle funkci s mail.ingest's skutečným `attachments[]` a `fanOutAttachments()`'s `outcomes` a zapisuje
+výsledek do `this.audit.append({..., capability: "attachment-fanout", details: {...summarizeFanoutOutcomes(...)}})`
+místo natvrdo `"SUCCEEDED"` (spread do fresh literálu kvůli TS `Record<string, unknown>` assignability —
+pojmenovaný interface se bez toho nedal přiřadit do `AuditRecord.details`).
+
+**Testy:** `tests/attachment-fanout.test.ts` — nová sekce `FANOUT-SUMMARY summarizeFanoutOutcomes()` (5 testů: vše
+uspělo → `SUCCEEDED`; jedna selhaná příloha ze tří na ingestu → `PARTIAL` se správnými počty a nikdy nedosáhne
+`outcomes`; jedno selhání klasifikace → `PARTIAL`; vše selhalo (ingest i klasifikace) → `FAILED`; žádné přílohy →
+vakuózně `SUCCEEDED`). `tests/mail.test.ts` — nový test v sekci "mail.ingest attachment splitting": selhaná
+příloha (`FakeExtractor("failed")`) se objeví v `attachments[]` s `status: "FAILED"`, `errorCode:
+"EXTRACTION_FAILED"`, bez `artifactId`; `attachmentArtifactIds` ji nadále vynechává (zpětná kompatibilita, hodnoty
+ověřené `toEqual`); instance celkově `SUCCEEDED` (best-effort-per-attachment zachováno).
+
+**Dvě zastaralé dokumentační mezery (vlastník je pojmenoval přesně):**
+- `output.schema.json`'s `artifactId` popis říkal "The derived body-text artifact" — od `1111d39` (17.9.2026) je
+  to tělo + text každé úspěšně extrahované přílohy dohromady (`=== TĚLO E-MAILU ===` + `=== PŘÍLOHA: ... ===`).
+  Opraveno.
+- `docs/SEVERKA.md:952` tvrdilo "**Case dnes neexistuje**" — platilo 16.9.2026, ale `src/platform/case.ts`
+  (primitivum `Case`/`NormalizedImpulse`) od 16.9.2026 existuje a je testované (HANDOFF 175), jen zatím **není
+  zapojené** do žádné živé intake cesty. Přeformulováno na "Case = WorkflowInstance zůstává dnešní produkční
+  zjednodušení … žádná živá intake cesta jím zatím neprochází".
+- `docs/SEVERKA.md:973` (M0 roadmapa) končilo buňkou "Zbývá C → A → B" — ale C (169/170/171), A (171/172/173), B
+  (174) a i E (175) byly hotové jako testované primitivy tentýž den (16.9.2026), jen nezapojené živě. Buňka teď
+  cituje HANDOFF 169–175 a říká, co skutečně zbývá: živé zapojení `Case` do reálných intake cest.
+
+**Mimo rozsah (vlastníkovo explicitní odložení, nedotčeno):** `workflows/mail-intake.v3.json`, živé zapojení
+`Case`, invoice.extract idempotency mezera, generalizace Plannerova cíle nad `invoice.extract`, žádný živý test
+e-mail ani zásah do nasazené farmy — commit 2C je samostatný pozdější krok.
+
+**Výsledek:** `npm test` 662/662 (dřív 656/656, +6 nových testů), `npm run typecheck` čistě, `npm run farm:check`
+čistě (včetně `tsc -p deploy/cloudflare/tsconfig.json`). Jen lokální change set — **žádný commit, push ani
+deploy** (explicitně mimo rozsah téhle úlohy).
+
 ## 2026-09-18 (179) — Oprava 3 P0 mezer po #178: fan-out z živého mailIntake() nikdy nevolaný, document.classify v LIVE wiringu nezapisoval evidenci, chyběl Workers-safe FactCatalog
 
 **Zjištění recenze (přesná citace nálezu):** funkce nasazená, ale nedosažitelná ("deployed-but-unreachable
