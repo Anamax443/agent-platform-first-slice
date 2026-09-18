@@ -1,0 +1,21 @@
+{
+  "$comment": "Minimal one-step workflow (owner's Commit 1, M0-FACT-CONTRACT-V1.md část C, 18.9.2026): run invoice.extract once on a single attachment artifact the fan-out driver (src/platform/attachment-fanout.ts) already confirmed — via planner.plan() over the real FactCatalog, never a hardcoded conditional — is reachable from that artifact's own classification evidence (document.type.invoiceConfirmed). Started only after attachment-classify.v1 succeeded and plan() actually returned invoice.extract as a step. sideEffects is internal-write, not none: invoice.extract now derives an Artifact for its extracted fields (artifacts.derive(), M0 invariant D6 — a value never lands in the Žlab).",
+  "workflow": "attachment-extract",
+  "workflowVersion": "1",
+  "conformanceTier": "semantic",
+  "deadlineMs": 1800000,
+  "operatorRole": "document.operator",
+  "supervisorRole": "document.supervisor",
+  "steps": [
+    {
+      "id": "extract",
+      "capability": "invoice.extract",
+      "capabilityVersion": "1",
+      "sideEffects": "internal-write",
+      "inputs": { "artifactId": "$input.artifactId", "strategy": "$strategy" },
+      "strategies": ["rules", "llm"],
+      "qualityBudget": 2,
+      "technicalRetries": 2
+    }
+  ]
+}

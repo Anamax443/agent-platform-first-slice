@@ -2,6 +2,86 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-18 (178) — Commit 1 (vlastníkův schválený návrh): invoice.extract gated na klasifikační evidenci, fan-out driver nad přílohami přes skutečné plan()
+
+**Účel:** vlastníkovo explicitně schválené zadání "Commit 1" — `invoice.extract` dnes běžel nad jakýmkoliv
+`document.original`, bez ohledu na to, jestli dokument vůbec je faktura (`facts.json` konzumoval jen artefakt).
+Cíl: aby CONTRACT/OTHER příloha nemohla nikdy doběhnout k extrakci, a aby o tom nerozhodoval hardcoded `if`, ale
+skutečné volání `planner.plan()` nad `FactCatalog`. `orchestrator.ts` se nemění (žádná smyčka/foreach) — "spusť
+tenhle malý tok jednou na přílohu" dělá nová vrstva o úroveň výš (`src/platform/attachment-fanout.ts`), stejná
+architektonická úroveň jako `startMailIntake()` v `deploy/cloudflare/apf-gateway/src/index.ts`, nikdy uvnitř
+kapability.
+
+**Nový fakt-klíč** (`contracts/facts.v1.json`): `document.type.invoiceConfirmed` — `kind: evidence`,
+`for: document.type`, `resultVocabulary: ["INVOICE"]`. Záměrně **nikde nedeklarovaný jako `produces`** v žádném
+modulovém `facts.json` (na rozdíl od `document.type.validated`, které `document-validator/facts.json` produkuje
+deklarovaně) — kdyby `document.classify` tenhle klíč deklarovalo jako svůj produkovaný, `plan()` by si k němu
+sám dořetězil `document.classify` z holého `document.original` a brána by byla kosmetická, ne skutečná (ověřeno
+ručně proběhnutím algoritmu `planner.ts`, než se cokoliv napsalo — `PLAN-007` níže je přesně tenhle důkaz).
+`document.classify/handler.ts` (`ClassifierDeps.evidence?: EvidenceWriter`, stejný "present=used,
+absent=skipped" vzor jako `cz-company-verify`) teď volá `seal(input, value)` po klasifikaci na **obou** cestách
+(`human-corrected` i model/keyword) — `write()` se ale zavolá **jen** když `value === "INVOICE"`; CONTRACT/OTHER
+nezapíšou do Žlabu nic. `src/slice.ts` zapojuje `new EvidenceWriter(evidence, {producerId:"document.classify",...})`
+stejně jako u `cz.company.verify`/`cz.vat.verify`. `invoice-extractor/facts.json`'s `consumes` teď navíc žádá
+`evidence: ["document.type.invoiceConfirmed"]` (mirror `document.stamp` × `document.type.validated`) — `plan()`
+tak fakturu nikdy nenaplánuje bez důkazu, že klasifikace skutečně řekla INVOICE.
+
+**invoice.extract teď derivuje artefakt, ne jen pole v payloadu:** čtyři extrahovaná pole jsou reálná business
+VALUE data (M0-FACT-CONTRACT-V1.md invariant D6 — "v Žlabu nikdy není hodnota"), takže `ExtractorDeps.artifacts`
+změněno z `ArtifactReader` na `ArtifactWriter`; handler po sestavení polí volá `artifacts.derive(art.artifactId,
+JSON.stringify(fields), "invoice-extractor")` a **před** `SUCCEEDED` čeká na `artifacts.flush?.()` — přesně
+stejná disciplína jako `document.stamp`'s vlastní oprava (`a4ba5d5`, "derived artefakt se nikdy neregistroval
+zpět na gateway", nalezeno živě na farm-bass443 17.9.2026): selhání relaye se teď promítne jako `FAILED
+ARTIFACT_RELAY_FAILED` (DEPENDENCY, retryable), ne jako tichý `SUCCEEDED` s nedohledatelným artefaktem.
+`output.schema.json` dostal `extractedArtifactId`/`extractedSha256` (required, `additionalProperties:false`),
+`descriptor.json`/`conformance/invoice.extract/errors.md` dostaly `ARTIFACT_RELAY_FAILED`. Existující čtyři pole
+(companyId/bankAccount/invoiceNumber/totalWithVat) v payloadu zůstávají beze změny — golden je subset-check,
+nic nerozbilo.
+
+**Nové workflow definice** (`workflows/attachment-classify.v1.json`, `workflows/attachment-extract.v1.json`) —
+každá jeden krok, zapsané do `WORKFLOW_DEFINITIONS` (`src/platform/workflow.ts`); `src/slice.ts`'s existující
+obecná smyčka nad `WORKFLOW_DEFINITIONS` z nich automaticky udělá `slice.orchestrators["attachment-classify"]` /
+`["attachment-extract"]` — nulová změna `slice.ts` navíc potřeba. `workflows/mail-intake.v1/v2/v3.json` beze
+změny (dnešní top-level `classify` krok nad kombinovaným tělo+přílohy artefaktem zůstává přesně jak byl).
+
+**`src/platform/attachment-fanout.ts` (nový):** `fanOutAttachments(deps, input)` — pro každý
+`attachmentArtifactId` z `mail.ingest`'s `attachmentArtifactIds[]`: (a) `classifyOrchestrator.start()`+`run()`
+na jeden artefakt, (b) zjistí, jestli TENHLE konkrétní instance klasifikace opravdu zapsala potvrzující evidenci
+(`evidence.forTenant(tenantId).some(e => e.workflowId === classify.workflowId && e.producerId ===
+"document.classify" && e.result === "INVOICE")` — nikdy nečte `documentType.value` samo, jen existenci
+záznamu v Žlabu, stejná kázeň jako `PLAN-005`), (c) **skutečně zavolá `plan({goal: invoice.extract's produces,
+available}, catalog)`** a rozhodne se podle `status`/`steps`, ne podle vlastního `if` — to je jediná řádka, na
+které vlastník trval nejvíc (viz kód, komentář "The single most important line in this file"), (d) jen při
+`PLANNED` s `invoice.extract` v krocích spustí `extractOrchestrator.start()`+`run()`. `catalog`/`evidence` jsou
+vstupní závislosti (žádné `node:fs` v `platform/*`, stejné pravidlo jako `fact-catalog.ts`).
+
+**Testy:** `tests/plan.test.ts` — `PLAN-003`'s "ARES chain is reachable" test upraven (dřív šlo `invoice.extract`
+naplánovat z holého `document.original`, teď je to `CAPABILITY_GAP`; přidán druhý test s evidencí v `available`
+ukazující stejný řetěz jako dřív), nový blok `PLAN-007` (4 testy: `invoice.extract` deklaruje novou evidenci v
+`consumes`, klíč nemá v katalogu žádného producenta, přímý důkaz `CAPABILITY_GAP` z `document.original` samotného
+— přesně vlastníkem požadovaný "cheapest, most direct proof" na úrovni katalogu, a naplánování s evidencí v
+`available`). Nový `tests/attachment-fanout.test.ts` (5 testů, `FANOUT-001`/`FANOUT-002`): akceptační scénář
+přesně podle zadání — jeden e-mail, tři přílohy (CONTRACT/INVOICE/OTHER, syntetický multipart `text/plain`
+s `Content-Disposition: attachment` přes reálné `mail.ingest`, žádný mock extraktoru potřeba) — CONTRACT i OTHER:
+`extract` nikdy neproběhne (tvrdá kontrola i na úrovni `slice.journal.list()`, ne jen návratová hodnota driveru),
+INVOICE: evidence zapsaná, `plan()` vrátí `PLANNED` s `invoice.extract`, extrakce proběhne a vytvoří derived
+artefakt (`slice.artifacts.get(extractedArtifactId)` s `derivedFrom`/`producer` ověřeno). `FANOUT-002` dokazuje
+totéž co `PLAN-007`, ale volané přes přesně tu funkci, kterou driver volá.
+
+**Stav:** `npm test` **649/649** (+10 proti 639/639 před touto session), `npx tsc --noEmit`, `node
+scripts/arch-dep.mjs`, `node scripts/farm-check.mjs`, `npx tsc -p deploy/cloudflare/tsconfig.json` — všechno
+zeleně. Jen lokální změny a lokální test běh; **žádný push, žádný deploy, žádný commit** (podle zadání — commit
+vzniká samostatně, po nezávislém ověření, ne v týhle session).
+
+**Vědomě mimo rozsah (zapsáno, ne vyřešeno):** `invoice.extract`'s nový `derive()` běží přímo přes `Router`, ne
+přes `ExecutorHost` (na rozdíl od `document.stamp`) — nemá tedy idempotency dedup store; technický retry se
+stejným `idempotencyKey` po úspěšném modelovém volání by teoreticky mohl vytvořit dva derived artefakty místo
+jednoho. Existující architektura má stejnou mezeru všude, kde `Router.register()` volá `derive()` bez hostu —
+tohle je první takové místo, ne nový vzor. Migrace `invoice.extract` pod `ExecutorHost` je samostatný, větší
+krok (mimo "Commit 1"). `src/platform/case.ts` nezapojeno (samostatný pozdější commit), scope/case otázka Žlabu
+nerozhodnuta (taky pozdější), žádný obecný `next-action-resolver.ts` (to je pozdější komponenta, co rozšíří
+`planner.ts` přímo).
+
 ## 2026-09-16 (177) — document.classify: MIME přílohy nikdy nejdou do LLM promptu (fáze 1 opravy tokenového přetečení)
 
 Navazuje na #176: po opravě 64KB limitu prošel skutečný test (fakturа+účtenka od Anthropicu, 228 922 B) přes

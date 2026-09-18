@@ -8,6 +8,7 @@
 | model call fails | `MODEL_UNAVAILABLE` | DEPENDENCY | true | false | handler |
 | model does not answer before the deadline | `DEPENDENCY_TIMEOUT` | DEPENDENCY | true | false | platform |
 | strategy has no configured model | `STRATEGY_UNKNOWN` | VALIDATION | false | false | handler |
+| derived artifact (the extracted fields) could not be relayed to the gateway — same shape as document.stamp's own `ARTIFACT_RELAY_FAILED` (commit a4ba5d5); retryable so the next attempt re-derives and re-relays | `ARTIFACT_RELAY_FAILED` | DEPENDENCY | true | false | handler |
 | payload is not the typed input (free text, unknown field, wrong enum) | `SCHEMA_VALIDATION_FAILED` | VALIDATION | false | false | router |
 | actor holds no scope for the capability | `CAPABILITY_NOT_ALLOWED` | SECURITY | false | false | router |
 | handler throws | `HANDLER_CRASHED` | TECHNICAL | true | false | router |

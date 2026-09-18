@@ -2,10 +2,12 @@
   "$id": "invoice.extract.output.v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["artifactId", "sha256"],
+  "required": ["artifactId", "sha256", "extractedArtifactId", "extractedSha256"],
   "properties": {
     "artifactId": { "type": "string", "minLength": 1, "maxLength": 128 },
     "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "extractedArtifactId": { "type": "string", "minLength": 1, "maxLength": 128, "description": "Derived Artifact (artifacts.derive(), producer invoice-extractor) holding the extracted fields as JSON — the real business VALUE data, never sealed into the Žlab (M0-FACT-CONTRACT-V1.md invariant D6). Present even when no field extracted (an empty object)." },
+    "extractedSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "companyId": {
       "type": "object",
       "additionalProperties": false,

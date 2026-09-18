@@ -1,5 +1,5 @@
 {
-  "$comment": "Fact-flow sidecar (Posudek 17): which namespace keys (contracts/facts.v1.json) this module's capabilities consume and produce. A sidecar on purpose — module-descriptor.v1.schema.json is frozen. Keys only, never values; capability set must equal descriptor.json (FACT-004).",
+  "$comment": "Fact-flow sidecar (Posudek 17): which namespace keys (contracts/facts.v1.json) this module's capabilities consume and produce. A sidecar on purpose — module-descriptor.v1.schema.json is frozen. Keys only, never values; capability set must equal descriptor.json (FACT-004). 18.9.2026 (owner's Commit 1): handler.ts now also seals document.type.invoiceConfirmed evidence via EvidenceWriter, but ONLY when the classification result is INVOICE — this produces list stays exactly as before on purpose, unchanged: the new evidence key is deliberately absent from every module's 'produces' (see its entry in contracts/facts.v1.json), so plan() can never chain classify->invoiceConfirmed from a bare document.original as if the result were guaranteed to be INVOICE. src/platform/attachment-fanout.ts reads the Žlab directly, per artifact, after actually running document.classify.",
   "module": "document-classifier",
   "capabilities": {
     "document.classify": {

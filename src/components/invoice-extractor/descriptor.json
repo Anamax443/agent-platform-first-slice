@@ -31,7 +31,8 @@
         "MODEL_OUTPUT_NOT_ALLOWED",
         "MODEL_UNAVAILABLE",
         "STRATEGY_UNKNOWN",
-        "DEPENDENCY_TIMEOUT"
+        "DEPENDENCY_TIMEOUT",
+        "ARTIFACT_RELAY_FAILED"
       ]
     }
   ]

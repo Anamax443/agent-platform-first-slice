@@ -54,8 +54,11 @@ describe("PLAN-003 missing producer → CAPABILITY_GAP, never an approximate sub
       ]);
     }
   });
-  it("the ARES chain is reachable: supplier.companyId.verified = invoice.extract → cz.company.verify", () => {
-    expect(chain(plan({ goal: ["supplier.companyId.verified"], available: ["document.original"] }, realCatalog()))).toEqual(["invoice.extract", "cz.company.verify"]);
+  it("the ARES chain needs invoice.extract, which itself now needs confirmed-INVOICE evidence (PLAN-007): unreachable from document.original alone", () => {
+    expect(plan({ goal: ["supplier.companyId.verified"], available: ["document.original"] }, realCatalog()).status).toBe("CAPABILITY_GAP");
+  });
+  it("with the confirmed-INVOICE evidence already available, the ARES chain resolves: invoice.extract → cz.company.verify", () => {
+    expect(chain(plan({ goal: ["supplier.companyId.verified"], available: ["document.original", "document.type.invoiceConfirmed"] }, realCatalog()))).toEqual(["invoice.extract", "cz.company.verify"]);
   });
   it("an unknown key in goal or available, or an empty goal, is INVALID — not silently ignored", () => {
     const c = realCatalog();
@@ -136,5 +139,27 @@ describe("PLAN-006 a write path cannot be selected without its required evidence
   });
   it("document.type being available does not skip validation: the evidence, not the fact, gates the write", () => {
     expect(chain(plan({ goal: ["document.stamped"], available: ["document.original", "document.type"] }, realCatalog()))).toEqual(["document.validate", "document.stamp"]);
+  });
+});
+
+describe("PLAN-007 invoice.extract cannot be selected without confirmed-INVOICE evidence (owner's Commit 1, 18.9.2026)", () => {
+  it("invoice.extract declares the evidence it needs, not just the artifact", () => {
+    expect(realCatalog().flowOf("invoice.extract")?.consumes).toContain("document.type.invoiceConfirmed");
+  });
+  it("document.type.invoiceConfirmed has no producer in the real catalog on purpose — a value-conditional gate must never be something plan() can chain its way into producing", () => {
+    expect(realCatalog().producersOf("document.type.invoiceConfirmed")).toEqual([]);
+  });
+  it("the cheapest, most direct proof of the gate: invoice.extract's own goal is CAPABILITY_GAP from document.original alone — a CONTRACT or a photo can never reach it via the catalog", () => {
+    const goal = realCatalog().flowOf("invoice.extract")?.produces as string[];
+    const r = plan({ goal, available: ["document.original"] }, realCatalog());
+    expect(r.status).toBe("CAPABILITY_GAP");
+    if (r.status === "CAPABILITY_GAP") {
+      expect(r.missing.map((m) => m.key)).toContain("document.type.invoiceConfirmed");
+      expect(r.missing.every((m) => m.reason === "NO_PRODUCER" || m.reason === "UNSATISFIABLE")).toBe(true);
+    }
+  });
+  it("with the confirmed-INVOICE evidence already available (as a driver that actually checked the Žlab would supply it), invoice.extract plans cleanly", () => {
+    const goal = realCatalog().flowOf("invoice.extract")?.produces as string[];
+    expect(chain(plan({ goal, available: ["document.original", "document.type.invoiceConfirmed"] }, realCatalog()))).toEqual(["invoice.extract"]);
   });
 });

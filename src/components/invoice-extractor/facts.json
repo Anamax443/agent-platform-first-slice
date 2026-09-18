@@ -1,9 +1,9 @@
 {
-  "$comment": "Fact-flow sidecar (Posudek 17): which namespace keys (contracts/facts.v1.json) this module's capabilities consume and produce. A sidecar on purpose — module-descriptor.v1.schema.json is frozen. Keys only, never values; capability set must equal descriptor.json (FACT-004). v1 extracts exactly four fields (VC §5 MUST set); supplier.vatId is deliberately NOT listed — declaring it would be inventing a fact the handler never produces.",
+  "$comment": "Fact-flow sidecar (Posudek 17): which namespace keys (contracts/facts.v1.json) this module's capabilities consume and produce. A sidecar on purpose — module-descriptor.v1.schema.json is frozen. Keys only, never values; capability set must equal descriptor.json (FACT-004). v1 extracts exactly four fields (VC §5 MUST set); supplier.vatId is deliberately NOT listed — declaring it would be inventing a fact the handler never produces. consumes.evidence added 18.9.2026 (owner's Commit 1, M0-FACT-CONTRACT-V1.md část C): invoice.extract now also requires document.type.invoiceConfirmed, mirroring exactly how document.stamp's facts.json already gates on document.type.validated — the difference is that no module here declares PRODUCING document.type.invoiceConfirmed (see its own entry in contracts/facts.v1.json for why), so plan() refuses invoice.extract until an artifact's own classification actually sealed that evidence, never approximates it from document.original alone.",
   "module": "invoice-extractor",
   "capabilities": {
     "invoice.extract": {
-      "consumes": { "artifacts": ["document.original"] },
+      "consumes": { "artifacts": ["document.original"], "evidence": ["document.type.invoiceConfirmed"] },
       "produces": { "facts": ["supplier.companyId", "supplier.bankAccount", "invoice.number", "invoice.totalGross"] }
     }
   }

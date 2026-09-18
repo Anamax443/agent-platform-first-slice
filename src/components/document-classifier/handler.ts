@@ -1,7 +1,7 @@
 // document.classify/1: AI capability. Untrusted document text goes in, one enum value with provenance comes out (F2).
 import type { LlmAdapter, TokenUsage } from "../../adapters/llm.js";
 import { capabilityError, DependencyTimeout, platformError, sha256, stripMimeAttachments, withTimeout } from "../../platform/api.js";
-import type { ArtifactReader, Clock, FieldValue, Handler, HandlerOutcome, Provenance } from "../../platform/api.js";
+import type { ArtifactReader, Clock, EvidenceWriter, FieldValue, Handler, HandlerInput, HandlerOutcome, Provenance } from "../../platform/api.js";
 import descriptor from "./descriptor.json" with { type: "json" };
 import inputSchema from "./input.schema.json" with { type: "json" };
 import outputSchema from "./output.schema.json" with { type: "json" };
@@ -11,12 +11,30 @@ export { descriptor, inputSchema, outputSchema };
 /** The allowlist is the contract (output schema), not a constant hidden in code. */
 export const DOCUMENT_TYPES: readonly string[] = outputSchema.properties.documentType.properties.value.enum;
 
+// Evidence identity for the invoice-confirmed gate (M0-FACT-CONTRACT-V1.md část C, owner's Commit 1, 18.9.2026):
+// exported so src/platform/attachment-fanout.ts can recognize this producer's own sealed records in the Žlab
+// without re-typing the literals — same reasoning as INGEST_HANDLER_ID below and cz-company-verify's producerId.
+export const CLASSIFY_EVIDENCE_PRODUCER_ID = "document.classify";
+/** inputField is the FACT key this evidence attests (document.type), not the evidence key itself — same convention
+ * cz-company-verify's handler.ts documents ("inputField = the fact namespace key, not the payload's local name"). */
+export const CLASSIFY_EVIDENCE_INPUT_FIELD = "document.type";
+/** The only result value ever sealed under CLASSIFY_EVIDENCE_INPUT_FIELD by this producer — seal() below refuses
+ * every other classification result on purpose (contracts/facts.v1.json's document.type.invoiceConfirmed entry). */
+export const CLASSIFY_EVIDENCE_INVOICE_RESULT = "INVOICE";
+
 export interface ClassifierDeps {
   artifacts: ArtifactReader;
   /** Strategy name -> model. "llm" and "keyword" in the first slice; "human-corrected" needs no model. */
   models: Record<string, LlmAdapter>;
   clock: Clock;
   modelTimeoutMs?: number;
+  /**
+   * Bound to document.classify's own identity by the caller (platform-wiring.ts / slice.ts), same "present = used,
+   * absent = skipped, never a hard dependency" shape as cz-company-verify's own `evidence?` (CompanyVerifierDeps).
+   * seal() below writes through this ONLY when the classification result is INVOICE — never for CONTRACT/OTHER —
+   * that asymmetry is what makes invoice.extract's new evidence gate (invoice-extractor/facts.json) a real one.
+   */
+  evidence?: EvidenceWriter;
 }
 
 interface Input {
@@ -56,7 +74,18 @@ export function createDocumentClassifier(deps: ClassifierDeps): Handler {
     ...(provenance ? { provenance } : {}),
   });
 
-  return async ({ message, context }) => {
+  // owner's Commit 1, 18.9.2026: seal document.type.invoiceConfirmed ONLY when value is literally "INVOICE" — every
+  // other classified value (CONTRACT, OTHER) writes nothing, so invoice-extractor's new consumed evidence key
+  // (invoice-extractor/facts.json) is a real gate, not a cosmetic one. inputField names the FACT this attests
+  // (document.type), same convention as cz-company-verify's own seal() — never the evidence key, never the payload's
+  // local field name.
+  const seal = (input: HandlerInput, value: string): void => {
+    if (value !== CLASSIFY_EVIDENCE_INVOICE_RESULT) return;
+    deps.evidence?.write(input, { inputField: CLASSIFY_EVIDENCE_INPUT_FIELD, inputValueHash: sha256(value), result: value });
+  };
+
+  return async (input) => {
+    const { message, context } = input;
     const p = message.payload as unknown as Input;
     const art = deps.artifacts.get(p.artifactId);
     if (!art) return failed(capabilityError("ARTIFACT_NOT_FOUND", "BUSINESS", false, "artifact not found", { artifactId: p.artifactId }));
@@ -72,6 +101,7 @@ export function createDocumentClassifier(deps: ClassifierDeps): Handler {
         return failed(capabilityError("CORRECTION_INVALID", "VALIDATION", false, "human correction is missing or outside the documentType allowlist"));
       }
       const documentType: FieldValue<string> = { value: p.documentType, source: "human", confidence: 1, trustLevel: "human-corrected" };
+      seal(input, documentType.value);
       return { status: "SUCCEEDED", payload: { artifactId: art.artifactId, sha256: art.sha256, documentType }, provenance: base };
     }
 
@@ -119,6 +149,7 @@ export function createDocumentClassifier(deps: ClassifierDeps): Handler {
       confidence: strategy === "llm" ? 0.9 : 0.6,
       trustLevel: "untrusted-derived",
     };
+    seal(input, value);
     return {
       status: "SUCCEEDED",
       payload: { artifactId: art.artifactId, sha256: art.sha256, documentType },

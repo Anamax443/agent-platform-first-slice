@@ -8,7 +8,7 @@
 // another LlmAdapter, not a special code path.
 import type { LlmAdapter, TokenUsage } from "../../adapters/llm.js";
 import { capabilityError, DependencyTimeout, platformError, sha256, withTimeout } from "../../platform/api.js";
-import type { ArtifactReader, Clock, FieldValue, Handler, HandlerOutcome, Provenance } from "../../platform/api.js";
+import type { ArtifactWriter, Clock, FieldValue, Handler, HandlerOutcome, Provenance } from "../../platform/api.js";
 import descriptor from "./descriptor.json" with { type: "json" };
 import inputSchema from "./input.schema.json" with { type: "json" };
 import outputSchema from "./output.schema.json" with { type: "json" };
@@ -16,7 +16,13 @@ import outputSchema from "./output.schema.json" with { type: "json" };
 export { descriptor, inputSchema, outputSchema };
 
 export interface ExtractorDeps {
-  artifacts: ArtifactReader;
+  /**
+   * ArtifactWriter, not just ArtifactReader (owner's Commit 1, 18.9.2026): the four extracted fields are real
+   * business VALUE data, so — same invariant as document.stamp's write, docs/M0-FACT-CONTRACT-V1.md invariant D6
+   * ("v Žlabu nikdy není hodnota") — they must land as a derived Artifact via artifacts.derive(), never sealed
+   * into the Žlab as an Evidence value. See deriveExtraction() below.
+   */
+  artifacts: ArtifactWriter;
   /** Strategy name -> model. "llm" and "rules" in the first slice (mirrors ClassifierDeps's "llm"/"keyword"). */
   models: Record<string, LlmAdapter>;
   clock: Clock;
@@ -149,15 +155,40 @@ export function createInvoiceExtractor(deps: ExtractorDeps): Handler {
     // becomes a typed field; nothing else the candidate object carries (an extra key, an instruction, a made-up
     // fifth field) can reach the payload — the handler reads exactly four keys by name, and
     // additionalProperties:false on the output schema is the second, independent gate.
-    const payload: Record<string, unknown> = { artifactId: art.artifactId, sha256: art.sha256 };
+    const fields: Record<string, unknown> = {};
     const companyId = field(normalizeIco(candidate.companyId), strategy);
-    if (companyId) payload.companyId = companyId;
+    if (companyId) fields.companyId = companyId;
     const bankAccount = field(normalizeBankAccount(candidate.bankAccount), strategy);
-    if (bankAccount) payload.bankAccount = bankAccount;
+    if (bankAccount) fields.bankAccount = bankAccount;
     const invoiceNumber = field(normalizeInvoiceNumber(candidate.invoiceNumber), strategy);
-    if (invoiceNumber) payload.invoiceNumber = invoiceNumber;
+    if (invoiceNumber) fields.invoiceNumber = invoiceNumber;
     const totalWithVat = field(normalizeTotal(candidate.totalWithVat), strategy);
-    if (totalWithVat) payload.totalWithVat = totalWithVat;
+    if (totalWithVat) fields.totalWithVat = totalWithVat;
+
+    // The four fields above are real extracted business VALUE data (M0-FACT-CONTRACT-V1.md invariant D6: "v Žlabu
+    // nikdy není hodnota"), so they land as a derived Artifact — never as an Evidence value — same home
+    // document.stamp's own write uses. Same relay-before-SUCCEEDED discipline as stamp-handler.ts's run()
+    // (commit a4ba5d5, found live on farm-bass443 2026-09-17): a split-host deployment's derived artifact must
+    // reach the gateway before this reports SUCCEEDED, or a retry after a failed relay would replay a SUCCEEDED
+    // outcome nothing downstream can ever look up. `deps.artifacts.flush` is absent on the in-process ArtifactStore
+    // (nothing to relay), so this is a no-op there — same "present = used, absent = skipped" shape as elsewhere.
+    const derived = deps.artifacts.derive(art.artifactId, JSON.stringify(fields), descriptor.module);
+    if (deps.artifacts.flush) {
+      try {
+        await deps.artifacts.flush();
+      } catch (e) {
+        return failed(
+          capabilityError("ARTIFACT_RELAY_FAILED", "DEPENDENCY", true, "derived artifact could not be relayed to the gateway", {
+            artifactId: derived.artifactId,
+            detail: e instanceof Error ? e.message : String(e),
+          }),
+          usage,
+          { ...base, modelId: model.modelId, promptVersion: model.promptVersion },
+        );
+      }
+    }
+
+    const payload: Record<string, unknown> = { artifactId: art.artifactId, sha256: art.sha256, extractedArtifactId: derived.artifactId, extractedSha256: derived.sha256, ...fields };
 
     return {
       status: "SUCCEEDED",

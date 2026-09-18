@@ -4,6 +4,8 @@ import documentIntakeV2 from "../../workflows/document-intake.v2.json" with { ty
 import mailIntakeV1 from "../../workflows/mail-intake.v1.json" with { type: "json" };
 import mailIntakeV2 from "../../workflows/mail-intake.v2.json" with { type: "json" };
 import mailIntakeV3 from "../../workflows/mail-intake.v3.json" with { type: "json" };
+import attachmentClassifyV1 from "../../workflows/attachment-classify.v1.json" with { type: "json" };
+import attachmentExtractV1 from "../../workflows/attachment-extract.v1.json" with { type: "json" };
 import workflowSchema from "../../workflows/workflow-definition.schema.json" with { type: "json" };
 import type { WorkflowDef } from "./orchestrator.js";
 import { compileSchema } from "./schemas.js";
@@ -40,7 +42,7 @@ function* stepRefs(value: unknown): Generator<string> {
  * Keyed twice: `<name>@<version>` for every version (running instances pin theirs, WF-VER-001) and `<name>` for the latest.
  */
 export const WORKFLOW_DEFINITIONS: Readonly<Record<string, WorkflowDef>> = (() => {
-  const all = [documentIntakeV1, documentIntakeV2, mailIntakeV1, mailIntakeV2, mailIntakeV3].map(parseWorkflowDef);
+  const all = [documentIntakeV1, documentIntakeV2, mailIntakeV1, mailIntakeV2, mailIntakeV3, attachmentClassifyV1, attachmentExtractV1].map(parseWorkflowDef);
   const out: Record<string, WorkflowDef> = {};
   for (const d of all) {
     const key = `${d.workflow}@${d.workflowVersion}`;
