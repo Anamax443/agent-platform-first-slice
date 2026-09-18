@@ -33,14 +33,16 @@ import { MemoryEvidenceStore } from "../src/platform/evidence.js";
 import { newEntityId } from "../src/platform/fact-address.js";
 import { newId } from "../src/platform/ids.js";
 import type { IdempotencyStore } from "../src/platform/idempotency.js";
-import { Journal } from "../src/platform/journal.js";
+import { Journal, type Instance, type StepRecord } from "../src/platform/journal.js";
 import type { Installation } from "../src/installation.js";
-import { Orchestrator } from "../src/platform/orchestrator.js";
+import { ProcessCrash } from "../src/platform/errors.js";
+import { Orchestrator, type WorkflowDef } from "../src/platform/orchestrator.js";
 import { plan } from "../src/platform/planner.js";
-import { ReviewService } from "../src/platform/review.js";
+import { InMemoryReviewTaskStore, ReviewService } from "../src/platform/review.js";
 import { workflowDef } from "../src/platform/workflow.js";
 import { FACT_CATALOG } from "../deploy/cloudflare/apf-gateway/src/fact-catalog-bundle.js";
 import { CLASSIFY, COMPANY_VERIFY, VAT_VERIFY, wirePlatform, type Wiring } from "../deploy/cloudflare/apf-gateway/src/platform-wiring.js";
+import { INGEST_HANDLER_ID } from "../src/components/mail-ingest/handler.js";
 import { CONTRACT_CZ, FAKE_SECRETS, INVOICE_CZ, INVOICE_MAIL, LOCAL_FAKES, ORCHESTRATOR, TENANT_A, tmpDir } from "./harness/index.js";
 import { IDEMPOTENCY_DDL, openSql, TestIdempotencyStore } from "./harness/sqlite.js";
 import type { WorkersAiBinding } from "../src/adapters/workers-ai.js";
@@ -58,11 +60,19 @@ import type { ResultEnvelope, MessageEnvelope } from "../src/platform/types.js";
  * differs from LOCAL_FAKES only in `allowUnconfiguredTrustedProviders`, to prove the gate reacts to that one
  * field and nothing else changes.
  */
-function buildRealWiring(opts: { idempotency?: IdempotencyStore; installation?: Installation } = {}) {
+/**
+ * `durable` (RG2-D, 2026-09-18): the pieces that on the farm live in the Durable Object's own ctx.storage.sql and
+ * therefore SURVIVE an isolate eviction (index.ts's WorkflowInstance rebuilds `wiring()`/`orchestratorFor()` over
+ * them on every request/alarm) — journal, review-task store, audit, artifact store. The RG2-D describe block below
+ * passes the same instances to two independently-built wirings to simulate exactly that: everything else
+ * (transport, ExecutorHost, Gateway, Router) is rebuilt fresh, exactly as a restarted object would. Every
+ * pre-existing call site omits it and gets fresh in-memory instances, unchanged.
+ */
+function buildRealWiring(opts: { idempotency?: IdempotencyStore; installation?: Installation; durable?: { journal?: Journal; reviewStore?: InMemoryReviewTaskStore; audit?: Audit; artifacts?: ArtifactStore } } = {}) {
   const clock = new FakeClock("2026-09-18T08:00:00Z");
-  const artifacts = new ArtifactStore(clock);
-  const audit = new Audit(clock);
-  const journal = new Journal();
+  const artifacts = opts.durable?.artifacts ?? new ArtifactStore(clock);
+  const audit = opts.durable?.audit ?? new Audit(clock);
+  const journal = opts.durable?.journal ?? new Journal();
   const notWired = async (_m: MessageEnvelope, _actorId: string): Promise<ResultEnvelope> => {
     throw new Error("capability not wired in this test");
   };
@@ -86,9 +96,13 @@ function buildRealWiring(opts: { idempotency?: IdempotencyStore; installation?: 
     // only the new describe block below passes one, to prove wirePlatform()'s ingestHost actually honors it.
     ...(opts.idempotency ? { idempotency: opts.idempotency } : {}),
   });
-  const review = new ReviewService(clock, audit);
-  const orchestratorFor = (def: ReturnType<typeof workflowDef>) => new Orchestrator({ workflow: def, transport: wiring.transport, journal, review, audit, clock, actorId: ORCHESTRATOR });
-  return { wiring, artifacts, audit, journal, orchestratorFor, clock };
+  const review = new ReviewService(clock, audit, opts.durable?.reviewStore ?? new InMemoryReviewTaskStore());
+  // RG2-D (2026-09-18): mirrors index.ts's own orchestratorFor() exactly, `...(wiring.reconcilers ? { reconcilers:
+  // wiring.reconcilers } : {})` included — before RG2-D neither this helper nor index.ts passed `reconcilers` at
+  // all, which is the wiring half of the gap RG2-D closes (see Wiring.reconcilers's doc comment in platform-wiring.ts).
+  const orchestratorFor = (def: ReturnType<typeof workflowDef>) =>
+    new Orchestrator({ workflow: def, transport: wiring.transport, journal, review, audit, clock, actorId: ORCHESTRATOR, ...(wiring.reconcilers ? { reconcilers: wiring.reconcilers } : {}) });
+  return { wiring, artifacts, audit, journal, review, orchestratorFor, clock };
 }
 
 /**
@@ -392,5 +406,169 @@ describe("Reliability Gate R4: a trusted provider left unconfigured fails loud, 
     const vatResult = await wiring.transport.dispatch(directCommand(clock, VAT_VERIFY, { dic: "27074358" }), ORCHESTRATOR);
     expect(vatResult.status).toBe("SUCCEEDED");
     expect(vatResult.payload).toMatchObject({ found: true, reliability: "NE", companyName: "Testovací Spolehlivý s.r.o." });
+  });
+});
+
+describe("RG2-D: a mail.ingest step crashed mid-dispatch is no longer stuck forever, invisibly — through the REAL wirePlatform() reconcilers + Orchestrator.recover()", () => {
+  // The bug (owner's own framing, RG2-D): ExecutorHost writes a RESERVED idempotency row before mail.ingest's run()
+  // executes (executor-host.ts execute(), step 8) and only resolves/releases it if run() returns normally. A crash
+  // between those two points (ProcessCrash re-thrown unresolved at executor-host.ts's catch block, router.ts's
+  // RES-CRASH-001) leaves the row RESERVED forever — and, before RG2-D, index.ts's orchestratorFor() never passed
+  // `reconcilers` at all, so even though alarm() -> recover() already flipped the step to UNKNOWN_OUTCOME every
+  // tick, reconcile() found no reconciler for "mail.ingest" and went to review after ZERO attempts, never touching
+  // ExecutorHost.reconcilerFor() (the only hook able to act on that row) and never even logging that a reconciler
+  // had been tried. This block drives the REAL composition — wirePlatform()'s own Wiring.reconcilers, spread into
+  // Orchestrator exactly as index.ts's orchestratorFor() does (buildRealWiring() above), the real ExecutorHost
+  // .reconcilerFor("mail.ingest"), the real mail-ingest handler's `reconcile` — not a hand-rolled stand-in.
+  //
+  // Only the workflow definition is trimmed: the REAL mail-intake ingest StepDef (sideEffects internal-write,
+  // technicalRetries 2, reconciliationBudget unset -> orchestrator.ts's default 3), taken verbatim from
+  // workflowDef("mail-intake").steps[0], as a one-step workflow. The remaining mail-intake steps
+  // (document.stamp/email.send) are REMOTE dispatches to other Workers in this composition (Wiring.reconcilers's
+  // doc comment) and buildRealWiring()'s `notWired` throws for them — they are explicitly out of RG2-D's scope.
+
+  /** The real ArtifactStore, except the FIRST put() dies like an evicted isolate would — mail-ingest/handler.ts's
+   * run() re-throws anything that is not StorageFull, executor-host.ts re-throws a ProcessCrash by name, router.ts
+   * likewise (RES-CRASH-001), so the orchestrator's run() rejects with the journal still saying RUNNING and the
+   * idempotency row still RESERVED: the exact durable state a real crash leaves behind. */
+  class CrashOnceArtifactStore extends ArtifactStore {
+    crashed = false;
+    override put(input: { tenantId: string; bytes: string; receivedFrom: string }): Artifact {
+      if (!this.crashed) {
+        this.crashed = true;
+        throw new ProcessCrash("mail.ingest:artifacts.put");
+      }
+      return super.put(input);
+    }
+  }
+
+  const operator = { actorId: "user-operator", role: "document.operator", tenantId: TENANT_A } as const;
+
+  function ingestOnlyWorkflow(): WorkflowDef {
+    const real = workflowDef("mail-intake");
+    const ingestStep = real.steps[0];
+    if (!ingestStep || ingestStep.capability !== "mail.ingest") throw new Error("test setup: mail-intake's first step is expected to be mail.ingest");
+    return { ...real, steps: [ingestStep] };
+  }
+
+  /** Crash mid-dispatch, then discard everything except what ctx.storage.sql would keep (journal, review store,
+   * audit, artifacts, the durable idempotency table) — returns the "restarted object" halves ready for recover(). */
+  async function crashThenRestart() {
+    const file = join(tmpDir(), "gw-rg2d-idem.sqlite");
+    const { sql } = openSql(file);
+    sql.exec(IDEMPOTENCY_DDL);
+    const store = new TestIdempotencyStore(sql, new FakeClock("2026-09-18T08:00:00Z"));
+    const durableClock = new FakeClock("2026-09-18T08:00:00Z");
+    const durable = { journal: new Journal(), reviewStore: new InMemoryReviewTaskStore(), audit: new Audit(durableClock), artifacts: new CrashOnceArtifactStore(durableClock) };
+    const def = ingestOnlyWorkflow();
+
+    const before = buildRealWiring({ idempotency: store, durable });
+    const orchestratorBefore = before.orchestratorFor(def);
+    const started = orchestratorBefore.start({ tenantId: TENANT_A, rawMail: INVOICE_MAIL, receivedFrom: "test-harness" });
+    await expect(orchestratorBefore.run(started.workflowId)).rejects.toThrow(/process crashed/);
+
+    // The durable state a real eviction leaves behind — and the precondition of the bug this block closes.
+    const crashedInst = durable.journal.get(started.workflowId) as Instance;
+    expect(crashedInst.status).toBe("RUNNING");
+    const crashedStep = crashedInst.steps.find((s) => s.capability === "mail.ingest") as StepRecord;
+    expect(crashedStep.status).toBe("RUNNING");
+    const dedupKey = `${TENANT_A} ${INGEST_HANDLER_ID} ${crashedStep.idempotencyKey}`;
+    expect((await store.peek(dedupKey))?.status).toBe("RESERVED");
+    expect(durable.audit.byKind("write-intent")).toHaveLength(1);
+    expect(durable.audit.byKind("write-done")).toHaveLength(0);
+
+    // Restart: a brand-new wiring over the same durable pieces, `before` never touched again.
+    const after = buildRealWiring({ idempotency: store, durable });
+    return { after, def, store, durable, dedupKey, workflowId: started.workflowId, idempotencyKey: crashedStep.idempotencyKey };
+  }
+
+  it("(a)+(b) recover() flips the crashed step to UNKNOWN_OUTCOME, reconcile() actually reaches the REAL mail.ingest reconciler 3 times (never skipped as unwired), and ends in a visible UNKNOWN_OUTCOME_UNRESOLVED review task", async () => {
+    const { after, def, store, durable, dedupKey, workflowId, idempotencyKey } = await crashThenRestart();
+    // The one thing RG2-D's wiring half adds: the live composition now hands the orchestrator a reconciler for mail.ingest.
+    expect(after.wiring.reconcilers).toBeDefined();
+    expect(typeof after.wiring.reconcilers?.["mail.ingest"]).toBe("function");
+
+    const recovered = await after.orchestratorFor(def).recover();
+    expect(recovered).toHaveLength(1);
+    const inst = recovered[0] as Instance;
+    const step = inst.steps.find((s) => s.capability === "mail.ingest") as StepRecord;
+
+    // (a) recover() did its part: the RUNNING write step became UNKNOWN_OUTCOME, keyed by its own idempotency key.
+    expect(durable.audit.byKind("reconciliation").some((r) => String(r.details?.reason).includes("recovered RUNNING write step as UNKNOWN_OUTCOME"))).toBe(true);
+    expect(step.reconciliationRef).toBe(idempotencyKey);
+    // (a) reconcile() genuinely ran the reconciler — `reconciliationAttempts` is only ever incremented inside
+    // orchestrator.ts's `while (reconciler && ...)` loop; with `reconcilers` still unset (pre-RG2-D) it stays 0
+    // (the negative control below proves that). Budget = orchestrator.ts's default 3, the real StepDef sets none.
+    expect(step.reconciliationAttempts).toBe(3);
+    // ...and it was the REAL ExecutorHost.reconcilerFor("mail.ingest") hook, not a stand-in: that hook appends its
+    // own `reconciliation` audit record carrying `capability` + the dedup idempotencyKey + the handler's result,
+    // once per attempt (executor-host.ts reconcilerFor()) — three UNKNOWNs, honestly reported by the handler's
+    // always-UNKNOWN reconcile (mail-ingest/handler.ts, see its doc comment for why UNKNOWN and never a guess).
+    const hostLevel = durable.audit.byKind("reconciliation").filter((r) => r.capability === "mail.ingest");
+    expect(hostLevel).toHaveLength(3);
+    for (const r of hostLevel) expect(r.details).toMatchObject({ idempotencyKey, result: "UNKNOWN" });
+    const orchestratorLevel = durable.audit.byKind("reconciliation").filter((r) => r.details?.stepId === "ingest" && typeof r.details?.attempt === "number");
+    expect(orchestratorLevel.map((r) => r.details?.attempt)).toEqual([1, 2, 3]);
+
+    // (b) No longer "stuck forever, invisible": a real, open, discoverable ReviewService task for the operator role.
+    expect(inst.status).toBe("WAITING");
+    expect(inst.published).toEqual({ status: "UNKNOWN_OUTCOME", reconciliation: "AWAITING_REVIEW" });
+    expect(inst.waiting).toMatchObject({ reason: "REVIEW", stepId: "ingest" });
+    const open = after.review.open();
+    expect(open).toHaveLength(1);
+    expect(open[0]).toMatchObject({ workflowId, stepId: "ingest", reasonCode: "UNKNOWN_OUTCOME_UNRESOLVED", requiredRole: def.operatorRole, allowedDecisions: ["APPROVE", "REJECT"], currentValue: idempotencyKey });
+    expect(open[0]?.reviewTaskId).toBe(inst.waiting?.reviewTaskId);
+
+    // Never a blind resend: mail.ingest's run() was NOT re-executed by recovery (no second write-intent, no new
+    // artifact), and the RESERVED row was neither resolved nor released — reconcilerFor() only does that on
+    // SUCCEEDED/FAILED, and nothing anywhere deletes it on age (no TTL: the owner's explicit rejection). That the
+    // row stays RESERVED even after the human resolves the task below is the documented, bounded residual
+    // (mail-ingest/handler.ts's reconcile doc comment) — asserted here so a future "cleanup" cannot slip in silently.
+    expect(durable.audit.byKind("write-intent")).toHaveLength(1);
+    expect(durable.artifacts.count()).toBe(0);
+    expect((await store.peek(dedupKey))?.status).toBe("RESERVED");
+  });
+
+  it("(c) a human APPROVE on that task ('I confirmed by hand this mail was ingested') resumes the instance through the unmodified resumeAfterReview(), still without re-running mail.ingest", async () => {
+    const { after, def, store, durable, dedupKey, workflowId } = await crashThenRestart();
+    const orchestrator = after.orchestratorFor(def);
+    const waiting = (await orchestrator.recover())[0] as Instance;
+    expect(waiting.steps.find((s) => s.capability === "mail.ingest")?.reconciliationAttempts).toBe(3); // reached the real reconciler, same as (a)
+    const taskId = waiting.waiting?.reviewTaskId as string;
+
+    // The operator found the ingested mail by hand and points the workflow at it — resumeAfterReview()'s
+    // UNKNOWN_OUTCOME_UNRESOLVED branch (orchestrator.ts, pre-existing, untouched by RG2-D) takes the correction
+    // as the step's payload and marks the step SUCCEEDED with `confirmedBy`.
+    const decided = after.review.decide(taskId, { ...operator, decision: "APPROVE", correction: { artifactId: "art-confirmed-by-hand", confirmedInStore: true } });
+    expect(decided.ok).toBe(true);
+    const done = await orchestrator.resumeAfterReview(workflowId, taskId);
+    expect(done.status).toBe("SUCCEEDED");
+    expect(done.published).toEqual({ status: "SUCCEEDED" });
+    expect(done.waiting).toBeUndefined();
+    const step = done.steps.find((s) => s.capability === "mail.ingest") as StepRecord;
+    expect(step.status).toBe("SUCCEEDED");
+    expect(step.result?.payload).toMatchObject({ artifactId: "art-confirmed-by-hand", confirmedInStore: true, confirmedBy: operator.actorId });
+    expect(step.attempt).toBe(1);
+    expect(after.review.open()).toHaveLength(0);
+
+    // Still never a resend, and the residual risk exactly as documented: the row stays RESERVED after the human
+    // resolution too (workflow-instance-scoped key, so it can never block a different instance).
+    expect(durable.audit.byKind("write-intent")).toHaveLength(1);
+    expect(durable.artifacts.count()).toBe(0);
+    expect((await store.peek(dedupKey))?.status).toBe("RESERVED");
+  });
+
+  it("negative control: the SAME crash recovered by an orchestrator built the pre-RG2-D way (no `reconcilers`) reaches review after ZERO reconciliation attempts — proving the assertions above distinguish 'wired' from 'silently skipped'", async () => {
+    const { after, def, durable } = await crashThenRestart();
+    // The exact `new Orchestrator({...})` shape index.ts's orchestratorFor() had before RG2-D: no `reconcilers`.
+    const preRg2d = new Orchestrator({ workflow: def, transport: after.wiring.transport, journal: durable.journal, review: after.review, audit: durable.audit, clock: after.clock, actorId: ORCHESTRATOR });
+    const inst = (await preRg2d.recover())[0] as Instance;
+    const step = inst.steps.find((s) => s.capability === "mail.ingest") as StepRecord;
+    expect(inst.status).toBe("WAITING");
+    expect(step.reconciliationAttempts).toBe(0);
+    expect(durable.audit.byKind("reconciliation").filter((r) => r.capability === "mail.ingest")).toHaveLength(0);
+    // The review task itself was always created (reconcile() with no reconciler still escalates) — the gap was
+    // never "no task"; it was "the one reconciler that exists is never even consulted, and nothing says so".
+    expect(after.review.open()[0]?.reasonCode).toBe("UNKNOWN_OUTCOME_UNRESOLVED");
   });
 });

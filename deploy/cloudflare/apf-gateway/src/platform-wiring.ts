@@ -24,7 +24,7 @@ import { iso, type Clock } from "../../../../src/platform/clock.js";
 import { CredentialResolver } from "../../../../src/platform/credentials.js";
 import { EvidenceLedger, type EvidenceStore } from "../../../../src/platform/evidence.js";
 import { EvidenceWriter } from "../../../../src/platform/evidence-writer.js";
-import { ExecutorHost } from "../../../../src/platform/executor-host.js";
+import { ExecutorHost, type Reconciler } from "../../../../src/platform/executor-host.js";
 import { Gateway, IdentityProvider } from "../../../../src/platform/gateway.js";
 import type { IdempotencyStore } from "../../../../src/platform/idempotency.js";
 import { policyFor } from "../../../../src/platform/policy.js";
@@ -236,6 +236,23 @@ export interface Wiring {
   keyId: string;
   /** The object's Žlab, present when WiringOptions.evidence was given. Read-only use outside the handlers (stats, import). */
   evidence?: EvidenceLedger;
+  /**
+   * RG2-D (2026-09-18, "stale RESERVED reconciliation"): src/platform/orchestrator.ts's reconcile() looks up
+   * `this.opts.reconcilers?.[def.capability]` to attempt automatic recovery of an UNKNOWN_OUTCOME step before ever
+   * falling back to human review — but index.ts's orchestratorFor() builds one `Orchestrator` per HTTP call/alarm
+   * tick and, before this field existed, never passed OrchestratorOpts.reconcilers at all, so that lookup always
+   * came back undefined (safe — reconcile() with no reconciler still creates a review task — but it never even
+   * tried the one reconciler that could resolve mail.ingest's stuck-RESERVED case automatically). Exposing this
+   * narrower `capability -> Reconciler` map (rather than `ingestHost` itself, the ExecutorHost it is built from)
+   * keeps orchestratorFor() from needing to know which capabilities of which host are reconcile-capable — it just
+   * spreads this map into OrchestratorOpts.reconcilers. Built once inside wirePlatform() below, currently just
+   * `{ "mail.ingest": ingestHost.reconcilerFor("mail.ingest") }` — the only host wired IN-PROCESS inside this
+   * object with a reconcile-capable handler today (mail-ingest/handler.ts's own `reconcile` field). document.stamp
+   * and email.send are dispatched to SEPARATE Cloudflare Workers (apf-document-host, apf-email-executor) over a
+   * signed remote dispatch, not local calls within this object's own wirePlatform() output — reconciling those
+   * needs a new remote reconcile RPC, a bigger, separate item, deliberately out of scope here.
+   */
+  reconcilers?: Record<string, Reconciler>;
 }
 
 export function wirePlatform(o: WiringOptions): Wiring {
@@ -431,6 +448,15 @@ export function wirePlatform(o: WiringOptions): Wiring {
     capabilities: [{ name: "mail.ingest", version: "1", inputSchema: ingest.inputSchema, handler: ingestHost.handlerFor("mail.ingest") }],
   });
 
+  // RG2-D (2026-09-18): the one reconciler map this object can build from what it wires in-process — see
+  // Wiring.reconcilers's own doc comment above for why it is a map and not `ingestHost` itself, and
+  // mail-ingest/handler.ts's `reconcile` field for why the reconciler it wraps is honestly always UNKNOWN.
+  // Built AFTER ingestHost.register() above: reconcilerFor() looks the handler spec up lazily at call time
+  // (executor-host.ts), so ordering is not load-bearing for correctness, but building it here keeps "every
+  // reconcile-capable in-process host" in one place next to the hosts themselves. Same shape as src/slice.ts's
+  // own `reconcilers` object (the test/reference composition), minus document.stamp/email.send, which are remote here.
+  const reconcilers: Record<string, Reconciler> = { "mail.ingest": ingestHost.reconcilerFor("mail.ingest") };
+
   const inProcess = new InProcessTransport(gateway, router);
   const documentHost = o.documentHost ? new RemoteHostTransport(gateway, o.documentHost, DOCUMENT_HOST_ORIGIN) : undefined;
   const emailExecutor = o.emailExecutor ? new RemoteHostTransport(gateway, o.emailExecutor, EMAIL_EXECUTOR_ORIGIN) : undefined;
@@ -452,5 +478,5 @@ export function wirePlatform(o: WiringOptions): Wiring {
       return o.notWired(message, actorId);
     },
   };
-  return { transport, signing, keyId: o.keyId, ...(evidence ? { evidence } : {}) };
+  return { transport, signing, keyId: o.keyId, ...(evidence ? { evidence } : {}), reconcilers };
 }

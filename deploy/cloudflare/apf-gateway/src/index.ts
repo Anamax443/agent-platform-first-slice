@@ -1472,6 +1472,17 @@ export class WorkflowInstance extends DurableObject<Env> {
     return { workflowId: inst.workflowId, artifacts: artifacts.length, r2Deleted };
   }
 
+  /**
+   * RG2-D (2026-09-18, "stale RESERVED reconciliation"): `reconcilers` is now passed through from the Wiring.
+   * Before this, no Orchestrator built here ever received OrchestratorOpts.reconcilers, so orchestrator.ts's
+   * reconcile() — reached every alarm tick via alarm()'s recover() closure below for a stale RUNNING write step —
+   * always found `this.opts.reconcilers?.[capability]` undefined and went to human review after ZERO reconciliation
+   * attempts, never touching the ExecutorHost.reconcilerFor() hook that is the only thing able to clear a stuck
+   * RESERVED idempotency row (executor-host.ts). See platform-wiring.ts's Wiring.reconcilers doc comment for what
+   * the map holds today (mail.ingest only) and why. Spread conditionally (the same `...(x ? { x } : {})` idiom
+   * wirePlatform()'s own return uses for `evidence`) so a Wiring without a map passes nothing, not an explicit
+   * `reconcilers: undefined`.
+   */
   private orchestratorFor(def: WorkflowDef, wiring: Wiring): Orchestrator {
     return new Orchestrator({
       workflow: def,
@@ -1481,6 +1492,7 @@ export class WorkflowInstance extends DurableObject<Env> {
       audit: this.audit,
       clock: this.clock,
       actorId: installation.profile.roles.orchestrator,
+      ...(wiring.reconcilers ? { reconcilers: wiring.reconcilers } : {}),
     });
   }
 
