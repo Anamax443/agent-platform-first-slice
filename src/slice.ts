@@ -11,6 +11,7 @@ import { classifyByRules, FakeInvoiceExtractorAdapter, FakeLlmAdapter, KeywordCl
 import { FakeRegistryAdapter, type RegistryAdapter } from "./adapters/registry.js";
 import { FakeSmtpAdapter } from "./adapters/smtp.js";
 import * as classifier from "./components/document-classifier/handler.js";
+import * as intentResolver from "./components/intent-resolver/handler.js";
 import * as extractor from "./components/invoice-extractor/handler.js";
 import * as validator from "./components/document-validator/handler.js";
 import * as companyVerify from "./components/cz-company-verify/handler.js";
@@ -185,6 +186,31 @@ export function createSlice(installation: Installation, secrets: SecretsSource, 
           clock,
           ...(o.modelTimeoutMs !== undefined ? { modelTimeoutMs: o.modelTimeoutMs } : {}),
           evidence: new EvidenceWriter(evidence, { producerId: "document.classify", capabilityVersion: "1", buildHash, ...authorityOf("document.classify") }, clock),
+        }),
+      },
+    ],
+  });
+  router.register({
+    descriptor: intentResolver.descriptor as never,
+    policies: { "intent.resolve": policy("intent.resolve") },
+    capabilities: [
+      {
+        name: "intent.resolve",
+        version: "1",
+        inputSchema: intentResolver.inputSchema,
+        // Reuses document.classify's own `models` map (its "llm" key), not a dedicated `intentModels` SliceOptions
+        // field: nothing wires intent.resolve into a workflow/conformance path yet (docs/AUTONOMOUS-RUNTIME-V1.md
+        // część 6 krok 6, mechanism only), so no test needs it to answer with a real intent value through
+        // createSlice()'s own defaults today — FakeLlmAdapter's classifyByRules() output would not even be a
+        // member of INTENTS. A caller that DOES need a working fake here constructs one directly (see
+        // tests/intent-resolve.test.ts), same as model-usage.test.ts does for document.classify/invoice.extract.
+        // Add `intentModels?: Record<string, LlmAdapter>` (mirroring `extractModels`) once something needs it.
+        handler: intentResolver.createIntentResolver({
+          artifacts,
+          models,
+          clock,
+          ...(o.modelTimeoutMs !== undefined ? { modelTimeoutMs: o.modelTimeoutMs } : {}),
+          evidence: new EvidenceWriter(evidence, { producerId: "intent.resolve", capabilityVersion: "1", buildHash, ...authorityOf("intent.resolve") }, clock),
         }),
       },
     ],

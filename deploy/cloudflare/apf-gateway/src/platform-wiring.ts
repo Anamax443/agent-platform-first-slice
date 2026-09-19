@@ -10,6 +10,7 @@ import type { RegistryAdapter } from "../../../../src/adapters/registry.js";
 import { WorkersAiAdapter, type WorkersAiBinding } from "../../../../src/adapters/workers-ai.js";
 import { WorkersAiExtractor } from "../../../../src/adapters/extract.js";
 import * as classifier from "../../../../src/components/document-classifier/handler.js";
+import * as intentResolver from "../../../../src/components/intent-resolver/handler.js";
 import * as companyVerify from "../../../../src/components/cz-company-verify/handler.js";
 import * as vatVerify from "../../../../src/components/cz-vat-verify/handler.js";
 import hostDescriptor from "../../../../src/components/document-executor-host/descriptor.json" with { type: "json" };
@@ -41,6 +42,7 @@ export const CLASSIFY = "document.classify";
 export const EXTRACT = "invoice.extract";
 export const COMPANY_VERIFY = "cz.company.verify";
 export const VAT_VERIFY = "cz.vat.verify";
+export const INTENT_RESOLVE = "intent.resolve";
 /** Not a dispatched Router capability (no descriptor, no policy, nothing goes through checkGrant) — reuses
  * installation.ts's `profile.models` keying purely to get its existing "never without a model, fail-closed,
  * unavailable options shown with a reason" guarantee for Kravská dílna's own model choice, the same guarantee
@@ -62,6 +64,7 @@ export const GATEWAY_CAPABILITIES: readonly string[] = [
   ...capabilityNamesOf(extractor.descriptor),
   ...capabilityNamesOf(companyVerify.descriptor),
   ...capabilityNamesOf(vatVerify.descriptor),
+  ...capabilityNamesOf(intentResolver.descriptor),
 ];
 /** Capabilities apf-document-host serves over a signed dispatch across a service binding (celek D). */
 export const DOCUMENT_HOST_CAPABILITIES: readonly string[] = capabilityNamesOf(hostDescriptor);
@@ -79,6 +82,7 @@ export function gatewayCatalog(): CapabilityRecord[] {
     ...catalogOf(extractor.descriptor),
     ...catalogOf(companyVerify.descriptor),
     ...catalogOf(vatVerify.descriptor),
+    ...catalogOf(intentResolver.descriptor),
   ];
 }
 
@@ -154,6 +158,28 @@ function buildAdapters(installation: Installation, secrets: SecretsSource, ai: W
   // Strategy names of the workflow definitions: "llm" = the installation's default model, "keyword" = rules (second signal).
   adapters.llm = adapters[t.default] as LlmAdapter;
   adapters.keyword = new KeywordClassifierAdapter();
+  return adapters;
+}
+
+/** intent.resolve's own adapter set (INTENT_RESOLVE, not CLASSIFY) — same structure as buildAdapters(), a
+ * separate function rather than a parameterized one, matching this codebase's own stated preference for
+ * duplication over premature abstraction (Posudek 1 #3, agent-platform-foundation) until a third capability
+ * needs it too — this IS that third capability; a shared `buildModelAdapters(capability)` helper is arguably
+ * justified now, flagged here as a deliberate follow-up, not bundled into this change. Only "llm" (no
+ * "keyword"/"rules" second strategy — intent.resolve has no cheap deterministic fallback yet, see
+ * intent-resolver/handler.ts's own IntentResolverDeps.models doc comment). */
+function buildIntentAdapters(installation: Installation, secrets: SecretsSource, ai: WorkersAiBinding): Record<string, LlmAdapter> {
+  const t = modelTable(installation, secrets, INTENT_RESOLVE);
+  const adapters: Record<string, LlmAdapter> = {};
+  for (const [key, opt] of Object.entries(t.available)) {
+    adapters[key] =
+      opt.provider === "workers-ai"
+        ? new WorkersAiAdapter(opt.model, ai)
+        : opt.provider === "anthropic"
+          ? new AnthropicAdapter(opt.model, opt.secret as string, { ...(opt.inferenceGeo ? { inferenceGeo: opt.inferenceGeo } : {}) })
+          : new FakeLlmAdapter();
+  }
+  adapters.llm = adapters[t.default] as LlmAdapter;
   return adapters;
 }
 
@@ -293,7 +319,7 @@ export function signingKeyFor(profile: Installation["profile"], signingKeyPem: s
 export function checkWiringPreconditions(o: { installation: Installation; secrets: SecretsSource; signingKeyPem: string | undefined }): { signing: Wiring["signing"]; models: Record<string, string> } {
   const { signing } = signingKeyFor(o.installation.profile, o.signingKeyPem);
   const models: Record<string, string> = {};
-  for (const capability of [CLASSIFY, EXTRACT]) models[capability] = modelTable(o.installation, o.secrets, capability).default;
+  for (const capability of [CLASSIFY, EXTRACT, INTENT_RESOLVE]) models[capability] = modelTable(o.installation, o.secrets, capability).default;
   credentialTable(o.installation, o.secrets, { [ingest.INGEST_HANDLER_ID]: [] });
   return { signing, models };
 }
@@ -355,6 +381,24 @@ export function wirePlatform(o: WiringOptions): Wiring {
           clock: o.clock,
           modelTimeoutMs: o.modelTimeoutMs ?? 60_000,
           ...writerFor(CLASSIFY),
+        }),
+      },
+    ],
+  });
+  router.register({
+    descriptor: intentResolver.descriptor as never,
+    policies: { [INTENT_RESOLVE]: policy(INTENT_RESOLVE) },
+    capabilities: [
+      {
+        name: INTENT_RESOLVE,
+        version: "1",
+        inputSchema: intentResolver.inputSchema,
+        handler: intentResolver.createIntentResolver({
+          artifacts: o.artifacts,
+          models: buildIntentAdapters(o.installation, o.secrets, o.ai),
+          clock: o.clock,
+          modelTimeoutMs: o.modelTimeoutMs ?? 60_000,
+          ...writerFor(INTENT_RESOLVE),
         }),
       },
     ],

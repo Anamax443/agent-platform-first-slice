@@ -1,0 +1,26 @@
+{
+  "$id": "intent.resolve.input.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifactId"],
+  "properties": {
+    "artifactId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "description": "Reference to an Artifact holding the impulse's text (NormalizedImpulse.content, or a channel's own text artifact) — the only way this capability ever sees impulse content, same discipline as document.classify/invoice.extract (an artifact ref, never raw text inline in the payload)."
+    },
+    "strategy": {
+      "type": "string",
+      "enum": ["llm"],
+      "description": "Only 'llm' exists today — no deterministic keyword/rules fallback for 'what does this impulse mean' yet (contrast document.classify's llm+keyword). Field kept, not hardcoded, so a future strategy is additive."
+    },
+    "caseId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "The Case this resolution belongs to, when the caller already knows it — threaded only into EvidenceWriter.write()'s originCaseId option, never trusted as a business value. Absent is valid (no Case-level loop calls this yet, docs/AUTONOMOUS-RUNTIME-V1.md część 6 krok 9)."
+    }
+  }
+}

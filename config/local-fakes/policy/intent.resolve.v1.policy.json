@@ -1,0 +1,15 @@
+{
+  "$comment": "Platform policy (ADR-016): authority artefact. Grants scopes to actors per tenant; the descriptor only claims requiredScopes. Times UTC with Z.",
+  "policyRef": "policy/intent.resolve/v1",
+  "capability": "intent.resolve",
+  "capabilityVersion": "1",
+  "owner": "platform",
+  "validFrom": "2026-09-19T00:00:00Z",
+  "grants": [
+    { "actorId": "svc-orchestrator", "actorType": "service", "scopes": ["intent.resolve"], "tenants": ["tenant-42"], "rateLimit": { "commandsPerMinute": 300 } },
+    { "actorId": "svc-orchestrator-t7", "actorType": "service", "scopes": ["intent.resolve"], "tenants": ["tenant-7"], "rateLimit": { "commandsPerMinute": 300 } },
+    { "actorId": "ai-intent-resolver", "actorType": "ai-agent", "scopes": ["intent.resolve"], "tenants": ["tenant-42"], "rateLimit": { "commandsPerMinute": 60 } }
+  ],
+  "approval": { "required": false },
+  "failClosed": true
+}

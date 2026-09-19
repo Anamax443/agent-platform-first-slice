@@ -28,6 +28,7 @@ import documentClassifierFacts from "../../../../src/components/document-classif
 import documentExecutorHostFacts from "../../../../src/components/document-executor-host/facts.json" with { type: "json" };
 import documentValidatorFacts from "../../../../src/components/document-validator/facts.json" with { type: "json" };
 import emailExecutorFacts from "../../../../src/components/email-executor/facts.json" with { type: "json" };
+import intentResolverFacts from "../../../../src/components/intent-resolver/facts.json" with { type: "json" };
 import invoiceExtractorFacts from "../../../../src/components/invoice-extractor/facts.json" with { type: "json" };
 import mailIngestFacts from "../../../../src/components/mail-ingest/facts.json" with { type: "json" };
 import { FactCatalog, type FactNamespace, type ModuleFacts } from "../../../../src/platform/fact-catalog.js";
@@ -44,6 +45,7 @@ const MODULES: readonly ModuleFacts[] = [
   documentExecutorHostFacts,
   documentValidatorFacts,
   emailExecutorFacts,
+  intentResolverFacts,
   invoiceExtractorFacts,
   mailIngestFacts,
 ] as unknown as ModuleFacts[];

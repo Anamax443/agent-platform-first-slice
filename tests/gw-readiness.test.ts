@@ -280,7 +280,7 @@ describe("checkWiringPreconditions(): the DO-independent construction-time throw
   it("LOCAL_FAKES with its fake secrets and no signing key constructs (ephemeral key, apiHost null) and names the default models", () => {
     const r = checkWiringPreconditions({ installation: LOCAL_FAKES, secrets: FAKE_SECRETS, signingKeyPem: undefined });
     expect(r.signing).toBe("ephemeral");
-    expect(r.models).toEqual({ "document.classify": "fake-llm", "invoice.extract": "fake-llm" });
+    expect(r.models).toEqual({ "document.classify": "fake-llm", "invoice.extract": "fake-llm", "intent.resolve": "fake-llm" });
   });
 
   it("an installation WITH an API host and no signing key fails closed with wirePlatform()'s own message", () => {

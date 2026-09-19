@@ -1,0 +1,39 @@
+{
+  "module": "intent-resolver",
+  "componentVersion": "0.1.0",
+  "runtime": "in-process",
+  "deploymentModel": "CLOUD_SINGLE_TENANT",
+  "tenantMode": "SINGLE",
+  "owner": "first-slice",
+  "verificationProfiles": ["PROVIDER", "AI_CAPABILITY"],
+  "capabilities": [
+    {
+      "name": "intent.resolve",
+      "versions": ["1"],
+      "preferredVersion": "1",
+      "inputSchema": "intent.resolve.input.v1",
+      "outputSchema": "intent.resolve.output.v1",
+      "conformanceSuiteVersion": "1.0",
+      "conformanceTier": "semantic",
+      "executionMode": "sync",
+      "sideEffects": "none",
+      "trustClass": "untrusted-processing",
+      "riskClass": "LOW",
+      "requiredScopes": ["intent.resolve"],
+      "usesLlm": true,
+      "idempotency": "natural",
+      "reversibility": "not-applicable",
+      "unknownOutcomeRecovery": "not-applicable",
+      "humanApproval": "none",
+      "errorCodes": [
+        "ARTIFACT_NOT_FOUND",
+        "TENANT_SCOPE_MISMATCH",
+        "STRATEGY_UNKNOWN",
+        "MODEL_OUTPUT_NOT_ALLOWED",
+        "MODEL_UNAVAILABLE",
+        "DEPENDENCY_TIMEOUT",
+        "ARTIFACT_RELAY_FAILED"
+      ]
+    }
+  ]
+}

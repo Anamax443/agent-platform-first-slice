@@ -2,6 +2,63 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-19 (187) — `intent.resolve` (část 6 krok 6) implementováno a plně zapojeno, adversariálně ověřeno, zatím bez živého callera
+
+**Kontext:** pokračování stejného dne po (186)'s `/impulse`. ADR's vlastní pořadí (část 6) i externí audit se
+shodují: dalším krokem po `/impulse` je `intent.resolve` — normální COW, ne privilegovaný Farmář. Vlastník:
+"pokračuj ultracode".
+
+**Implementace** (`src/components/intent-resolver/`): nová AI capabilita `intent.resolve`, stejný tvar jako
+`document.classify` (prompt s `<untrusted>` oddělovači, allowlist čtený z output schématu, QUALITY retry) +
+`invoice.extract` (výstupní hodnota jde do derived Artifactu přes `artifacts.derive()`, nikdy inline/do Žlabu
+— AR-1/AR-6, přesně jak ADR's krok 6 žádá). Rozdíl oproti `document.classify`'s vlastnímu `seal()`
+(hodnotou podmíněný, jen INVOICE): `impulse.intent.resolved` se pečetí **bezpodmínečně** na každém úspěšném
+volání, UNKNOWN nevyjímaje — `contracts/facts.v1.json`'s vlastní popis `impulse.intent` to výslovně žádá
+("we don't know what this is" je stav platformy, ne chyba).
+
+**Rozhodnutí učiněná při implementaci** (na základě hloubkového research 4 agentů před psaním kódu):
+- **`artifactId` povinné, žádný inline text.** `document.classify`/`invoice.extract` taky nikdy nepřijímají
+  syrový text v payloadu — `ArtifactWriter.derive()` navíc vyžaduje existující zdrojový artifact (vyhodilo
+  by `original not found`), takže "jen text" varianta by potřebovala novou platformovou primitivu. Zúženo
+  vědomě, ne mezera.
+- **Case storage adresování vyřešeno u `/impulse` (185/186) se sem nepromítá** — `intent.resolve` je capabilita
+  volaná přes Router/ExecutorHost jako každá jiná, ne DO-per-Case; žádný nový addressing problém.
+- **Uzavřený slovník poprvé zapsaný jako kód**, ne jen ADR's ilustrativní "…": `INVOICE_RECEIVED`,
+  `CALENDAR_QUERY`, `DOCUMENT_BUNDLE`, `GENERAL_QUESTION`, `UNKNOWN` — v `output.schema.json`'s enum (jediný
+  zdroj pravdy, žádná duplicitní konstanta) i v `contracts/facts.v1.json`'s nové `resultVocabulary` na
+  `impulse.intent.resolved` (byte-identické s enum). Rozšíření je schema-verze bump, ne tichá změna kódu.
+- **`impulse.intent.resolved` deklarováno jako `produces.evidence`** v `facts.json` — na rozdíl od
+  `document.type.invoiceConfirmed` (hodnotou podmíněné, záměrně vynechané z `produces`), protože pečetění je
+  tady bezpodmínečné: `plan()` může bezpečně spoléhat, že úspěšné `intent.resolve` tuhle evidenci vždy
+  vytvoří. Přesně stejný precedent už existuje (`document-validator`'s `document.type.validated`).
+
+**Zapojení** (oba kompoziční kořeny, obě instalace, žádný krok vynechán): `src/slice.ts` + `platform-wiring.ts`
+(nová `buildIntentAdapters()`, duplicitní k `buildAdapters()`/`buildExtractAdapters()` schválně — "duplikace
+před předčasnou abstrakcí" je tenhle projekt's vlastní stanovisko, dokud třetí capabilita abstrakci nevyžádá;
+tohle JE ta třetí, refaktor vlastní commit, ne tenhle), `config/*/policy/intent.resolve.v1.policy.json` (obě
+instalace), `config/*/profile.json` (scopes, `policyRefs`, `models`, nová identita `ai-intent-resolver`),
+`config/*/lifecycle.json` (`"intent-resolver": "ACTIVE"`), `fact-catalog-bundle.ts`. Bez tohohle zapojení by
+`checkWiringPreconditions()`/`assembleInstallation()` na farmě fail-closed spadly (chybějící policy/lifecycle
+by přesně tohle odhalily) — proto zapojeno rovnou, ne jako pozdější krok.
+
+**Testy:** `tests/intent-resolve.test.ts`, `IR-000`…`IR-013` (14 testů) — úspěšné rozlišení, UNKNOWN jako
+platná SUCCEEDED odpověď (ne QUALITY selhání), všech 5 slovníkových hodnot, odmítnutí mimo allowlist,
+chybějící artifact, cizí tenant, neznámá strategie, selhání modelu, hodnota nikdy jinde než v derived
+Artifactu, evidence nese jen hash+token nikdy bohatší JSON, evidence bez writeru neblokuje, `caseId` threading.
+Adversariální verifikace (5 nezávislých agentů, jeden na invariant — AR-1/AR-6 no-value-leak, bezpodmínečné
+pečetění včetně UNKNOWN, fail-closed tenant/strategy pořadí, čistě aditivní zapojení bez regrese, konzistence
+uzavřeného slovníku ve FactCatalogu): **5/5 REFUTED, 0 confirmed bugs.** Jeden nebugový nález (nepřesná
+formulace "on EVERY call" místo "on every call that reaches SUCCEEDED" v doc komentářích) — opraveno týž den.
+
+**Brány zelené:** typecheck, arch, farm:check (12 configs, 2 instalace × 6 deployables), **872/872 testů**
+(+14 oproti (186)).
+
+**Vědomě mimo rozsah:** conformance balíček (`conformance/intent.resolve/`) a zapojení do `ctr.test.ts`'s
+`COMPONENTS`/`self-test.ts`'s `SUITES` — projekt's vlastní disciplína to očekává u každé nové capability
+stejný den, ale nic to mechanicky nevyžaduje (`createSlice()`/`wirePlatform()` fungují bez toho) a milestone
+byl už dost velký; vlajkováno jako přímý follow-up, ne tichá mezera. Žádný workflow krok/živý caller
+(`intent.resolve` čeká na část 6 kroky 7–9: intent→goal mapping, compiler, Case-level smyčka).
+
 ## 2026-09-19 (186) — `POST /impulse` (část 5) implementováno jako mechanismus, adversariálně ověřeno, žádný živý kanál zatím nezapojen
 
 **Kontext:** externí audit (dva po sobě jdoucí průchody, ten druhý po opravě (185)'s ADR staleness) potvrdil,

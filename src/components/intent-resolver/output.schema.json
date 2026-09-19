@@ -1,0 +1,32 @@
+{
+  "$id": "intent.resolve.output.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifactId", "sha256", "extractedArtifactId", "extractedSha256", "intent"],
+  "properties": {
+    "artifactId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "extractedArtifactId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Derived Artifact (artifacts.derive(), producer intent-resolver) holding the resolved intent as JSON — the real interpreted value, never sealed into the Žlab (docs/AUTONOMOUS-RUNTIME-V1.md część 6 krok 6, M0-FACT-CONTRACT-V1.md invariant D6). Present on every SUCCEEDED outcome, UNKNOWN included."
+    },
+    "extractedSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "intent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "source", "trustLevel"],
+      "properties": {
+        "value": {
+          "type": "string",
+          "enum": ["INVOICE_RECEIVED", "CALENDAR_QUERY", "DOCUMENT_BUNDLE", "GENERAL_QUESTION", "UNKNOWN"],
+          "description": "Closed vocabulary (AR-6) — the first fixed set, per docs/AUTONOMOUS-RUNTIME-V1.md line 181's own illustrative list. UNKNOWN is a valid, expected answer, not an error (contracts/facts.v1.json's own impulse.intent description). Extending this list is a schema version bump (projectionSchemaVersion-style discipline), never a silent code change."
+        },
+        "source": { "type": "string", "enum": ["llm"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "trustLevel": { "type": "string", "enum": ["untrusted-derived"] }
+      }
+    }
+  }
+}

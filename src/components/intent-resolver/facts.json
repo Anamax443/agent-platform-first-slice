@@ -1,0 +1,10 @@
+{
+  "$comment": "Fact-flow sidecar (Posudek 17): which namespace keys (contracts/facts.v1.json) this module's capabilities consume and produce. A sidecar on purpose — module-descriptor.v1.schema.json is frozen. Keys only, never values; capability set must equal descriptor.json (FACT-004). Unlike document-classifier's own seal() (value-gated, INVOICE only, deliberately absent from that module's produces), intent.resolve seals impulse.intent.resolved on every call that reaches SUCCEEDED — UNKNOWN included, contracts/facts.v1.json's own impulse.intent entry says so explicitly — so it is safe to declare as a real, unconditional 'produces' entry here.",
+  "module": "intent-resolver",
+  "capabilities": {
+    "intent.resolve": {
+      "consumes": { "artifacts": ["impulse.raw"] },
+      "produces": { "facts": ["impulse.intent"], "evidence": ["impulse.intent.resolved"] }
+    }
+  }
+}

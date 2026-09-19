@@ -6,5 +6,6 @@
   "mail-ingest": "ACTIVE",
   "invoice-extractor": "ACTIVE",
   "cz-company-verify": "ACTIVE",
-  "cz-vat-verify": "ACTIVE"
+  "cz-vat-verify": "ACTIVE",
+  "intent-resolver": "ACTIVE"
 }

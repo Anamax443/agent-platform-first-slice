@@ -365,7 +365,11 @@ nezávislé agenty stejně upozornily na jednu nebugovou mezeru (metadata nebyla
    19.9.2026, adversariálně ověřeno — viz část 5. Žádný živý kanál ho zatím nepoužívá.
 6. **`intent.resolve`** — normální COW, ne privilegovaný Farmář. Vstup: impulse/artifact refy. Výstup:
    `impulse.intent` hodnota (do Artifactu, ne do Žlabu přímo — stejný vzor jako `invoice.extract`), evidence
-   `impulse.intent.resolved` (uzavřený slovník, AR-6).
+   `impulse.intent.resolved` (uzavřený slovník, AR-6). ✅ mechanismus hotový 19.9.2026
+   (`src/components/intent-resolver/`), adversariálně ověřeno (5/5 REFUTED). Registrováno v obou kompozičních
+   kořenech (`src/slice.ts`, `platform-wiring.ts`) a v obou instalacích (policy/profile/lifecycle), ale zatím
+   volané jen z testů — žádný workflow krok, žádný živý producent. Zúženo oproti skice: `artifactId` povinné
+   (žádný inline text), stejná disciplína jako `document.classify`/`invoice.extract`.
 7. **Intent → Goal mapping** — konfigurace (JSON/policy vrstva), nikdy `if` v orchestration kódu. Tohle je
    přesně ten bod, kde se láme n8n vs. Farma (AR-4).
 8. **`plan → WorkflowDef` compiler** — SEVERKA's M3 "No-n8n Gate". Planner beze změny, jen nový spotřebitel
@@ -438,8 +442,8 @@ Ekvivalent SEVERKA's M8.
 | `Evidence.originCaseId`/`subject`/`reusePolicy` | LIVE WIRED, LIVE VERIFIED | nasazeno `7971ede`, vlastníkem potvrzeno živě 18.9.2026 (farm-bass443 běží na schema v3) |
 | `FactCatalog` / `plan()` | PRIMITIVE EXISTS | volané jen z testů a `attachment-fanout.ts` (úzký `goal`, část 7) |
 | `CurrentCaseProjection` | PRIMITIVE EXISTS | część 4 — `case-projection.ts`, 18 testů (`PROJ-000`…`PROJ-014`), 18.9.2026. Čistý modul, žádné runtime zapojení (žádný caller v `apf-gateway`/`planner.ts` zatím) |
-| `impulse.intent` / `impulse.intent.resolved` | PRIMITIVE EXISTS (jen slovník) | `facts.v1.json`, žádný producent |
-| `intent.resolve` COW | TARGET | část 5 |
+| `impulse.intent` / `impulse.intent.resolved` | PRIMITIVE EXISTS | `facts.v1.json`, producent existuje (`intent.resolve`, 19.9.2026) — registrovaný, ale zatím žádný živý caller |
+| `intent.resolve` COW | PRIMITIVE EXISTS | část 6 krok 6 — `src/components/intent-resolver/`, 19.9.2026. Adversariálně ověřeno (5/5), žádné workflow zapojení zatím |
 | Intent → Goal mapping | TARGET | část 6 krok 7 |
 | `plan → WorkflowDef` compiler | TARGET | SEVERKA M3, část 6 krok 8 |
 | Case-level replanning loop | TARGET | část 3, 6 krok 9 |
