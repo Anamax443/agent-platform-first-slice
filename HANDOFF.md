@@ -2,6 +2,19 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-19 (185) — nasazeno na `farm-bass443` (`2a688c8`), první milestone nového menšího-kroku-pracovního-postupu
+
+**Vlastníkův pokyn:** menší milestony, každý samostatně commitnutý/pushnutý/nasazený, aby vyčerpání limitu
+jednoho vlákna neztratilo rozdělanou práci (přímo motivováno tím, že se to v (184) reálně stalo — jeden z
+pěti verifikačních agentů spadl na session limit uprostřed práce).
+
+`node scripts/farm-deploy.mjs farm-bass443` — nejdřív `--dry-run` (čistě), pak ostře. Všech 6 Workerů
+nahráno bez chyby: `apf-fakes` → `apf-document-host` → `apf-email-executor` → `apf-mail-ingest` →
+`apf-gateway` (custom doména `apf.maxferit.cz`) → `ai-farma-web`. `case-projection.ts` samotný nemá žádného
+volajícího nikde v `deploy/cloudflare/*` — nasazení je tedy funkčně no-op na živém chování farmy, jde jen o
+to, že commit `2a688c8` je teď skutečně na produkci, ne jen v gitu. Živé ověření gitSha/verze (za Cloudflare
+Access) čeká na vlastníkovo přihlášení, stejná výhrada jako u (część 11) dřív.
+
 ## 2026-09-19 (184) — Adversariální verifikace (183) našla 2 skutečné bugy v `CurrentCaseProjection`, opraveno týž den
 
 **Vlastníkův pokyn:** pokračovat v menších, samostatně commitovaných/pushovaných milestonech (aby vyčerpání
