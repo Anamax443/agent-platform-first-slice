@@ -21,5 +21,8 @@ export function loadInstallationFromDir(dir: string): Installation {
   // authorities.json absent = no grants at all (every producer "inferred") — fail-closed by omission, like lifecycle.json.
   const authoritiesPath = join(dir, "authorities.json");
   const authorities: unknown = existsSync(authoritiesPath) ? JSON.parse(readFileSync(authoritiesPath, "utf8")) : undefined;
-  return assembleInstallation(profile, policies, lifecycle, authorities);
+  // goal-map.json absent = no mappings at all (every intent NO_MAPPING) — fail-closed by omission, same shape.
+  const goalMapPath = join(dir, "goal-map.json");
+  const goalMap: unknown = existsSync(goalMapPath) ? JSON.parse(readFileSync(goalMapPath, "utf8")) : undefined;
+  return assembleInstallation(profile, policies, lifecycle, authorities, goalMap);
 }

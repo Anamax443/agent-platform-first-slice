@@ -62,6 +62,8 @@ import {
 import { FACT_CATALOG } from "./fact-catalog-bundle.js";
 import { DISCOVERY_INPUT_BUILDERS } from "./discovery-wiring.js";
 import { runDiscovery } from "../../../../src/platform/discovery-runner.js";
+import { projectCurrentCase } from "../../../../src/platform/case-projection.js";
+import { resolveCaseGoal } from "../../../../src/platform/goal-mapping.js";
 import { buildOrchestrator, checkWiringPreconditions, COW_WORKSHOP, describeModels, gatewayCatalog, modelAdapterFor, wirePlatform, type Wiring } from "./platform-wiring.js";
 // RG2-E (2026-09-18): /live, /ready, /health/details — every decision is a pure function in readiness.ts (same
 // "index.ts cannot load under vitest" reason as alarm-scheduler.ts/fanout-retry.ts); this file only supplies the
@@ -1178,6 +1180,14 @@ export class WorkflowInstance extends DurableObject<Env> {
         },
         c,
       );
+      // Intent -> Goal mapping (część 6 krok 7, goal-mapping.ts's own header comment has the full "why"): only
+      // meaningful once discovery has actually run. Re-projects FRESH — the discovery call above may just have
+      // sealed impulse.intent.resolved, which a projection computed before that dispatch cannot see yet — then
+      // reads the resolved value through goal-mapping.ts's own AR-1 "separately-authorized path" (never through
+      // planner.ts/discovery.ts, which stay value-free on purpose). Computes and audits the mapped goal; does
+      // NOT execute it — that is część 6 krok 8's compiler, not this method's job.
+      const freshProjection = projectCurrentCase({ case: c, ledger: wiring.evidence, artifacts: this.artifacts, now: iso(this.clock.now()), authorities: installation.authorities, lifecycle: installation.lifecycle });
+      resolveCaseGoal({ ledger: wiring.evidence, goalMap: installation.goalMap, audit: this.audit }, freshProjection);
     } catch (e) {
       console.error(`[apf-gateway] case discovery failed caseId=${c.caseId}: ${e instanceof Error ? e.message : String(e)}`);
       this.audit.append({ kind: "state", tenantId: c.tenantId, capability: "case-discovery", details: { caseId: c.caseId, status: "FAILED", error: e instanceof Error ? e.message : String(e) } });

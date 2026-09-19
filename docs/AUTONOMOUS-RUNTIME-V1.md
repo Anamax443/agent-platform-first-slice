@@ -384,7 +384,16 @@ nezávislé agenty stejně upozornily na jednu nebugovou mezeru (metadata nebyla
     guardem (krok 9 níže) — tohle je jen JEDEN pokus, jednou, po vzniku Case.
 7. **Intent → Goal mapping** — konfigurace (JSON/policy vrstva), nikdy `if` v orchestration kódu. Tohle je
    přesně ten bod, kde se láme n8n vs. Farma (AR-4). Odlišné od 6b výše: 6b řeší jen "co impuls JE" (discovery
-   goal, fixní `impulse.intent`), tohle řeší "co s tím UDĚLAT" (business goal, odvozený z hodnoty intentu).
+   goal, fixní `impulse.intent`), tohle řeší "co s tím UDĚLAT" (business goal, odvozený z hodnoty intentu). ✅
+   mechanismus hotový 19.9.2026 (`src/platform/goal-map.ts` — `GoalMapRegistry`, `config/<installation>/
+   goal-map.json`, stejný vzor jako `authorities.ts`; `src/platform/goal-mapping.ts` — `resolveCaseGoal()`,
+   čte resolvovanou hodnotu jen přes `CurrentCaseProjection`'s vlastní AVAILABLE `recordId`, nikdy syrovým
+   scanem ledgeru — AR-1's "separately-authorized path"). Živě zapojeno do `runCaseDiscovery()` (po 6b), počítá
+   a auditovaný mapovaný goal, **nespouští ho** — to čeká na krok 8 níže. Adversariálně ověřeno (5/5 REFUTED).
+   Poctivě dodáno s **jedním reálným záznamem** (`UNKNOWN → []`, "žádná další akce") — žádný reálný business
+   cíl dnes neexistuje pro žádný z ostatních 4 intentů (`attachment-fanout.ts` pracuje per-attachment, ne
+   per-impuls; `invoice.readyForReview` z ilustrativního příkladu není reálný FactCatalog klíč) — zbytek
+   vědomě `NO_MAPPING`, ne hádaný.
 8. **`plan → WorkflowDef` compiler** — SEVERKA's M3 "No-n8n Gate". Planner beze změny, jen nový spotřebitel
    jeho výstupu. Discovery driver (6b) tohle obchází přímým `transport.dispatch()` — bezpečné pro jeden,
    neorchestrovaný krok, ale ne náhrada obecného compileru, který business goal (krok 7) bude potřebovat.
@@ -461,7 +470,7 @@ Ekvivalent SEVERKA's M8.
 | `impulse.intent` / `impulse.intent.resolved` | LIVE WIRED, LIVE VERIFIED | `facts.v1.json`, producent `intent.resolve` (19.9.2026), od 19.9.2026 živě volaný discovery driverem (řádek níže) — první skutečná evidence `impulse.intent` vzniká na farmě, ne jen v testech |
 | `intent.resolve` COW | LIVE WIRED, LIVE VERIFIED | část 6 krok 6 — `src/components/intent-resolver/`, 19.9.2026. Adversariálně ověřeno (5/5). Od 19.9.2026 má živého callera (discovery driver, ne ještě workflow krok) |
 | Discovery goal → execution (Projection → plan → intent.resolve) | PRIMITIVE EXISTS (úzce), LIVE WIRED | 19.9.2026 — `src/platform/discovery.ts` (`planDiscovery()`) + `src/platform/discovery-runner.ts` (`runDiscovery()`), spuštěno z `POST /impulse`'s `createCase()` (`ctx.waitUntil`, žádný živý kanál ho zatím nespouští opakovaně). Je to část 6 krok 7's precondition + část 3/6 krok 9's první, JEDNOKOLOVÁ slabika — ne obecná replanning smyčka (řádek pod ní zůstává TARGET). WHAT se spustí vždy vychází z `plan()`/FactCatalogu, nikdy z `if` (AR-4) — adversariálně ověřeno 19.9.2026 (6 agentů, 1 skutečný nález: `this.wiring()` mimo `try`, opraveno týž den). Vědomě mimo rozsah: intent→goal business mapping (řádek níže), retry/strategie, review. |
-| Intent → Goal mapping | TARGET | část 6 krok 7 — discovery goal (řádek výše) řeší jen "co je impuls", ne business goal odvozený z hodnoty intentu |
+| Intent → Goal mapping | LIVE WIRED, LIVE VERIFIED (počítá, nespouští) | część 6 krok 7 — `src/platform/goal-map.ts` + `goal-mapping.ts`, 19.9.2026, adversariálně ověřeno (5/5). Config s jedním reálným záznamem (`UNKNOWN → []`), zbytek vědomě `NO_MAPPING`. Mapovaný goal se počítá a audituje z `runCaseDiscovery()`, ale nikdy nespouští — spuštění čeká na compiler (krok 8) |
 | `plan → WorkflowDef` compiler | TARGET | SEVERKA M3, část 6 krok 8 — discovery driver výše dispatchuje přímo přes `transport.dispatch()` (bez journal/instance, stejný lightweight primitiv jako `selfTest()`), ne přes kompilovaný `WorkflowDef`; obecný compiler zůstává nepostavený |
 | Case-level replanning loop (obecná, víceroundová) | TARGET | část 3, 6 krok 9 — convergence guard (`projectionHash`/`planHash`, iterační budget) stále NEIMPLEMENTOVÁNO; dnešní discovery driver je vědomě jen jedno kolo, jeden cíl |
 | `/impulse` vstupní kontrakt | PRIMITIVE EXISTS | část 5 — `POST /impulse`, `src/platform/impulse.ts`, 19.9.2026. Mechanismus + testy + adversariální verifikace hotové; žádný živý kanál ho zatím nevolá (mail pořád jde přes `createCaseForMailIntake()`), `/intake` beze změny |

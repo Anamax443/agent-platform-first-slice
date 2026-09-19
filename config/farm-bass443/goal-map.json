@@ -1,0 +1,7 @@
+{
+  "$comment": "Intent -> Goal mapping (docs/AUTONOMOUS-RUNTIME-V1.md część 6 krok 7): a resolved impulse.intent value maps to a business goal (fact-catalog keys), never a switch/if in code (AR-4). An intent absent here has no mapping configured yet — reported NO_MAPPING, never guessed. UNKNOWN -> [] is the one real, deliberate entry today: 'we don't know what this is' needs no further action (contracts/facts.v1.json's own impulse.intent description). Every other value (INVOICE_RECEIVED, CALENDAR_QUERY, DOCUMENT_BUNDLE) has no live goal target yet — no capability today consumes Case/impulse-level facts for a business outcome (attachment-fanout.ts works per-attachment, not per-impulse) — wiring the first real one is a later milestone's job, not a placeholder to invent here.",
+  "schemaVersion": "1",
+  "entries": {
+    "UNKNOWN": []
+  }
+}

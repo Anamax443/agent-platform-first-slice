@@ -1,0 +1,7 @@
+{
+  "$comment": "Test installation's goal map — same content as farm-bass443 so the in-process slice proves the exact live behaviour. See config/farm-bass443/goal-map.json for the field semantics.",
+  "schemaVersion": "1",
+  "entries": {
+    "UNKNOWN": []
+  }
+}

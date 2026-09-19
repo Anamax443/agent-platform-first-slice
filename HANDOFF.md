@@ -2,6 +2,58 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-19 (189) — Intent → Goal mapping (część 6 krok 7): `GoalMapRegistry` + `resolveCaseGoal()`, živě zapojeno za discovery, adversariálně ověřeno (5/5 REFUTED)
+
+**Kontext:** pokračování stejného dne po (188)'s discovery goal. Vlastník poslal druhý audit (skóre 8.8 → 8.9/10,
+"Autonomní live runtime" 7.9/10) s instrukcí: "Nejbližší krok: Intent → Goal mapping. Tam bych teď soustředil
+veškerou pozornost." — s výslovným varováním, že tohle je citlivější hranice než `intent.resolve` sám ("Správně:
+`goal-map.json`... Špatně: `switch(intent) { ... }`") a s pokynem nechat compiler (krok 8) a Case loop (krok 9) na
+později. Následně opět "ultracode" a "up to you". Před implementací proběhl hloubkový research (Workflow tool, 4
+paralelní agenti): potvrdil, že `goal-map` patří jako per-instalace config (`docs/SEVERKA.md`: "deterministickou
+mapou instalace", mirror `authorities.ts`'s vzoru), a hlavně — **žádný reálný goal cíl dnes neexistuje** pro
+žádný z 5 intentů: `attachment-fanout.ts` pracuje per-attachment, ne per-impuls, a `invoice.readyForReview`
+z vlastníkova ilustrativního příkladu není reálný FactCatalog klíč nikde v repu.
+
+**Implementace:**
+- `src/platform/goal-map.ts` — `GoalMapRegistry`, mirror `AuthorityRegistry` (ruční fail-closed TS validátor,
+  ne plný JSON Schema — stejná volba jako `authorities.json`/`lifecycle.json`). `goalFor(intent)` vrací
+  `string[] | undefined` — `undefined` = žádné mapování nakonfigurováno (fail-closed, nikdy hádané), `[]` je
+  reálný, záměrný záznam ("tenhle intent nepotřebuje žádnou další akci").
+- `src/platform/goal-mapping.ts` — `resolveCaseGoal()`, AR-1's "separately-authorized path": hodnotu resolved
+  intentu čte JEN přes `CurrentCaseProjection`'s vlastní AVAILABLE `recordId` (nikdy syrovým scanem ledgeru,
+  nikdy přes `planner.ts`/`discovery.ts`, které zůstávají value-free). Vrací trojstavý výsledek
+  `NOT_RESOLVED`/`NO_MAPPING`/`MAPPED`, auditovaný. **Počítá goal, nespouští ho** — spuštění je práce compileru
+  (krok 8, dosud nepostaveno).
+- `config/{local-fakes,farm-bass443}/goal-map.json` — jeden reálný záznam (`UNKNOWN → []`), zbytek vědomě
+  nenamapovaný.
+- `src/installation.ts`/`installation-node.ts`/`scripts/farm-config.mjs` — nové pole `Installation.goalMap`,
+  zapojené do `assembleInstallation()` a do generovaného `apf:installation` modulu stejným vzorem jako
+  `authorities`/`lifecycle` (absence souboru = `GoalMapRegistry.empty()`, fail-closed).
+- `deploy/cloudflare/apf-gateway/src/index.ts`'s `runCaseDiscovery()` — po `runDiscovery()` přepočítá ČERSTVOU
+  `CurrentCaseProjection` (ta z `runDiscovery()` je pre-dispatch snapshot, nevidí evidenci co discovery právě
+  zapečetilo) a zavolá `resolveCaseGoal()` — ve stejném `try` bloku jako (188)'s vlastní oprava.
+
+**Testy:** `tests/goal-map.test.ts` (`GM-000`…`004`, včetně načtení SKUTEČNÝCH `config/*/goal-map.json` přes
+`loadInstallationFromDir()`), `tests/goal-mapping.test.ts` (`CGM-000`…`004`, včetně end-to-end: reálný
+`runDiscovery()` dispatch → `resolveCaseGoal()` čte přesně to, co discovery zapečetilo, přes skutečný
+Router/Policy; a `CGM-003`, dokazující že ambiguitní/BLOCKED `impulse.intent` je `NOT_RESOLVED`, i když ledger
+drží záznam se skutečnou `.result` hodnotou — `resolveCaseGoal()` nikdy neobchází Projection's vlastní
+trust/ambiguity rozhodnutí). **903/903 testů** (+18 oproti (188)). Typecheck, arch, farm:check (12 configs,
+včetně vygenerovaného `apf:installation` modulu s novým `goalMap` importem) zelené.
+
+**Adversariální verifikace (5 nezávislých agentů přes Workflow tool, jeden na invariant — AR-4 no-hardcoded-mapping,
+AR-1 boundary/separately-authorized-path, fail-closed třístavá distinkce, live-wiring bezpečnost v
+`runCaseDiscovery()`, config/instalace konzistence): **5/5 REFUTED, 0 skutečných bugů.** Jeden nebugový nález:
+`docs/BUILD.md`/`docs/NAVRHOVY-LIST-farma.md`'s config-file tabulky nikdy neuváděly `lifecycle.json`/
+`authorities.json` (předexistující mezera, ne dnešní regrese) — `goal-map.json` se přidal ke stejné mezeře;
+neopraveno, flagováno jako volitelný follow-up.
+
+**Vědomě mimo rozsah:** spuštění mapovaného goalu (`plan → WorkflowDef` compiler, część 6 krok 8), obecná
+víceroundová Case-level replanning smyčka s convergence guardem (część 3/6 krok 9), cross-check goal-map's
+cílových klíčů proti reálnému FactCatalogu při načtení instalace (dnes fail-closed jen strukturálně —
+`FACT_KEY_PATTERN` tvar, ne existence v katalogu; typo'd klíč by se odhalil až compilerem, ne dřív — vědomá,
+ne skrytá mezera, stejný kompromis jako `authorities.json`'s vlastní `facts` pole).
+
 ## 2026-09-19 (188) — Discovery goal: `CurrentCaseProjection → plan() → intent.resolve` živě zapojeno na `POST /impulse`, adversariálně ověřeno, 1 skutečný nález opraven týž den
 
 **Kontext:** pokračování stejného dne po (187)'s `intent.resolve`. Vlastník poslal vlastní audit anti-n8n

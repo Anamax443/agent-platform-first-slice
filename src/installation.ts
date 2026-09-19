@@ -3,6 +3,7 @@
 import profileSchema from "../config/profile.schema.json" with { type: "json" };
 import type { Identity } from "./platform/gateway.js";
 import { AuthorityRegistry } from "./platform/authorities.js";
+import { GoalMapRegistry } from "./platform/goal-map.js";
 import { LifecycleRegistry, type LifecycleStatus } from "./platform/lifecycle.js";
 import type { Policy, PolicySet } from "./platform/policy.js";
 import { compileSchema } from "./platform/schemas.js";
@@ -91,6 +92,10 @@ export interface Installation {
   /** producer -> authority domain + fact scope + evidence TTL cap (config/<installation>/authorities.json, M0 část C).
    * Absent file = no grants: every producer's evidence stays "inferred" — fail-closed by omission. */
   authorities: AuthorityRegistry;
+  /** resolved impulse.intent value -> business goal (config/<installation>/goal-map.json, część 6 krok 7). Absent
+   * file = no mappings: every intent is reported NO_MAPPING, never guessed — fail-closed by omission, same
+   * discipline as authorities/lifecycle. */
+  goalMap: GoalMapRegistry;
 }
 
 /** Where secret values come from: env, wrangler secrets, a test map. Undefined = missing = fail-closed at wiring time. */
@@ -102,7 +107,7 @@ const validateProfile = compileSchema(profileSchema);
  * Assemble and cross-check an installation: profile against its schema, every policyRef present, every grant pointing
  * to a known identity that holds the granted scope, every granted tenant known. Anything else throws (fail-closed).
  */
-export function assembleInstallation(profileJson: unknown, policies: Policy[], lifecycleStatuses: Record<string, LifecycleStatus> = {}, authoritiesJson?: unknown): Installation {
+export function assembleInstallation(profileJson: unknown, policies: Policy[], lifecycleStatuses: Record<string, LifecycleStatus> = {}, authoritiesJson?: unknown, goalMapJson?: unknown): Installation {
   const v = validateProfile(profileJson);
   if (!v.ok) throw new Error(`installation profile invalid (fail-closed): ${v.errors}`);
   const profile = profileJson as InstallationProfile;
@@ -147,7 +152,8 @@ export function assembleInstallation(profileJson: unknown, policies: Policy[], l
       }
     }
   }
-  return { profile, policies: set, lifecycle: new LifecycleRegistry(lifecycleStatuses), authorities };
+  const goalMap = goalMapJson === undefined ? GoalMapRegistry.empty() : GoalMapRegistry.build(goalMapJson);
+  return { profile, policies: set, lifecycle: new LifecycleRegistry(lifecycleStatuses), authorities, goalMap };
 }
 
 /**

@@ -10,9 +10,14 @@ import type { FactCatalog } from "./fact-catalog.js";
 import { plan, type PlanResult } from "./planner.js";
 import type { CurrentCaseProjection } from "./case-projection.js";
 
+/** The fact key discovery resolves — also the one goal-mapping.ts reads the resolved VALUE of (its own
+ * "separately-authorized path", never through this module or planner.ts, AR-1). Named/exported here since this
+ * is the one place that owns "what discovery's own goal actually is". */
+export const IMPULSE_INTENT_FACT_KEY = "impulse.intent";
+
 /** The one fixed discovery goal today. A second discovery question, if one is ever needed, is added here as a
  * second entry — never as a second driver elsewhere. */
-export const DISCOVERY_GOAL: readonly string[] = ["impulse.intent"];
+export const DISCOVERY_GOAL: readonly string[] = [IMPULSE_INTENT_FACT_KEY];
 
 /** contracts/facts.v1.json: "boundary-fed by the mail transport... no producer of its own" — impulse.raw has no
  * capability producing it, so plan() can only ever treat it as already-available or not. The one thing a
