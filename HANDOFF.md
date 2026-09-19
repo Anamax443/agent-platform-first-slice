@@ -2,6 +2,80 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-19 (184) — Adversariální verifikace (183) našla 2 skutečné bugy v `CurrentCaseProjection`, opraveno týž den
+
+**Vlastníkův pokyn:** pokračovat v menších, samostatně commitovaných/pushovaných milestonech (aby vyčerpání
+limitu jednoho vlákna neztratilo rozdělanou práci — přesně tohle se stalo: 5. verifikační agent
+("determinism-and-purity") spadl na "You've hit your session limit", zbylé 4 doběhly).
+
+**Nálezy (5 nezávislých agentů, každý zaútočil na jeden konkrétní invariant, 4/5 doběhlo):**
+- **`no-value-leak`: VYVRÁCENO.** `toProjectedFact()` stavěl `address: record.subject` — celý objekt
+  referencí, ne allowlist `{key, scope, entityId}` jako každé jiné pole ve stejné funkci. Nic po cestě zápisu
+  (`EvidenceWriter.write()`, `EvidenceLedger.append()`) neověřuje runtime tvar `subject` proti `FactAddress` —
+  `parseFactAddress()`'s `ENTITY_ID_PATTERN` kontrola se na týhle cestě nikdy nevolá. Konkrétní scénář:
+  `subject` s navíc polem `leakedResult: claim.result` by tenhle field protáhlo až do
+  `availableFacts`. **Oprava:** `toProjectedFact()` teď staví `address` explicitním výběrem tří polí, nikdy
+  spreadem/referencí. Nový test `PROJ-017`.
+- **`entity-scope-no-fallback`: VYVRÁCENO, dvakrát.** `addressKey()` dělalo `${scope}::${key}::${entityId ?? ""}`
+  — neescapovaný spoj. (a) `scope:"a::b"+key:"c"` a `scope:"a"+key:"b::c"` obě daly `"a::b::c::d"` — dvě
+  různé adresy tiše slité do jedné, s vedlejším efektem, že rozdílný `inputValueHash` spustil ambiguity-blok
+  (BLOCKED obě) i když spolu vůbec nesouvisely. (b) `entityId: undefined` vs. `entityId: ""` taky kolidovaly
+  na `?? ""`. **Oprava:** `addressKey()` teď `JSON.stringify([scope, key, entityId ?? null])` — escapuje
+  cokoli uvnitř řetězců, `null` vs. `""` se serializují jinak. Nové testy `PROJ-015`/`PROJ-016`.
+- **`ambiguity-never-heuristic`: POTVRZENO** (agent spustil 5 vlastních adversarial scénářů přímo proti
+  kódu — 3+ konfliktní záznamy, 3-vs-1 většina, různé časy, smíšené expired+konflikt, attrition-case — žádná
+  heuristika/vítěz nikde nenalezena).
+- **`fail-closed-authority-and-checks`: POTVRZENO** (pořadí kontrol je AND řetězec, žádný obchvat; správné
+  `producerId` na obou lookupech; `LifecycleRegistry`'s default `QUARANTINED` se nikdy tiše nezmění na
+  `ACTIVE`). Vedlejší, ne-bug postřeh: bez explicitního `authorities`/`lifecycle` parametru je KAŽDÝ
+  `authorityDomain`-nesoucí záznam navždy `BLOCKED` (bezpečný default, ale tichá past pro budoucího callera) —
+  zdokumentováno komentářem u `ProjectCurrentCaseInput`, ne opraveno (nic dnešního to nevolá).
+- **`determinism-and-purity`: NEDOKONČENO** (limit session). Ověřeno ručně místo dalšího agenta: `PROJ-010`/
+  `PROJ-011`/`PROJ-013` už pokrývají determinismus i čistotu; žádné `Date.now()`/`Math.random()`/mutace
+  vstupu nikde v modulu.
+
+**Úklid:** smazán `tests/_scratch-adversarial.test.ts` (nedokončený artefakt spadlého agenta, uprostřed
+vlastního `rm` příkazu).
+
+**Brány zelené:** typecheck, arch, farm:check (obě instalace), **847/847 testů** (+3 oproti (183): `PROJ-015`,
+`PROJ-016`, `PROJ-017`).
+
+## 2026-09-18 (183) — `CurrentCaseProjection` (część 4) implementována jako čistý modul, bez runtime zapojení
+
+**Pokyn vlastníka:** rozsáhlá recenze część 4's kontraktu před implementací (externí, přinesená vlastníkem) —
+zdůraznila dva tvrdé invarianty nad rámec původní skice: (1) projekce nesmí nikdy nést hodnotu faktu, jen
+identitu/adresu/stav/provenanci/reference; (2) ambiguity (dvě platné evidence na stejné adrese s různým
+`inputValueHash`) se nikdy neřeší heuristikou "poslední vyhrává" — obě se stanou `BLOCKED`. Dále žádala pět
+kategorií dostupnosti (available/expired/invalidEvidence/pending/blocked), `projectionSchemaVersion`, a
+konkrétní sadu 12 testovacích scénářů před mergem. Explicitně: "mergnul bych ji bez runtime wiring... Čistý
+modul + testy + ADR je ideální první krok" — přesně tak uděláno.
+
+**Postup:** paralelní research (5 agentů) nad skutečným tvarem `Case`/`Evidence`/`EvidenceLedger.forCase()`/
+`FactAddress`/`FactCatalog`/`ArtifactReader` a existujícím precedentem (`aggregator.ts`/Dojička pro per-record
+trust chain, `attachment-fanout.ts`'s `classifiedAsInvoice()` pro striktní entity-scope matching bez
+fallbacku) — než padl jediný řádek implementace. Pak napsán `src/platform/case-projection.ts` +
+`tests/case-projection.test.ts` (18 testů, `PROJ-000`…`PROJ-014`), pak nezávislá adversariální verifikace (5
+agentů, každý se pokusil vyvrátit jeden konkrétní invariant: value-leak, entity-scope fallback, ambiguity
+heuristika, determinismus/čistota, fail-closed autorita) — běží, výsledek zapsán v následujícím HANDOFF
+záznamu.
+
+**Rozhodnutí učiněná při implementaci (zapsána i do ADR część 4):**
+- `availableFacts`/`availableEvidence` sloučeny do jednoho pole — dnes je každý fakt evidence-backed, rozdíl
+  nemá samostatný smysl; revidovatelné, až vznikne fakt bez evidence.
+- Čtyři kategorie na úrovni faktu (`AVAILABLE`/`EXPIRED`/`INVALID_EVIDENCE`/`BLOCKED`); `pending` zůstává
+  vlastností Case, ne faktu (`Case.instances` nese jen workflowId, ne per-instance stav — journal access je
+  mimo tuhle funkce vstupní kontrakt).
+- Adresy seskupovány podle CELÉ trojice `(scope, key, entityId)`, nikdy podle `formatFactAddress()` (ten
+  `scope` do řetězce nedává).
+- Determinismus vynucen explicitním řazením (`facts.sort()`), ne spoléháním na Žlabovo pořadí (SQL bez
+  `ORDER BY` ho negarantuje).
+
+**Vědomě nedotčeno:** `pendingCapabilities` vždy `[]` (dokumentováno v ADR proč), žádný caller v
+`apf-gateway`/`planner.ts`, convergence guard (`projectionHash`/`planHash`/budget) pro budoucí krok 9 zapsán
+jako otevřený požadavek, neimplementován.
+
+**Brány zelené:** typecheck, arch, farm:check (obě instalace), **844/844 testů** (+18 PROJ).
+
 ## 2026-09-18 (182) — `docs/AUTONOMOUS-RUNTIME-V1.md` část 2 implementována: Evidence gets `originCaseId`/`subject`/`reusePolicy`, schema v2→v3, `EvidenceLedger.forCase()`, `attachment-fanout.ts` case-scoped
 
 **Co se zapojuje:** přímo navazující krok po #181's ADR (`AUTONOMOUS-RUNTIME-V1.md`, část 6 krok 2) — Evidence

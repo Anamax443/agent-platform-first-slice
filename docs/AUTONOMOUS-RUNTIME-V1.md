@@ -207,25 +207,85 @@ pojmenovává explicitně jako Case-level smyčku, aby to příští čtenář n
 
 ## 4. `CurrentCaseProjection` — kontrakt
 
+**Status: HOTOVO jako čistý modul, bez runtime zapojení** (18. 9. 2026, `src/platform/case-projection.ts`,
+`tests/case-projection.test.ts`) — přesně tak, jak vlastník žádal: "mergnul bych ji bez runtime wiring...
+Čistý modul + testy + ADR je ideální první krok." Nic v `apf-gateway`/`planner.ts` ji zatím nevolá.
+
 Deterministická funkce (žádné AI, žádné I/O mimo čtení), analogická k `fact-catalog.ts`'s vlastnímu pravidlu
-"platforma nikdy nečte soubory" — čte Case + Žlab (s `reusePolicy` filtrem, část 2) + Artifact store a vrací:
+"platforma nikdy nečte soubory" — čte `Case` + Žlab (přes `EvidenceLedger.forCase()`, część 2's
+`originCaseId`/`reusePolicy` filtr — **jediné** místo, kudy se case-scoping aplikuje, nikdy `forTenant()`
+napřímo) + `ArtifactReader` (přijímá se pro úplnost kontraktu, tenhle řez z něj zatím nic nečte — jen
+`impulse`-level `ArtifactRef`, nikdy bajty) a vrací:
 
 ```
 CurrentCaseProjection {
+  projectionSchemaVersion: 1               // NOVÉ oproti původní skice, vlastníkův požadavek 18.9.2026
   caseId
-  availableArtifacts: ArtifactRef[]        // co Case má k dispozici
-  availableFacts: FactAddress[]            // jaké FactAddresses jsou doložené (jen adresy, ne hodnoty)
-  availableEvidence: FactAddress[]         // jaká evidence je platná (nevypršela, správný reusePolicy)
-  pendingCapabilities: string[]?           // volitelně: co ještě běží / na co se čeká
+  tenantId
+  availableArtifacts: ArtifactRef[]        // impulse.artifacts (+ impulse.content, pokud existuje)
+  availableFacts: FactAddress[]            // jen AVAILABLE adresy, deduplikované — vstup pro plan()
+  facts: ProjectedFact[]                   // KAŽDÁ adresa, ve VŠECH kategoriích (diagnostika)
+  pendingCapabilities: string[]            // TARGET, dnes vždy [] — viz "Vědomé zjednodušení" níže
+}
+
+ProjectedFact {
+  address: FactAddress
+  availability: "AVAILABLE" | "EXPIRED" | "INVALID_EVIDENCE" | "BLOCKED"
+  recordId, producerId, observedAt         // provenance/reference — handle na dohledání, nikdy hodnota
+  reason?: string                          // jen když availability != AVAILABLE, stavěno jen z id/timestampů/domén
 }
 ```
 
-Vstup pro `plan({goal, available: <projection's availableFacts+availableEvidence keys>}, catalog)` — Planner
-se nemění, jen dostává `available` z projekce místo z ručně sepsaného seznamu (jak to fan-out driver dělá
-dnes, viz část 7). **AR-1 platí i tady: projekce nikdy nevrací hodnotu, jen adresy/refy.**
+**Rozhodnutí učiněná při implementaci (oproti původní skici výš, sloučeno na žádost vlastníka 18.9.2026):**
 
-Status: **TARGET**, nic z tohohle dnes neexistuje jako pojmenovaná funkce (existují jen stavební kameny:
-`Case`, `EvidenceLedger.forTenant()`, `ArtifactReader`).
+- **`availableFacts`/`availableEvidence` sloučeny do jednoho `availableFacts`.** V dnešním kódu je *každý*
+  fakt evidence-backed (i `document.classify`'s výstup jde přes `EvidenceWriter`) — rozdíl mezi "fakt je
+  doložený" a "evidence je platná" tedy dnes nemá samostatný smysl. Pokud v budoucnu vznikne fakt bez
+  evidence (jiný zdroj pravdy), tenhle sloučený tvar se rozdělí zpět — revidovatelné, ne uzamčené.
+- **Čtyři kategorie místo dvou (available/expired/invalidEvidence/blocked), `pending` vynechán na úrovni
+  faktu.** Vlastníkův požadavek 18.9.2026: "implementace musí vědět rozdíl mezi *fakt neexistuje* a *fakt
+  existuje, ale evidence je expired/wrong hash/wrong scope/untrusted*." `BLOCKED` pokrývá jak odvolanou/
+  nekonfigurovanou autoritu (stejná kontrola jako Dojička's `revoked`), tak **nový nález cestou** — viz
+  další bod. `pending` (běžící capability) je stavem *Case*, ne faktu (`Case.instances` nese jen
+  workflowId, ne per-instance stav) — zůstává mimo `ProjectedFact`, viz "Vědomé zjednodušení" níže.
+- **Nový, v původní skice nezmíněný invariant: konflikt = `BLOCKED`, nikdy "poslední vyhrává".** Když dvě
+  nebo víc jinak platných (`AVAILABLE`-way) evidencí na STEJNÉ adrese nesouhlasí v `inputValueHash`, jsou
+  **všechny** degradovány na `BLOCKED` s vysvětlujícím `reason` — žádná heuristika podle času/počtu/
+  `reusePolicy` nevybírá vítěze. Vlastníkův požadavek 18.9.2026, přesná citace: *"Ambiguity = unavailable,
+  ne heuristika."* Týká se hlavně `TENANT_WIDE` evidence sdílené napříč Case — pokud dvě Case nezávisle
+  ověřily stejnou adresu s různým výsledkem, projekce to nikdy tiše nevyřeší.
+- **Adresy se seskupují podle CELÉ trojice `(scope, key, entityId)`, nikdy podle `formatFactAddress()`**
+  (ten `scope` do textové podoby nedává — dvě adresy se stejným `key`+`entityId`, ale jiným `scope`, by se
+  jím tiše slily). Přesně to hlídá `tests/case-projection.test.ts`'s `PROJ-001`/`PROJ-002`/`PROJ-005`.
+- **Determinismus nezávislý na pořadí Žlabu vynucen explicitním řazením** (`facts.sort()` podle adresy pak
+  `recordId`) — bez toho by výstup závisel na tom, jestli `EvidenceLedger`'s backing store (paměť vs.
+  SQLite) vrací záznamy ve stejném pořadí, což SQL bez `ORDER BY` negarantuje. `PROJ-010`.
+
+**Vědomé zjednodušení, ne mezera:** `pendingCapabilities` je dnes vždy `[]`. `Case.instances` (case.ts) nese
+jen pole `workflowId[]`, ne stav jednotlivé instance ani to, který capability krok zrovna běží — spočítat
+tohle doopravdy vyžaduje přístup k journalu (`Instance`/`StepRecord`), který tahle funkce ve svém vstupním
+kontraktu (Case + Žlab + Artifact store) záměrně nemá. Pole zůstává v kontraktu (jako v původní skice,
+"volitelně") pro budoucí rozšíření bez breaking change — až bude naplněné, `projectionSchemaVersion` postoupí.
+
+Vstup pro `plan({goal, available: <projection's availableFacts>}, catalog)` (`planner.ts`) — Planner se
+nemění, jen dostává `available` (pole formátovaných adres) z projekce místo z ručně sepsaného seznamu (jak to
+fan-out driver dělá dnes, viz część 7). **AR-1 platí i tady: projekce nikdy nevrací hodnotu, jen adresy/refy**
+— žádné pole nikdy nenese `result`ani `inputValueHash`u; `tests/case-projection.test.ts`'s `PROJ-008` to
+dokazuje i pro `reason` řetězce (poison-value test).
+
+**Testy** (`tests/case-projection.test.ts`, 18 testů, `PROJ-000`…`PROJ-014`): schema version + prázdný Case;
+dva dokumenty/dvě faktury v jednom Case se neslijí; konflikt na stejné adrese blokuje obě strany, shoda ne;
+expirace; cizí entita nikdy nesplní dotaz; `CASE_ONLY` z jiného Case nikdy neprosákne (`forCase()`'s vlastní
+hranice, jen ověřeno, ne znovu implementováno); poškozená/zfalšovaná evidence; workflow `SUCCEEDED` samo o
+sobě netvoří fakt; determinismus nezávislý na pořadí Žlabu; byte-for-byte stejný výstup na stejný vstup;
+žádná hodnota v žádném poli/reason (poison-value test); žádný network/model/I/O (synchronní, non-Promise);
+žádný zápis nikam (Žlab/Case/Artifact store beze změny po zavolání); odvolaná/nenakonfigurovaná autorita
+blokuje stejně jako u Dojičky.
+
+**Convergence guard (vlastníkova poznámka 18.9.2026, k budoucímu kroku 9, część 6):** než vznikne Case-level
+observe/plan/execute smyčka, ADR musí dostat explicitní guard proti nekonečnému přeplánování —
+`projectionHash`/`planHash` (žádná změna mezi dvěma koly = konverguj/zastav), počet iterací, budget. **Zatím
+NEIMPLEMENTOVÁNO** — zapsáno jako požadavek na krok 9 (część 6), ne jako dnešní práce.
 
 ---
 
@@ -341,7 +401,7 @@ Ekvivalent SEVERKA's M8.
 | `EvidenceLedger` (D6, v3) | LIVE WIRED, LIVE VERIFIED | `forTenant()` beze změny živě ověřené; `forCase()` (část 2) nasazeno a vlastníkem potvrzeno `7971ede`; `attachment-fanout.ts`'s `classifiedAsInvoice()` od `db5bc8b` (část 11) čte přes `subject.scope`/`subject.entityId`, ne přes `workflowId`-koincidenci |
 | `Evidence.originCaseId`/`subject`/`reusePolicy` | LIVE WIRED, LIVE VERIFIED | nasazeno `7971ede`, vlastníkem potvrzeno živě 18.9.2026 (farm-bass443 běží na schema v3) |
 | `FactCatalog` / `plan()` | PRIMITIVE EXISTS | volané jen z testů a `attachment-fanout.ts` (úzký `goal`, část 7) |
-| `CurrentCaseProjection` | TARGET | část 4, nic neexistuje |
+| `CurrentCaseProjection` | PRIMITIVE EXISTS | część 4 — `case-projection.ts`, 18 testů (`PROJ-000`…`PROJ-014`), 18.9.2026. Čistý modul, žádné runtime zapojení (žádný caller v `apf-gateway`/`planner.ts` zatím) |
 | `impulse.intent` / `impulse.intent.resolved` | PRIMITIVE EXISTS (jen slovník) | `facts.v1.json`, žádný producent |
 | `intent.resolve` COW | TARGET | část 5 |
 | Intent → Goal mapping | TARGET | část 6 krok 7 |
