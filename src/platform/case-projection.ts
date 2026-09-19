@@ -59,8 +59,9 @@ export interface CurrentCaseProjection {
    * does not additionally walk derived-artifact chains produced by the Case's instances; that is a documented,
    * separate future extension, not silently attempted here. */
   readonly availableArtifacts: readonly ArtifactRef[];
-  /** AVAILABLE addresses only, deduplicated — exactly the shape planner.ts's PlanRequest.available wants
-   * (address strings via formatFactAddress(), never values). AR-1: addresses, never values. */
+  /** AVAILABLE addresses only, deduplicated — FactAddress objects, not yet planner.ts's PlanRequest.available
+   * shape: a caller passes them through fact-address.ts's formatFactAddress() first (see discovery.ts's
+   * planDiscovery(), the first live caller). AR-1: addresses, never values. */
   readonly availableFacts: readonly FactAddress[];
   /** Every address this Case's evidence touches, in every category — the full diagnostic picture. Sorted by
    * (scope, key, entityId, recordId) so the output never depends on ledger iteration order. */

@@ -21,6 +21,10 @@ export type { FactAddress } from "./fact-address.js";
 // Evidence.workflowId. newEntityId()/EntityId already existed (fact-address.ts, M0-FACT-CONTRACT-V1.md část A,
 // krůček 1) but were never re-exported here — nothing under src/components/* could reach them before this line.
 export { newEntityId, type EntityId } from "./fact-address.js";
+// discovery-runner.ts's own DiscoveryInputBuilder contract — a capability that wants to be reachable from a
+// discovery plan (discovery.ts) exports one of these (see intent-resolver/discovery.ts), same
+// ARCH-DEP-001-restricted surface as everything else above.
+export type { DiscoveryInputBuilder } from "./discovery-runner.js";
 
 /** Race a dependency call against a deadline; timeouts become DEPENDENCY_TIMEOUT at the caller. */
 export async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {

@@ -367,14 +367,30 @@ nezávislé agenty stejně upozornily na jednu nebugovou mezeru (metadata nebyla
    `impulse.intent` hodnota (do Artifactu, ne do Žlabu přímo — stejný vzor jako `invoice.extract`), evidence
    `impulse.intent.resolved` (uzavřený slovník, AR-6). ✅ mechanismus hotový 19.9.2026
    (`src/components/intent-resolver/`), adversariálně ověřeno (5/5 REFUTED). Registrováno v obou kompozičních
-   kořenech (`src/slice.ts`, `platform-wiring.ts`) a v obou instalacích (policy/profile/lifecycle), ale zatím
-   volané jen z testů — žádný workflow krok, žádný živý producent. Zúženo oproti skice: `artifactId` povinné
-   (žádný inline text), stejná disciplína jako `document.classify`/`invoice.extract`.
+   kořenech (`src/slice.ts`, `platform-wiring.ts`) a v obou instalacích (policy/profile/lifecycle). ✅ **od
+   19.9.2026 (týž den) má živého callera** — viz "Discovery goal" níže; předtím volané jen z testů.
+   Zúženo oproti skice: `artifactId` povinné (žádný inline text), stejná disciplína jako
+   `document.classify`/`invoice.extract`.
+6b. **Discovery goal: `CurrentCaseProjection` → `plan()` → `intent.resolve`** — část 6 krok 7's precondition
+    a část 3/6 krok 9's první, jednokolová slabika (NE obecná replanning smyčka — ta zůstává krok 9 níže).
+    `src/platform/discovery.ts` (`planDiscovery()`, `goal: ["impulse.intent"]`) + `src/platform/
+    discovery-runner.ts` (`runDiscovery()`, jeden `plan()` + jeden `transport.dispatch()` na krok, bez
+    journal/instance — stejný lightweight primitiv jako `selfTest()`). Živě zapojeno do `POST /impulse`'s
+    `createCase()` (`ctx.waitUntil`, DO metoda `runCaseDiscovery()`, `apf-gateway/src/index.ts`) — každý nový
+    Case teď dostane pokus o rozřešení intentu automaticky. ✅ mechanismus hotový 19.9.2026, adversariálně
+    ověřeno (6 agentů, 1 skutečný nález: `this.wiring()` mimo `try` blok — unhandled rejection uvnitř
+    `waitUntil()` při chybějícím `GATEWAY_SIGNING_KEY` — opraveno týž den). **Vědomě mimo rozsah:** business
+    goal mapping (krok 7 níže), retry/strategie/review na dispatch, obecná N-kolová smyčka s convergence
+    guardem (krok 9 níže) — tohle je jen JEDEN pokus, jednou, po vzniku Case.
 7. **Intent → Goal mapping** — konfigurace (JSON/policy vrstva), nikdy `if` v orchestration kódu. Tohle je
-   přesně ten bod, kde se láme n8n vs. Farma (AR-4).
+   přesně ten bod, kde se láme n8n vs. Farma (AR-4). Odlišné od 6b výše: 6b řeší jen "co impuls JE" (discovery
+   goal, fixní `impulse.intent`), tohle řeší "co s tím UDĚLAT" (business goal, odvozený z hodnoty intentu).
 8. **`plan → WorkflowDef` compiler** — SEVERKA's M3 "No-n8n Gate". Planner beze změny, jen nový spotřebitel
-   jeho výstupu.
-9. **Case-level replanning loop** (část 3) — observe → plan → immutable execution → nový stav → observe.
+   jeho výstupu. Discovery driver (6b) tohle obchází přímým `transport.dispatch()` — bezpečné pro jeden,
+   neorchestrovaný krok, ale ne náhrada obecného compileru, který business goal (krok 7) bude potřebovat.
+9. **Case-level replanning loop** (část 3) — observe → plan → immutable execution → nový stav → observe,
+   OBECNĚ (víc kol, víc cílů). Convergence guard (`projectionHash`/`planHash`, iterační budget) stále
+   NEIMPLEMENTOVÁNO. 6b výše je vědomě jen tohohle kroku první, jednokolová, jednocílová slabika — ne náhrada.
 10. Teprve **potom** další invoice-specific práce (2. faktura entity, `invoice.line`, M2) — **s výjimkou fact
     scope pro >1 dokument v Case, které krok 3 (část 11) už řeší teď, ne tady** (to je přesně to, co externí
     audit 18.9.2026 rozporoval: tenhle bod v původním pořadí odsouval fact-scope opravu až sem, za
@@ -440,13 +456,14 @@ Ekvivalent SEVERKA's M8.
 | `FactAddress` | PRIMITIVE EXISTS (obecně) / LIVE WIRED, LIVE VERIFIED (`document.type.invoiceConfirmed`) | `fact-address.ts`, používá se v `entity-continuity.ts` i strukturálně na `Evidence.subject` (část 2). Od `db5bc8b` (část 11) `document.type.invoiceConfirmed` skutečně používá `scope: "impulse.attachment"` + `entityId` živě — první reálný spotřebitel entity-scoped adresy mimo testy |
 | `EvidenceLedger` (D6, v3) | LIVE WIRED, LIVE VERIFIED | `forTenant()` beze změny živě ověřené; `forCase()` (část 2) nasazeno a vlastníkem potvrzeno `7971ede`; `attachment-fanout.ts`'s `classifiedAsInvoice()` od `db5bc8b` (část 11) čte přes `subject.scope`/`subject.entityId`, ne přes `workflowId`-koincidenci |
 | `Evidence.originCaseId`/`subject`/`reusePolicy` | LIVE WIRED, LIVE VERIFIED | nasazeno `7971ede`, vlastníkem potvrzeno živě 18.9.2026 (farm-bass443 běží na schema v3) |
-| `FactCatalog` / `plan()` | PRIMITIVE EXISTS | volané jen z testů a `attachment-fanout.ts` (úzký `goal`, část 7) |
-| `CurrentCaseProjection` | PRIMITIVE EXISTS | część 4 — `case-projection.ts`, 18 testů (`PROJ-000`…`PROJ-014`), 18.9.2026. Čistý modul, žádné runtime zapojení (žádný caller v `apf-gateway`/`planner.ts` zatím) |
-| `impulse.intent` / `impulse.intent.resolved` | PRIMITIVE EXISTS | `facts.v1.json`, producent existuje (`intent.resolve`, 19.9.2026) — registrovaný, ale zatím žádný živý caller |
-| `intent.resolve` COW | PRIMITIVE EXISTS | část 6 krok 6 — `src/components/intent-resolver/`, 19.9.2026. Adversariálně ověřeno (5/5), žádné workflow zapojení zatím |
-| Intent → Goal mapping | TARGET | část 6 krok 7 |
-| `plan → WorkflowDef` compiler | TARGET | SEVERKA M3, část 6 krok 8 |
-| Case-level replanning loop | TARGET | část 3, 6 krok 9 |
+| `FactCatalog` / `plan()` | LIVE WIRED, LIVE VERIFIED | volané z testů, `attachment-fanout.ts` (úzký `goal`, část 7) a od 19.9.2026 z `discovery.ts`'s `planDiscovery()` (obecný `goal: ["impulse.intent"]`, část 6 krok 7's precondition) |
+| `CurrentCaseProjection` | LIVE WIRED, LIVE VERIFIED | część 4 — `case-projection.ts`, 18 testů (`PROJ-000`…`PROJ-014`), 18.9.2026. Od 19.9.2026 má živého callera: `runCaseDiscovery()` (`apf-gateway/src/index.ts`), spuštěný z `createCase()` po každém `/impulse` |
+| `impulse.intent` / `impulse.intent.resolved` | LIVE WIRED, LIVE VERIFIED | `facts.v1.json`, producent `intent.resolve` (19.9.2026), od 19.9.2026 živě volaný discovery driverem (řádek níže) — první skutečná evidence `impulse.intent` vzniká na farmě, ne jen v testech |
+| `intent.resolve` COW | LIVE WIRED, LIVE VERIFIED | část 6 krok 6 — `src/components/intent-resolver/`, 19.9.2026. Adversariálně ověřeno (5/5). Od 19.9.2026 má živého callera (discovery driver, ne ještě workflow krok) |
+| Discovery goal → execution (Projection → plan → intent.resolve) | PRIMITIVE EXISTS (úzce), LIVE WIRED | 19.9.2026 — `src/platform/discovery.ts` (`planDiscovery()`) + `src/platform/discovery-runner.ts` (`runDiscovery()`), spuštěno z `POST /impulse`'s `createCase()` (`ctx.waitUntil`, žádný živý kanál ho zatím nespouští opakovaně). Je to část 6 krok 7's precondition + část 3/6 krok 9's první, JEDNOKOLOVÁ slabika — ne obecná replanning smyčka (řádek pod ní zůstává TARGET). WHAT se spustí vždy vychází z `plan()`/FactCatalogu, nikdy z `if` (AR-4) — adversariálně ověřeno 19.9.2026 (6 agentů, 1 skutečný nález: `this.wiring()` mimo `try`, opraveno týž den). Vědomě mimo rozsah: intent→goal business mapping (řádek níže), retry/strategie, review. |
+| Intent → Goal mapping | TARGET | část 6 krok 7 — discovery goal (řádek výše) řeší jen "co je impuls", ne business goal odvozený z hodnoty intentu |
+| `plan → WorkflowDef` compiler | TARGET | SEVERKA M3, část 6 krok 8 — discovery driver výše dispatchuje přímo přes `transport.dispatch()` (bez journal/instance, stejný lightweight primitiv jako `selfTest()`), ne přes kompilovaný `WorkflowDef`; obecný compiler zůstává nepostavený |
+| Case-level replanning loop (obecná, víceroundová) | TARGET | část 3, 6 krok 9 — convergence guard (`projectionHash`/`planHash`, iterační budget) stále NEIMPLEMENTOVÁNO; dnešní discovery driver je vědomě jen jedno kolo, jeden cíl |
 | `/impulse` vstupní kontrakt | PRIMITIVE EXISTS | část 5 — `POST /impulse`, `src/platform/impulse.ts`, 19.9.2026. Mechanismus + testy + adversariální verifikace hotové; žádný živý kanál ho zatím nevolá (mail pořád jde přes `createCaseForMailIntake()`), `/intake` beze změny |
 | `attachment-fanout.ts` | LIVE WIRED, LIVE VERIFIED | vědomě dočasný (část 7), nekopírovat |
 

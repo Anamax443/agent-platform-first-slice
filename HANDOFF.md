@@ -2,6 +2,70 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-19 (188) — Discovery goal: `CurrentCaseProjection → plan() → intent.resolve` živě zapojeno na `POST /impulse`, adversariálně ověřeno, 1 skutečný nález opraven týž den
+
+**Kontext:** pokračování stejného dne po (187)'s `intent.resolve`. Vlastník poslal vlastní audit anti-n8n
+implementace (skóre 8.7 → 8.8/10, "Autonomie live runtime" 7.4/10) s explicitní instrukcí: "Nepřidávat další
+infra ani invoice feature. Dopojit `CurrentCaseProjection → intent.resolve` obecným mechanismem, ne novým
+driverem. Potom intent→goal config a compiler." — a výslovným varováním nedělat hardcoded
+`startIntentResolution()` driver. Následně "up to you", vlastník odešel od PC. Před psaním kódu proběhl
+hloubkový research (4 paralelní agenti): mapoval Router/Policy/ExecutorHost dispatch cestu, `WorkflowDef`
+schéma a existující workflow JSONy, přesný formát discovery goal (ukázalo se, že už je pojmenovaný —
+`docs/M0-FACT-CONTRACT-V1.md`/`docs/SEVERKA.md` obě popisují `plan({goal: ["impulse.intent"], ...})` jako
+canonical vzor), a živý trigger point (`POST /impulse`'s `createCase()`, žádná existující Case-level alarm
+infrastruktura).
+
+**Implementace** (nová, žádný existující soubor kromě `index.ts`/`case-projection.ts`/`api.ts` nezměněn v
+chování):
+- `src/platform/discovery.ts` — čisté `planDiscovery()`: `DISCOVERY_GOAL = ["impulse.intent"]` (fixní,
+  dokumentovaný cíl), `available` postavené z `projection.availableFacts.map(formatFactAddress)` +
+  `"impulse.raw"` iff Case má aspoň jeden artifact — pak genuinní `plan()` volání, žádný `if`.
+- `src/platform/discovery-runner.ts` — `runDiscovery()`: jeden `plan()` + jeden `transport.dispatch()` na
+  krok (dependency order), žádné retries/strategie/review, žádná smyčka. Vědomě užší než Case-level replanning
+  smyčka (część 3/6 krok 9, pořád TARGET — convergence guard tam pořád NEIMPLEMENTOVÁNO) — tohle je jen jejího
+  prvního, jednokolového, jednocílového plátku. `DiscoveryInputBuilder` (jeden na capabilitu, fail-closed
+  `NOT_BUILDABLE` když chybí) řeší mezeru, kterou `plan()` sám nezavírá: fact-catalog klíče nejsou
+  input-schema pole (`planner.ts`'s vlastní doc comment).
+- `src/components/intent-resolver/discovery.ts` — `intent.resolve`'s vlastní `discoveryInput` builder
+  (`artifactId` z `impulse.content` nebo prvního attachmentu, `caseId` threaded — `input.schema.json`'s
+  vlastní doc comment tohle přesně anticipoval). ARCH-DEP-001 vynutilo re-export typu `DiscoveryInputBuilder`
+  přes `src/platform/api.ts` (components smí importovat jen `platform/api`, ne libovolný `platform/*` soubor —
+  nález arch testu, ne něco co jsem věděl dopředu).
+- `deploy/cloudflare/apf-gateway/src/discovery-wiring.ts` — `DISCOVERY_INPUT_BUILDERS` registr (dnes jeden
+  záznam), deploy-layer, smí importovat z `src/components/*`.
+- `deploy/cloudflare/apf-gateway/src/index.ts` — `createCase()` teď volá
+  `this.ctx.waitUntil(this.runCaseDiscovery(c))` (stejná disciplína jako `fanOutAttachmentsIfAny()`); nová
+  `runCaseDiscovery()` skládá `DiscoveryRunnerDeps` z `installation.authorities`/`installation.lifecycle`
+  (skutečné, ne default — přesně past, kterou `case-projection.ts`'s vlastní doc comment varoval), `FACT_CATALOG`,
+  `wiring.transport`, identitou `installation.profile.roles.orchestrator`.
+- `src/platform/case-projection.ts` — opraven zastaralý komentář (`availableFacts` je `FactAddress[]`, ne už
+  naformátované stringy — první živý caller, `planDiscovery()`, to musel objevit sám).
+
+**Testy:** `tests/discovery.test.ts` (`DISC-000`…`004`, čisté `planDiscovery()`), `tests/discovery-runner.test.ts`
+(`DISCR-000`…`004`, přes skutečný Router/Policy — `slice.transport`, ověřuje evidence skutečně zapečetěná,
+`caseId` threading, `CAPABILITY_GAP`/`NOT_BUILDABLE`/`SATISFIED` fail-closed cesty, a authorities/lifecycle
+skutečně load-bearing přes umělý gated scénář, ne jen protažené beze změny chování). **885/885 testů** (+13
+oproti (187)). Typecheck, arch, farm:check (12 configs) zelené.
+
+**Adversariální verifikace (6 nezávislých agentů, stejná metodika jako (184)/(186)/(187), jeden na invariant —
+no-hardcoded-driver/AR-4, AR-1 no-business-values, fail-closed plan outcomes, authorities/lifecycle threading,
+live-wiring bezpečnost v `createCase()`, policy grant + testová poctivost):** 5/6 REFUTED. **1 CONFIRMED,
+skutečný bug:** `runCaseDiscovery()`'s `this.wiring()` volání bylo MIMO `try` blok — `wirePlatform()` může
+opravdu vyhodit (`signingKeyFor()`'s fail-closed throw na chybějící `GATEWAY_SIGNING_KEY`), a protože
+`createCase()` volá `this.ctx.waitUntil(this.runCaseDiscovery(c))` bez `.catch()`, tenhle throw by unikl jako
+neviditelný unhandled rejection — přesně porušující metody vlastní "background failure must stay legible"
+tvrzení. Opraveno týž den (`this.wiring()` přesunuto dovnitř `try`), gate znovu zeleně, +2 testy (autorit
+gated scénář, `DISCR-004`) uzavírající i vedlejší nález (test coverage gap: žádný test dřív neprokazoval, že
+authorities/lifecycle threading je opravdu load-bearing).
+
+**Vědomě mimo rozsah** (přesně jak vlastník nařídil — "potom"): intent→goal business mapping (część 6 krok
+7 — dnešní discovery goal řeší jen "co impuls JE", ne "co s tím udělat"), `plan → WorkflowDef` compiler
+(część 6 krok 8), obecná víceroundová Case-level replanning smyčka s convergence guardem (część 3/6 krok 9).
+README zůstává historický (vlastník sám flagoval, "není blocker autonomie") — neopraveno, nechán na později.
+
+**Zbývá rozhodnout (Milan):** žádné nové rozhodnutí — postup podle ADR's część 6 pořadí (krok 7: intent→goal
+config) i podle vlastního auditu platí beze změny.
+
 ## 2026-09-19 (187) — `intent.resolve` (část 6 krok 6) implementováno a plně zapojeno, adversariálně ověřeno, zatím bez živého callera
 
 **Kontext:** pokračování stejného dne po (186)'s `/impulse`. ADR's vlastní pořadí (část 6) i externí audit se

@@ -60,6 +60,8 @@ import {
   type Wired,
 } from "./page.js";
 import { FACT_CATALOG } from "./fact-catalog-bundle.js";
+import { DISCOVERY_INPUT_BUILDERS } from "./discovery-wiring.js";
+import { runDiscovery } from "../../../../src/platform/discovery-runner.js";
 import { buildOrchestrator, checkWiringPreconditions, COW_WORKSHOP, describeModels, gatewayCatalog, modelAdapterFor, wirePlatform, type Wiring } from "./platform-wiring.js";
 // RG2-E (2026-09-18): /live, /ready, /health/details — every decision is a pure function in readiness.ts (same
 // "index.ts cannot load under vitest" reason as alarm-scheduler.ts/fanout-retry.ts); this file only supplies the
@@ -732,6 +734,10 @@ async function zlabStats(env: Env): Promise<ZlabStats> {
  */
 const STUCK_ALARM_SAFETY_MARGIN_MS = 60_000;
 
+/** runCaseDiscovery()'s own single transport.dispatch() deadline — generous for one LLM call (intent.resolve),
+ * same order of magnitude as document.classify's own step deadline in workflows/document-intake.v2.json. */
+const DISCOVERY_DEADLINE_MS = 2 * 60_000;
+
 /**
  * Follow-up fix, R2R3 integration (adversarial review, 18.9.2026 — see this commit's own message): `recover()`'s
  * cascade (src/platform/orchestrator.ts's `run()` loop, one real `transport.dispatch()` per remaining step) and
@@ -1122,7 +1128,60 @@ export class WorkflowInstance extends DurableObject<Env> {
   createCase(input: { caseId: string; impulse: NormalizedImpulse }): Case {
     const c = newCase({ caseId: input.caseId, impulse: input.impulse });
     this.caseStore.put(c);
+    // Discovery (docs/AUTONOMOUS-RUNTIME-V1.md część 6 krok 7's own precondition, część 3/6 krok 9's first,
+    // single-round slice — src/platform/discovery-runner.ts's own header comment has the full "why"): runs in
+    // the background (ctx.waitUntil), same discipline as fanOutAttachmentsIfAny() below — awaiting an LLM call
+    // here would hold this RPC (and /impulse's own response) hostage. The Case is already durably stored above,
+    // so a concurrent GET /case/:caseId.json sees a real, well-formed UNSTARTED Case either way, just without
+    // impulse.intent evidence until this finishes. A background failure here is caught and audited (kind:
+    // "state", capability: "case-discovery"), same "must stay legible" discipline as that method's own doc
+    // comment describes for fan-out failures.
+    this.ctx.waitUntil(this.runCaseDiscovery(c));
     return c;
+  }
+
+  /**
+   * The live wiring discovery-runner.ts's own header comment describes as its "first, single-round, single-goal
+   * slice": computes CurrentCaseProjection, asks discovery.ts's planDiscovery() what (if anything) is needed to
+   * reach impulse.intent, and dispatches whatever plan() resolves — genuinely, never a hardcoded "if UNSTARTED,
+   * call intent.resolve" (AR-4). No evidence ledger wired for this installation (WiringOptions.evidence absent)
+   * means there is nothing for plan() to check availability against — skipped, audited, same shape as
+   * fanOutAttachmentsIfAny()'s own no-ledger guard below.
+   */
+  private async runCaseDiscovery(c: Case): Promise<void> {
+    // Adversarial verification (2026-09-19) found this.wiring() previously called OUTSIDE this try block:
+    // wirePlatform() can throw for real (signingKeyFor()'s own fail-closed throw on a missing
+    // GATEWAY_SIGNING_KEY, platform-wiring.ts) — from inside createCase()'s bare `this.ctx.waitUntil(...)`
+    // (no `.catch()`), that would have been an unhandled rejection invisible to the audit trail, breaking
+    // this method's own "a background failure must stay legible" claim. Moved inside so every throw here,
+    // wiring included, reaches the catch below — mirrors mailIntake()'s own discipline of never leaving a
+    // wiring()/wirePlatform() failure outside an awaited, caught path.
+    try {
+      const wiring = this.wiring();
+      if (!wiring.evidence) {
+        this.audit.append({ kind: "state", tenantId: c.tenantId, capability: "case-discovery", details: { caseId: c.caseId, status: "SKIPPED", reason: "no evidence ledger wired for this installation" } });
+        return;
+      }
+      await runDiscovery(
+        {
+          catalog: FACT_CATALOG,
+          ledger: wiring.evidence,
+          artifacts: this.artifacts,
+          authorities: installation.authorities,
+          lifecycle: installation.lifecycle,
+          transport: wiring.transport,
+          actorId: installation.profile.roles.orchestrator,
+          clock: this.clock,
+          deadlineMs: DISCOVERY_DEADLINE_MS,
+          audit: this.audit,
+          inputBuilders: DISCOVERY_INPUT_BUILDERS,
+        },
+        c,
+      );
+    } catch (e) {
+      console.error(`[apf-gateway] case discovery failed caseId=${c.caseId}: ${e instanceof Error ? e.message : String(e)}`);
+      this.audit.append({ kind: "state", tenantId: c.tenantId, capability: "case-discovery", details: { caseId: c.caseId, status: "FAILED", error: e instanceof Error ? e.message : String(e) } });
+    }
   }
 
   /**
