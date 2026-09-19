@@ -2,6 +2,81 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-19 (190) — `plan → WorkflowDef` compiler (część 6 krok 8, SEVERKA M3 "No-n8n Gate"): mechanismus + config hotové a testované, 2 nalezené bugy opraveny, adversariálně ověřeno (3/5 REFUTED přímo, 2/5 CONFIRMED → opraveno)
+
+**Kontext:** pokračování stejného dne po (189)'s goal mapping. Vlastník poslal třetí zprávu (hodnocení 8.9/10,
+"compiler je teď nejdůležitější krok celého projektu") s vlastním kontraktovým náčrtem — vstup
+`{caseId, projection, goal, factCatalog, capabilityRegistry}`, výstup immutable `WorkflowDef`, tvrdé invarianty
+(žádné business values, jen reference/FactAddress/capability IDs, žádný `if (goal === "invoice.readyForReview")
+return invoiceWorkflow`, nedosažitelný goal → `CAPABILITY_GAP`, ambiguity fail-closed, deterministický, pořadí
+katalogu nesmí měnit význam plánu) a výslovným pokynem nechat Case loop (krok 9) až po jednom čistém
+end-to-end testu `Projection → mapped goal → Planner → compiler → WorkflowDef`, bez spuštění. Opět "ultracode" +
+"up to you". Hloubkový research (Workflow tool, 4 paralelní agenti) předtím zjistil klíčovou věc: `Planner`
+(`plan()`, `PlanResult`) i `Orchestrator` (`WorkflowDef`, `StepDef`) už existují, plně otestované, s NULOVÝM živým
+callerem dnes — `plan()` je "existuje, dnes jen v testech". Žádný `compiler` symbol neexistuje nikde v kódu, jen
+jako TARGET v docs/komentářích.
+
+**Implementace:**
+- `src/platform/compiler.ts` — `compileWorkflow()`. Bere `PlanResult` (interně voláním `plan()` přesně jako
+  budoucí live caller by musel) a mění ho na `WorkflowDef` mechanicky: `StepDef.id`/`inputs`' pole jsou injektivní
+  transformace FactCatalog klíčů/capability jmen (`.` → `-`/`_`, dokázáno bezpečné adversariální verifikací —
+  capability jména a fact klíče nikdy neobsahují `-`/`_` podle svých vlastních regexů), `inputs` jsou VŽDY
+  `$input.<x>` nebo `$steps.<id>.payload.<x>` reference, nikdy literál. `capabilityVersion`/`sideEffects` se čtou
+  jen z `CapabilityLookup` (nikdy hádané). Workflow název je `cwf-<sha256 hash prvních 16 znaků>` obsahu plánu
+  (capability+verze v pořadí) — ne goal — takže dva Case se stejným goal, ale jiným plánem (M3's vlastní killer
+  test) dostanou různou identitu, bezpečné i pro budoucí `Orchestrator.recover()`'s `workflow` filtr. Vlastní
+  self-check: `parseWorkflowDef()` (workflow.ts) se volá na výstupu před vrácením — schema-validní nebo throw
+  (bug v compiler.ts, nikdy chyba volajícího).
+- `src/platform/compiler-policy.ts` — `CompilerPolicy`, mirror `AuthorityRegistry`/`GoalMapRegistry`'s hand-written
+  fail-closed validátor, ale BEZ `empty()`: na rozdíl od autorit/goal-map neexistuje bezpečný prázdný default pro
+  deadline/role, takže instalace bez `compiler.json` prostě nemůže kompilovat (volající to musí explicitně
+  auditovat, ne tichý fallback).
+- `config/{local-fakes,farm-bass443}/compiler.json` — workflow-level knoby (deadline, conformanceTier, role),
+  mirror dnešních ručně psaných `workflows/*.json` hodnot.
+- `src/installation.ts`/`installation-node.ts`/`scripts/farm-config.mjs` — nové pole `Installation.compilerPolicy`
+  (volitelné, `undefined` = "nemůže kompilovat", stejný vzor jako `goalMap`/`authorities`, zpětně kompatibilní
+  6. volitelný parametr `assembleInstallation()`).
+- **Vědomě NEzapojeno živě** do `runCaseDiscovery()`/`platform-wiring.ts` — dva poctivé důvody, ne lenost: (1)
+  jediný reálný `goal-map.json` záznam (`UNKNOWN → []`) má prázdný goal a `plan()` sám odmítá prázdný goal jako
+  `INVALID` — dnes neexistuje reálná cesta k nějakému skutečnému MAPPED goalu, který by compiler kdy dostal; (2)
+  `apf-gateway`'s `Router.catalog()` pokrývá jen in-process registrované capabilities — `document.stamp`/
+  `email.send` běží na SAMOSTATNÝCH Workerech (`apf-document-host`/`apf-email-executor`), takže `router.catalog()`
+  by dnes NEPRAVDIVĚ hlásil `CAPABILITY_UNUSABLE` pro reálně fungující, jen vzdáleně dispatchované capabilities.
+  Stavět částečný/matoucí capability registry jen aby "to vypadalo hotověji" by bylo přesně to sebe-klamání, které
+  (189) odmítlo u `invoice.readyForReview`. `compileWorkflow()` je proto čistá, neauditovaná funkce (žádný
+  `AuditTrail`) — auditování je práce budoucího live volajícího, který dnes neexistuje.
+
+**Testy:** `tests/compiler.test.ts` (COMP-000…008 + COMP-POLICY-000, 24 testů) — reálný `document-intake` řetězec
+kompiluje se stejným pořadím jako `plan()`/`document-intake.v2.json`, `CAPABILITY_GAP`/`CYCLE`/`INVALID` se
+propaguje beze změny, capability bez registry záznamu / se špatnou verzí / sideEffects selže closed, **M3 killer
+test na úrovni compileru** (`supplier.companyId.verified` je gap bez `document.type.invoiceConfirmed`, ale
+kompiluje `invoice.extract → cz.company.verify` s ním — bez editace jediného workflow souboru), determinismus
+(stejný vstup dvakrát = byte-identical), a AR-1 strukturální test (každý input leaf matchuje
+`/^\$(input|steps)\./`). **927/927 testů** (+24 oproti (189)). Typecheck, arch, farm:check (12 configs, včetně
+obou instalací s novým `compiler.json`) zelené.
+
+**Adversariální verifikace (5 nezávislých agentů přes Workflow tool, jeden na invariant — AR-1 no-business-values,
+AR-4 no-hardcoded-mapping, fail-closed-never-guessed, determinism+ref-safety, installation-wiring-safe-and-inert):
+3/5 REFUTED přímo, **2/5 CONFIRMED — 2 skutečné bugy, oba opraveny týž den:**
+1. Goal už plně splněný `available` faktama → `plan()` vrátí `PLANNED` s `steps: []` → `compileWorkflow()` volal
+   `parseWorkflowDef()` na prázdném `steps` poli, které schema (`minItems: 1`) odmítne neojmenovanou chybou místo
+   named `CompileResult` statusu. **Oprava:** nový status `NOTHING_TO_DO`, kontrola před stavbou `WorkflowDef`.
+2. `capabilityVersion` kontrola `/^[0-9]+$/.test(record.version)` neověřovala `typeof` první — `RegExp.test()`
+   tiše převádí argument na string, takže číselná verze (`1` místo `"1"`) prošla kontrolou a spadla až uvnitř
+   `parseWorkflowDef()`'s obecné schema chyby místo `CAPABILITY_UNUSABLE`. **Oprava:** `typeof record.version !==
+   "string"` kontrola první (stejný vzor, jaký `compiler-policy.ts`'s `workflowVersion` kontrola už správně měla).
+   Oba bugy dostaly regresní test (COMP-004's nový case, COMP-008), gates zůstávají zelené po opravě.
+Nebugové nálezy (flagováno, neopraveno — mimo rozsah): `registry.ts`'s `catalogOf()` tiše defaultuje
+`preferredVersion` na `"1"`, když deskriptor jméno vynechá (o vrstvu výš než compiler, správně typované, takže
+netriggeruje bug #2, ale stejná třída rizika); `FactCatalog.build()` nevaliduje capability-jméno klíče sidecaru
+proti capabilityName patternu (spoléhá na upstream schema + test-time `FACT-004`) — pokud by to bylo někdy
+obejito, `stepId()`'s injektivita by selhala hlasitě (`parseWorkflowDef()` duplicate-id throw), nikdy tiše.
+
+**Vědomě mimo rozsah:** živé zapojení do `runCaseDiscovery()` (viz výše, dva poctivé důvody), field-naming vrstva
+mezi FactCatalog klíči a reálnými capability JSON-schema poli (`compiler.ts`'s vlastní konvence `document_type`
+místo `documentType`/`sha256`/`artifactId` — separátní mapovací vrstva, ne dnešní úkol), spuštění `WorkflowDef`
+(Orchestrator zůstává beze změny), obecná Case-level replanning smyčka s convergence guardem (część 3/6 krok 9).
+
 ## 2026-09-19 (189) — Intent → Goal mapping (część 6 krok 7): `GoalMapRegistry` + `resolveCaseGoal()`, živě zapojeno za discovery, adversariálně ověřeno (5/5 REFUTED)
 
 **Kontext:** pokračování stejného dne po (188)'s discovery goal. Vlastník poslal druhý audit (skóre 8.8 → 8.9/10,

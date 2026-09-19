@@ -1,0 +1,9 @@
+{
+  "$comment": "plan -> WorkflowDef compiler policy (docs/AUTONOMOUS-RUNTIME-V1.md część 6 krok 8, SEVERKA's M3 \"No-n8n Gate\"): workflow-level knobs a compiled WorkflowDef needs that the plan itself can never carry (deadline, conformance tier, review roles) and the compiler's own output-format version (workflowVersion here — bumped only when compiler.ts's translation rules change, never per goal). Values mirror today's hand-written workflows/*.json (document-intake.v1/v2, mail-intake.v1/v2/v3): same deadlineMs (30 min), same conformanceTier, same operator/supervisor roles this installation's profile.json already grants (document.operator/document.supervisor).",
+  "schemaVersion": "1",
+  "workflowVersion": "1",
+  "deadlineMs": 1800000,
+  "conformanceTier": "semantic",
+  "operatorRole": "document.operator",
+  "supervisorRole": "document.supervisor"
+}

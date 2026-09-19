@@ -1,0 +1,9 @@
+{
+  "$comment": "Test installation's compiler policy — same content as farm-bass443 so the in-process slice proves the exact live behaviour. See config/farm-bass443/compiler.json for the field semantics.",
+  "schemaVersion": "1",
+  "workflowVersion": "1",
+  "deadlineMs": 1800000,
+  "conformanceTier": "semantic",
+  "operatorRole": "document.operator",
+  "supervisorRole": "document.supervisor"
+}

@@ -24,5 +24,9 @@ export function loadInstallationFromDir(dir: string): Installation {
   // goal-map.json absent = no mappings at all (every intent NO_MAPPING) — fail-closed by omission, same shape.
   const goalMapPath = join(dir, "goal-map.json");
   const goalMap: unknown = existsSync(goalMapPath) ? JSON.parse(readFileSync(goalMapPath, "utf8")) : undefined;
-  return assembleInstallation(profile, policies, lifecycle, authorities, goalMap);
+  // compiler.json absent = this installation cannot compile at all (no safe default deadline/roles) — the
+  // compiler's own caller audits that explicitly, same "absence is a distinct outcome" shape as the above.
+  const compilerPolicyPath = join(dir, "compiler.json");
+  const compilerPolicy: unknown = existsSync(compilerPolicyPath) ? JSON.parse(readFileSync(compilerPolicyPath, "utf8")) : undefined;
+  return assembleInstallation(profile, policies, lifecycle, authorities, goalMap, compilerPolicy);
 }

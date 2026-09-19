@@ -3,6 +3,7 @@
 import profileSchema from "../config/profile.schema.json" with { type: "json" };
 import type { Identity } from "./platform/gateway.js";
 import { AuthorityRegistry } from "./platform/authorities.js";
+import { CompilerPolicy } from "./platform/compiler-policy.js";
 import { GoalMapRegistry } from "./platform/goal-map.js";
 import { LifecycleRegistry, type LifecycleStatus } from "./platform/lifecycle.js";
 import type { Policy, PolicySet } from "./platform/policy.js";
@@ -96,6 +97,11 @@ export interface Installation {
    * file = no mappings: every intent is reported NO_MAPPING, never guessed — fail-closed by omission, same
    * discipline as authorities/lifecycle. */
   goalMap: GoalMapRegistry;
+  /** Workflow-level knobs the plan -> WorkflowDef compiler needs (config/<installation>/compiler.json, część 6
+   * krok 8). Unlike authorities/lifecycle/goalMap there is no safe empty default here (a deadline or role cannot
+   * be guessed) — absent file = undefined = this installation cannot compile, a distinct outcome the compiler's
+   * caller must audit explicitly rather than a silently-permissive fallback. */
+  compilerPolicy?: CompilerPolicy;
 }
 
 /** Where secret values come from: env, wrangler secrets, a test map. Undefined = missing = fail-closed at wiring time. */
@@ -107,7 +113,14 @@ const validateProfile = compileSchema(profileSchema);
  * Assemble and cross-check an installation: profile against its schema, every policyRef present, every grant pointing
  * to a known identity that holds the granted scope, every granted tenant known. Anything else throws (fail-closed).
  */
-export function assembleInstallation(profileJson: unknown, policies: Policy[], lifecycleStatuses: Record<string, LifecycleStatus> = {}, authoritiesJson?: unknown, goalMapJson?: unknown): Installation {
+export function assembleInstallation(
+  profileJson: unknown,
+  policies: Policy[],
+  lifecycleStatuses: Record<string, LifecycleStatus> = {},
+  authoritiesJson?: unknown,
+  goalMapJson?: unknown,
+  compilerPolicyJson?: unknown,
+): Installation {
   const v = validateProfile(profileJson);
   if (!v.ok) throw new Error(`installation profile invalid (fail-closed): ${v.errors}`);
   const profile = profileJson as InstallationProfile;
@@ -153,7 +166,8 @@ export function assembleInstallation(profileJson: unknown, policies: Policy[], l
     }
   }
   const goalMap = goalMapJson === undefined ? GoalMapRegistry.empty() : GoalMapRegistry.build(goalMapJson);
-  return { profile, policies: set, lifecycle: new LifecycleRegistry(lifecycleStatuses), authorities, goalMap };
+  const compilerPolicy = compilerPolicyJson === undefined ? undefined : CompilerPolicy.build(compilerPolicyJson);
+  return { profile, policies: set, lifecycle: new LifecycleRegistry(lifecycleStatuses), authorities, goalMap, ...(compilerPolicy ? { compilerPolicy } : {}) };
 }
 
 /**
