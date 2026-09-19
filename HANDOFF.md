@@ -2,6 +2,41 @@
 
 Append-only. Nejnovější záznam nahoru. Slouží k pokračování z jiného počítače / po pauze.
 
+## 2026-09-19 (186) — `POST /impulse` (část 5) implementováno jako mechanismus, adversariálně ověřeno, žádný živý kanál zatím nezapojen
+
+**Kontext:** externí audit (dva po sobě jdoucí průchody, ten druhý po opravě (185)'s ADR staleness) potvrdil,
+že `CurrentCaseProjection` je hotová a další krok podle ADR's vlastního pořadí (část 6) i podle auditu je
+`/impulse` (část 5). Vlastník: "jedeme ultracode" — implementace + adversariální verifikace stejnou
+metodikou jako (184)'s Projection práce, druhý milestone nového menšího-kroku-postupu (185).
+
+**Implementace:**
+- `src/platform/impulse.ts` — čistá `normalizeImpulse()`: channel-agnostic normalize() krok, žádné I/O,
+  žádné workflow/goal/intent pole (case.ts's `NormalizedImpulse` to strukturálně ani neumožňuje). `content`
+  zúženo na `text?` + `attachments?: string[]` (existující ArtifactRef id) — binary/extrakce vědomě mimo
+  rozsah, stejný tvar jako Projection's `pendingCapabilities`. Fail-closed na prázdný impuls.
+- `deploy/cloudflare/apf-gateway/src/index.ts`: nová `POST /impulse` route (KILL_SWITCH gate → shape gate →
+  server-side tenantId → `normalizeImpulse()` → `newCase()` bez instance → `{ caseId }`, 201) + dvě nové DO
+  metody `createCase()`/`caseByCaseId()` + `GET /case/(case-…).json` counterpart route. `/intake` a
+  `/mail-intake` beze změny (diff je čistě 83 vložených řádků, 0 smazaných/změněných).
+- **Case storage adresování vyřešeno:** nové DO pojmenované přímo `caseId` (`env.WORKFLOW.idFromName(caseId)`
+  před `createCase()`) — zavírá mezeru, kterou `caseView()`'s vlastní doc comment (Commit 3) výslovně
+  označil za "out of scope": dřív šlo Case najít jen přes workflowId, protože Case storage je DO-local a
+  žádný externí caseId→DO index neexistoval. Řešení nepotřebuje index — jméno DO JE caseId.
+
+**Testy:** `tests/impulse.test.ts`, `IMP-000`…`IMP-010` (11 testů). Adversariální verifikace (5 nezávislých
+agentů, jeden na invariant — AR-2 no-workflow/goal/intent, no-instance-created, `/intake`+`/mail-intake`
+nedotčené, tenant server-side + fail-closed, caseId/workflowId adresování bez kolize): **5/5 REFUTED, 0
+confirmed bugs.** Dva nezávislé agenty upozornily na stejnou nebugovou mezeru (metadata nebyla hluboce
+validovaná na `Record<string,string>`) — opraveno týž den.
+
+**Brány zelené:** typecheck, arch, farm:check (12 configs, 2 instalace × 6 deployables), **858/858 testů**
+(+11 oproti (184)/(185)).
+
+**Vědomě mimo rozsah:** žádný ingress kanál `/impulse` ještě nevolá (mail pořád přes vlastní
+`createCaseForMailIntake()`) — to je vždy jen "primitivum existuje", ne "live wired". Scénář B (část 8,
+Telegram/weather) zůstává neověřený. `intent.resolve`/goal-mapping/compiler (část 6 kroky 6–8) nejsou
+součástí tohohle kroku.
+
 ## 2026-09-19 (185) — nasazeno na `farm-bass443` (`2a688c8`), první milestone nového menšího-kroku-pracovního-postupu
 
 **Vlastníkův pokyn:** menší milestony, každý samostatně commitnutý/pushnutý/nasazený, aby vyčerpání limitu

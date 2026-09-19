@@ -20,6 +20,7 @@ import { auditRowsToCsv, type AuditCsvRow } from "../../../../src/platform/audit
 import { sha256Bytes, type Artifact } from "../../../../src/platform/artifacts.js";
 import { fanOutAttachments, summarizeFanoutOutcomes, type AttachmentFanoutOutcome, type MailIngestAttachmentOutcome } from "../../../../src/platform/attachment-fanout.js";
 import { addInstance, aggregateCaseStatus, newCase, type Case, type NormalizedImpulse } from "../../../../src/platform/case.js";
+import { ImpulseError, normalizeImpulse } from "../../../../src/platform/impulse.js";
 import { iso, SystemClock, type Clock } from "../../../../src/platform/clock.js";
 import { platformError } from "../../../../src/platform/errors.js";
 import { newId } from "../../../../src/platform/ids.js";
@@ -1106,6 +1107,32 @@ export class WorkflowInstance extends DurableObject<Env> {
         : { workflowId: wid, status: "UNKNOWN" as const };
     });
     return { case: c, instances };
+  }
+
+  /**
+   * ADR część 5's `/impulse` step: creates a Case directly from an already-normalized impulse, with NO
+   * workflow instance — `newCase()` with no `instance` argument, so the Case starts UNSTARTED (case.ts).
+   * Case storage is DO-local (same discipline as every other Case here, see caseView()'s own doc comment
+   * above, which flagged "no external caseId -> Durable Object index... out of scope here" as of Commit 3) —
+   * this method closes exactly that gap by never needing such an index at all: index.ts's /impulse handler
+   * mints `caseId` BEFORE addressing this object (`env.WORKFLOW.idFromName(caseId)`), the same pattern
+   * startIntake()/startMailIntake() already use for `workflowId`, just naming the object after the Case
+   * instead of after a workflow instance that does not exist yet.
+   */
+  createCase(input: { caseId: string; impulse: NormalizedImpulse }): Case {
+    const c = newCase({ caseId: input.caseId, impulse: input.impulse });
+    this.caseStore.put(c);
+    return c;
+  }
+
+  /**
+   * Read-only counterpart to createCase() above — looks up a Case by its OWN caseId, for a Case that may
+   * still have zero instances (caseView() above stays byWorkflowId()-only; a zero-instance Case has no
+   * workflowId to look it up by). GET /case/:caseId.json (index.ts) addresses the same DO this Case was
+   * created in, via the same caseId-as-DO-name convention createCase() documents above.
+   */
+  caseByCaseId(caseId: string): Case | null {
+    return this.caseStore.get(caseId) ?? null;
   }
 
   /**
@@ -2223,6 +2250,14 @@ const contentTypeOf = (name: string, type: string): string => {
 const isText = (contentType: string): boolean =>
   contentType.startsWith("text/") || contentType === "message/rfc822" || contentType === "application/json" || contentType === "application/xml";
 
+/** ADR część 5's new ingress contract (POST /impulse) — see the route handler below for the full contract note. */
+interface ImpulseRequest {
+  channel: string;
+  text?: string;
+  attachments?: string[];
+  metadata?: Record<string, string>;
+}
+
 interface IntakeRequest {
   workflow: string;
   tenantId: string;
@@ -2923,6 +2958,49 @@ export default {
       return Response.redirect(new URL(`/workflow/${result.workflowId}`, url).toString(), 303);
     }
 
+    // AUTONOMOUS-RUNTIME-V1.md część 5's new ingress contract, additive alongside /intake above (which stays
+    // completely unchanged — ADR's own decision, "/intake se nemění"). Deliberately the narrowest possible
+    // request/response shape: { caseId } and NOTHING else — no workflow, goal or intent field anywhere in
+    // request or response (AR-2). Does not start a workflow instance (no stub.intake()/startIntake() call
+    // here) — the Case this creates is UNSTARTED with zero instances; what happens to it next (intent.resolve
+    // → goal → plan → execution, part 3/6) is a later milestone's job, not this endpoint's.
+    if (url.pathname === "/impulse" && request.method === "POST") {
+      if (env.KILL_SWITCH === "true") return Response.json({ ok: false, code: "KILL_SWITCH", message: "Farma je vypnutá (KILL_SWITCH)." }, { status: 503 });
+      const body = (await request.json().catch(() => undefined)) as Partial<ImpulseRequest> | undefined;
+      if (!body || typeof body.channel !== "string") {
+        return Response.json({ ok: false, code: "BAD_REQUEST", message: "expected { channel: string, text?: string, attachments?: string[], metadata?: Record<string,string> }" }, { status: 400 });
+      }
+      // tenantId resolved server-side (intakeTenant(), same as /intake and /mail-intake above) — never read
+      // from the request body, even if a caller supplies one; there is no `tenantId` field on ImpulseRequest
+      // to read in the first place.
+      const tenantId = intakeTenant();
+      const caseId = newId("case");
+      let impulse: NormalizedImpulse;
+      try {
+        impulse = normalizeImpulse({
+          channel: body.channel,
+          tenantId,
+          impulseId: newId("imp"),
+          receivedAt: new Date().toISOString(),
+          ...(typeof body.text === "string" ? { text: body.text } : {}),
+          ...(Array.isArray(body.attachments) ? { attachments: body.attachments.filter((a): a is string => typeof a === "string") } : {}),
+          // Deep-validated, not just typeof === "object" (adversarial review 19.9.2026 flagged the looser
+          // check as a runtime gap against the Record<string,string> contract) — a non-string value is
+          // dropped rather than smuggled through as-is; metadata is never read to make a decision today, but
+          // a future consumer must be able to trust the type it was given.
+          ...(body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)
+            ? { metadata: Object.fromEntries(Object.entries(body.metadata).filter((entry): entry is [string, string] => typeof entry[1] === "string")) }
+            : {}),
+        });
+      } catch (e) {
+        const message = e instanceof ImpulseError ? e.message : e instanceof Error ? e.message : String(e);
+        return Response.json({ ok: false, code: "BAD_IMPULSE", message }, { status: 400 });
+      }
+      const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(caseId));
+      await stub.createCase({ caseId, impulse });
+      return Response.json({ caseId }, { status: 201 });
+    }
+
     // Internal: only apf-mail-ingest's email() handler ever calls this, over the GATEWAY/MAIL_INGEST service
     // bindings — not a public form like /intake. Tenant is resolved server-side, never trusted from the caller.
     if (url.pathname === "/mail-intake" && request.method === "POST") {
@@ -3100,6 +3178,17 @@ export default {
       const view = await stub.caseView(caseRoute[1] as string);
       if (!view) return Response.json({ error: "NOT_FOUND", workflowId: caseRoute[1] }, { status: 404 });
       return Response.json(view);
+    }
+
+    // Counterpart to caseRoute above, for a Case /impulse created — no workflowId exists yet to route by
+    // (caseByCaseId()'s own doc comment on the DO class has the full "why"), so this looks up by the Case's
+    // own "case-..." id instead, addressing the same DO createCase() named after it.
+    const caseByIdRoute = /^\/case\/(case-[A-Za-z0-9]+)\.json$/.exec(url.pathname);
+    if (caseByIdRoute && request.method === "GET") {
+      const stub = env.WORKFLOW.get(env.WORKFLOW.idFromName(caseByIdRoute[1] as string));
+      const c = await stub.caseByCaseId(caseByIdRoute[1] as string);
+      if (!c) return Response.json({ error: "NOT_FOUND", caseId: caseByIdRoute[1] }, { status: 404 });
+      return Response.json({ case: c, instances: [] });
     }
 
     if (url.pathname === "/audit.json" && request.method === "GET") {

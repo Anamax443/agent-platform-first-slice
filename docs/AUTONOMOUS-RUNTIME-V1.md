@@ -314,6 +314,40 @@ POST /impulse
 Co se PO tomhle požadavku stane (intent.resolve → goal → plan → execution) je vnitřní věc Case-level smyčky
 (část 3), ne vstupního kontraktu.
 
+**Status: HOTOVO jako mechanismus, žádný živý kanál na něj zatím neukazuje** (19. 9. 2026,
+`deploy/cloudflare/apf-gateway/src/index.ts`'s `POST /impulse` route + `WorkflowInstance`'s nové
+`createCase()`/`caseByCaseId()` DO metody, `src/platform/impulse.ts`'s `normalizeImpulse()`). `/intake` a
+`/mail-intake` zůstávají beze změny (ověřeno diffem i testy) — přesně jak tahle část žádá. Žádný ingress
+kanál `/impulse` zatím nevolá; mail pořád běží přes svou vlastní `createCaseForMailIntake()` (část 7's
+dočasný kompromis, nedotčeno). Scénář B (část 8) proto zůstává neověřený a `/intake`'s přepnutí/deprecation
+čeká přesně na to, co tahle část sama žádá — živé ověření na všech třech scénářích, ne jen na tenhle commit.
+
+**Rozhodnutí učiněná při implementaci** (vlastník řekl "up to you" na rozsah, 19. 9. 2026):
+
+- **`content` zúženo na `text?` + `attachments?: string[]` (existující ArtifactRef id), žádné syrové bajty.**
+  `normalizeImpulse()` (`src/platform/impulse.ts`) nikdy nečte bajty, nedělá extrakci, nesahá na R2/AI —
+  stejná disciplína jako `fact-catalog.ts`'s "platforma nikdy nečte soubory". Kanál, který má jen syrové
+  bajty (upload, binární příloha), je musí napřed proměnit v Artifact jinudy (přesně jak to dnes dělá mail
+  přes `mail.ingest`) — teprve pak zavolat `/impulse`. Vědomé zjednodušení, ne mezera (stejný tvar jako
+  `case-projection.ts`'s `pendingCapabilities`): binary/extrakce zůstává příští, kanál-specifickou prací,
+  ne něco, co má sdílený normalizer řešit už teď.
+- **Case storage adresování: nové DO pojmenované přímo `caseId`.** `caseView()`'s vlastní doc comment (Commit
+  3) tohle výslovně označil za mezeru — "no external caseId -> Durable Object index... out of scope here".
+  Řešení: `/impulse` mintuje `caseId` PŘED adresováním DO (`env.WORKFLOW.idFromName(caseId)`), stejný vzor
+  jaký `startIntake()`/`startMailIntake()` už používají pro `workflowId` — žádný extra index není potřeba,
+  protože jméno DO JE `caseId`. `GET /case/(case-…).json` (nová `caseByIdRoute`) čte zpátky přes stejné
+  jméno; `GET /case/(wf-…).json` (`caseView()`) zůstává nedotčené pro Case s ≥1 instancí.
+- **Odpověď přesně `{ caseId }`, 201.** Žádné pole navíc — ani `impulseId`, ani echo vstupu.
+
+**Testy:** `tests/impulse.test.ts` (`IMP-000`…`IMP-010`, čistá funkce `normalizeImpulse()` — text/attachments/
+metadata pass-through, prázdný/whitespace impuls odmítnut, žádné workflow/goal/intent pole strukturálně,
+synchronní/no I/O, `newCase()` bez instance dá `UNSTARTED`/`instances: []`). Následováno adversariální
+verifikací (5 nezávislých agentů, jeden na invariant, stejná metodika jako část 4): žádný z pěti napaden
+neuspěl — AR-2 (žádné workflow/goal/intent), no-instance-created, `/intake`+`/mail-intake` nedotčené,
+tenant server-side + fail-closed na prázdný/malformed vstup, caseId/workflowId adresování bez kolize. Dva
+nezávislé agenty stejně upozornily na jednu nebugovou mezeru (metadata nebyla hluboce validovaná na
+`Record<string,string>`, jen `typeof === "object"`) — opraveno týž den.
+
 ---
 
 ## 6. Pořadí implementace (vlastníkovo rozhodnutí 18. 9. 2026, upraveno stejného dne — viz část 11)
@@ -325,8 +359,10 @@ Co se PO tomhle požadavku stane (intent.resolve → goal → plan → execution
    bez instance, NormalizedImpulse bez těla mailu, fact scope pro >1 dokument v Case. **Vloženo PŘED
    `CurrentCaseProjection` právě proto, že by je Projection jinak zabetonovala jako implicitní předpoklad.** ✅
    (`db5bc8b`, živě nasazeno)
-4. **`CurrentCaseProjection`** (část 4) — teprve TEĎ, na opravené hranici A opravených primitivech.
-5. **Nový vstupní kontrakt** (část 5) — aditivně, `/intake` zůstává jako legacy adaptér.
+4. **`CurrentCaseProjection`** (část 4) — teprve TEĎ, na opravené hranici A opravených primitivech. ✅
+   (`2a688c8`, 18.9.2026, adversariálně ověřeno 19.9.2026 — viz část 4)
+5. **Nový vstupní kontrakt** (část 5) — aditivně, `/intake` zůstává jako legacy adaptér. ✅ mechanismus hotový
+   19.9.2026, adversariálně ověřeno — viz část 5. Žádný živý kanál ho zatím nepoužívá.
 6. **`intent.resolve`** — normální COW, ne privilegovaný Farmář. Vstup: impulse/artifact refy. Výstup:
    `impulse.intent` hodnota (do Artifactu, ne do Žlabu přímo — stejný vzor jako `invoice.extract`), evidence
    `impulse.intent.resolved` (uzavřený slovník, AR-6).
@@ -407,7 +443,7 @@ Ekvivalent SEVERKA's M8.
 | Intent → Goal mapping | TARGET | část 6 krok 7 |
 | `plan → WorkflowDef` compiler | TARGET | SEVERKA M3, část 6 krok 8 |
 | Case-level replanning loop | TARGET | část 3, 6 krok 9 |
-| `/impulse` vstupní kontrakt | TARGET | část 5, aditivní, `/intake` zůstává |
+| `/impulse` vstupní kontrakt | PRIMITIVE EXISTS | část 5 — `POST /impulse`, `src/platform/impulse.ts`, 19.9.2026. Mechanismus + testy + adversariální verifikace hotové; žádný živý kanál ho zatím nevolá (mail pořád jde přes `createCaseForMailIntake()`), `/intake` beze změny |
 | `attachment-fanout.ts` | LIVE WIRED, LIVE VERIFIED | vědomě dočasný (část 7), nekopírovat |
 
 ---
